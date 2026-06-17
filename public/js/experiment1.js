@@ -10,11 +10,13 @@ async function runExperiment1(state) {
   content.innerHTML = `
     <div class="overview-box">
       <p>您将和小组其他成员一起完成一项<strong>有现金报酬</strong>的团队任务。</p>
+      <p>${config.topology?.summary || ''}</p>
       <p><strong>报酬规则：</strong>受托节点最终上报的数字（1–6）决定全组报酬。每位组员获得 <strong>上报数字 × 2 元</strong>。上报数字越高，全组每人奖金越多。</p>
       <p><strong>您的任务：</strong>您将看到骰子结果，并决定让${delegateLabel}上报什么数字。该上报数字决定全组每人的实际报酬。</p>
       <p>条件：
         <span class="info-tag">受托类型：${condition.agentType === 'ai' ? 'AI 助手' : '人类组员'}</span>
         <span class="info-tag">团队规模：${condition.teamSize === 'small' ? '小（3人）' : '大（5人）'}</span>
+        <span class="info-tag">网络：星形 · 您居中心</span>
       </p>
     </div>
     <div class="step-nav"><button class="btn btn-primary" id="btn-start">进入群聊</button></div>
@@ -32,6 +34,8 @@ async function runExperiment1(state) {
   );
   const host = team.find((m) => m.role === 'host');
   const chat = ChatUI.createChatUI(content, team, {
+    topology: config.topology,
+    topologyNodes: config.topologyNodes,
     onSend: async (message, chatApi) => {
       const res = await apiFetch(`/sessions/${sessionId}/exp1/chat`, {
         method: 'POST',
@@ -41,7 +45,10 @@ async function runExperiment1(state) {
     },
   });
   const overviewRes = await apiFetch(`/sessions/${sessionId}/exp1/script/overview`);
-  await chat.addMessage(host, overviewRes.messages[0]);
+  for (const msg of overviewRes.messages) {
+    await ChatUI.delay(1200);
+    await chat.addMessage(host, msg);
+  }
   await ChatUI.delay(1500);
 
   const introsRes = await apiFetch(`/sessions/${sessionId}/exp1/script/intros`);
@@ -81,6 +88,8 @@ async function runExperiment1(state) {
   setPhase('任务规则');
   content.innerHTML = '';
   const chat2 = ChatUI.createChatUI(content, team, {
+    topology: config.topology,
+    topologyNodes: config.topologyNodes,
     onSend: async (message, chatApi) => {
       const res = await apiFetch(`/sessions/${sessionId}/exp1/chat`, {
         method: 'POST',
@@ -106,6 +115,8 @@ async function runExperiment1(state) {
   content.innerHTML = '';
   const delegate = team.find((m) => m.role === 'delegate');
   const chat3 = ChatUI.createChatUI(content, team, {
+    topology: config.topology,
+    topologyNodes: config.topologyNodes,
     onSend: async (message, chatApi) => {
       const res = await apiFetch(`/sessions/${sessionId}/exp1/chat`, {
         method: 'POST',

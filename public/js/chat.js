@@ -5,14 +5,36 @@ function createChatUI(container, members, options = {}) {
   const sidebar = document.createElement('div');
   sidebar.className = 'member-sidebar';
   sidebar.innerHTML = '<h4>团队成员</h4>';
+
+  if (options.topologyNodes) {
+    sidebar.appendChild(renderTopologyDiagram(options.topologyNodes, options.topology));
+  }
+
   const memberList = document.createElement('div');
+  memberList.className = 'member-list';
   members.forEach((m) => {
     const item = document.createElement('div');
-    item.className = 'member-item';
-    item.innerHTML = `<span class="member-avatar">${m.avatar}</span><span>${m.name}</span>`;
+    item.className = 'member-item' + (m.role === 'participant' ? ' member-item-you' : '');
+    const label = m.relationshipLabel
+      ? `<span class="member-role">${m.relationshipLabel}</span>`
+      : '';
+    item.innerHTML = `
+      <span class="member-avatar">${m.avatar}</span>
+      <div class="member-info">
+        <span class="member-name">${m.name}</span>
+        ${label}
+      </div>
+    `;
     memberList.appendChild(item);
   });
   sidebar.appendChild(memberList);
+
+  if (options.topology?.summary) {
+    const topoNote = document.createElement('p');
+    topoNote.className = 'topology-summary';
+    topoNote.textContent = options.topology.summary;
+    sidebar.appendChild(topoNote);
+  }
 
   const panel = document.createElement('div');
   panel.className = 'chat-panel';
@@ -44,10 +66,13 @@ function createChatUI(container, members, options = {}) {
     addMessage(sender, text, isUser = false) {
       const msg = document.createElement('div');
       msg.className = `chat-msg ${isUser ? 'user' : 'bot'}`;
+      const roleTag = sender.relationshipLabel && !isUser
+        ? `<span class="msg-role-tag">${sender.relationshipLabel}</span>`
+        : '';
       msg.innerHTML = `
         <span class="msg-avatar">${sender.avatar || '💬'}</span>
         <div class="msg-body">
-          <div class="msg-sender">${sender.name}</div>
+          <div class="msg-sender">${sender.name}${roleTag}</div>
           <div class="msg-bubble">${text}</div>
         </div>
       `;
@@ -94,6 +119,51 @@ function createChatUI(container, members, options = {}) {
   });
 
   return api;
+}
+
+function renderTopologyDiagram(topologyNodes, topology) {
+  const wrap = document.createElement('div');
+  wrap.className = 'topology-diagram';
+
+  if (topologyNodes.type === 'star') {
+    wrap.innerHTML = `
+      <div class="topo-title">星形网络</div>
+      <div class="topo-star">
+        <div class="topo-peers">
+          ${topologyNodes.peers.map((p) => `<span class="topo-node" title="${p.relationshipLabel || ''}">${p.avatar}</span>`).join('')}
+        </div>
+        <div class="topo-center-row">
+          <span class="topo-node topo-downstream" title="${topologyNodes.downstream?.relationshipLabel || ''}">${topologyNodes.downstream?.avatar || '🤝'}</span>
+          <span class="topo-arrow">→</span>
+          <span class="topo-node topo-center" title="委托者">${topologyNodes.center?.avatar || '👤'}</span>
+        </div>
+        <div class="topo-caption">您居中心 · 受托节点执行上报</div>
+      </div>
+    `;
+  } else if (topologyNodes.type === 'hierarchy') {
+    const chainHtml = topologyNodes.chain
+      .map((n) => {
+        const cls = n.isYou ? 'topo-node topo-you' : 'topo-node';
+        return `<span class="${cls}" title="${n.relationshipLabel || ''}">${n.avatar}</span>`;
+      })
+      .join('<span class="topo-arrow">→</span>');
+
+    const aiHtml = topologyNodes.ai
+      ? `<div class="topo-ai-branch">
+          <span class="topo-ai-label">${topologyNodes.aiTopology === 'bypass' ? '旁路' : topologyNodes.aiTopology === 'upstream' ? '上游' : '下游'}</span>
+          <span class="topo-node topo-ai" title="${topologyNodes.ai.relationshipLabel || ''}">${topologyNodes.ai.avatar}</span>
+        </div>`
+      : '';
+
+    wrap.innerHTML = `
+      <div class="topo-title">层级链 · ${topology?.aiTopologyLabel || ''}</div>
+      <div class="topo-chain">${chainHtml}</div>
+      ${aiHtml}
+      <div class="topo-caption">起草 → 审核 → 签发</div>
+    `;
+  }
+
+  return wrap;
 }
 
 function delay(ms) {

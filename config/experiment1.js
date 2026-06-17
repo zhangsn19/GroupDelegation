@@ -1,19 +1,29 @@
-/** Experiment 1: Group chat dice delegation — 2×2 design */
+/** Experiment 1: Group chat dice delegation — 2×2 design (star topology) */
+
+const AGENT_TYPES = ['human', 'ai'];
+const TEAM_SIZES = ['small', 'large'];
+
+const ROLE_LABELS = {
+  host: '主持人',
+  participant: '委托者（您）',
+  member: '组员',
+  delegate: '受托节点',
+};
 
 const SMALL_TEAM_MEMBERS = [
-  { id: 'host', name: '主持人', role: 'host', avatar: '🎙️', isBot: true },
-  { id: 'you', name: '您', role: 'participant', avatar: '👤', isBot: false },
-  { id: 'm1', name: '张明', role: 'member', avatar: '🧑', isBot: true },
-  { id: 'delegate', name: '受托节点', role: 'delegate', avatar: '🤝', isBot: true },
+  { id: 'host', name: '主持人', role: 'host', avatar: '🎙️', isBot: true, relationshipLabel: '流程主持' },
+  { id: 'you', name: '您', role: 'participant', avatar: '👤', isBot: false, relationshipLabel: '委托者 · 星形中心' },
+  { id: 'm1', name: '张明', role: 'member', avatar: '🧑', isBot: true, relationshipLabel: '组员 · 共担收益' },
+  { id: 'delegate', name: '受托节点', role: 'delegate', avatar: '🤝', isBot: true, relationshipLabel: '下游受托 · 执行上报' },
 ];
 
 const LARGE_TEAM_MEMBERS = [
-  { id: 'host', name: '主持人', role: 'host', avatar: '🎙️', isBot: true },
-  { id: 'you', name: '您', role: 'participant', avatar: '👤', isBot: false },
-  { id: 'm1', name: '张明', role: 'member', avatar: '🧑', isBot: true },
-  { id: 'm2', name: '李华', role: 'member', avatar: '👩', isBot: true },
-  { id: 'm3', name: '王芳', role: 'member', avatar: '🧒', isBot: true },
-  { id: 'delegate', name: '受托节点', role: 'delegate', avatar: '🤝', isBot: true },
+  { id: 'host', name: '主持人', role: 'host', avatar: '🎙️', isBot: true, relationshipLabel: '流程主持' },
+  { id: 'you', name: '您', role: 'participant', avatar: '👤', isBot: false, relationshipLabel: '委托者 · 星形中心' },
+  { id: 'm1', name: '张明', role: 'member', avatar: '🧑', isBot: true, relationshipLabel: '组员 · 共担收益' },
+  { id: 'm2', name: '李华', role: 'member', avatar: '👩', isBot: true, relationshipLabel: '组员 · 共担收益' },
+  { id: 'm3', name: '王芳', role: 'member', avatar: '🧒', isBot: true, relationshipLabel: '组员 · 共担收益' },
+  { id: 'delegate', name: '受托节点', role: 'delegate', avatar: '🤝', isBot: true, relationshipLabel: '下游受托 · 执行上报' },
 ];
 
 const PRE_SURVEY = [
@@ -134,10 +144,49 @@ const POST_SURVEY = [
   },
 ];
 
-function assignCondition() {
-  const agentType = Math.random() < 0.5 ? 'human' : 'ai';
-  const teamSize = Math.random() < 0.5 ? 'small' : 'large';
+const VALID_CELLS = AGENT_TYPES.flatMap((agentType) =>
+  TEAM_SIZES.map((teamSize) => `${agentType}_${teamSize}`)
+);
+
+function parseConditionOverride(cell) {
+  if (!cell || typeof cell !== 'string') return null;
+  const normalized = cell.trim().toLowerCase();
+  if (!VALID_CELLS.includes(normalized)) return null;
+  const [agentType, teamSize] = normalized.split('_');
+  return { agentType, teamSize, cell: normalized, forced: true };
+}
+
+function assignCondition(override) {
+  const parsed = typeof override === 'string' ? parseConditionOverride(override) : override;
+  if (parsed) return parsed;
+  const agentType = AGENT_TYPES[Math.floor(Math.random() * AGENT_TYPES.length)];
+  const teamSize = TEAM_SIZES[Math.floor(Math.random() * TEAM_SIZES.length)];
   return { agentType, teamSize, cell: `${agentType}_${teamSize}` };
+}
+
+function getNetworkMetrics(condition) {
+  const teamSize = condition.teamSize === 'small' ? 3 : 5;
+  const coBenefitCount = teamSize - 1;
+  return {
+    topology: 'star',
+    teamSizeCount: teamSize,
+    degreeCentrality: coBenefitCount,
+    betweennessCentrality: 1,
+    pathLengthToReport: 1,
+    participantPosition: 'center_delegator',
+  };
+}
+
+function getTopologyDescription(condition) {
+  const metrics = getNetworkMetrics(condition);
+  const delegateLabel = condition.agentType === 'ai' ? 'AI 助手' : '人类组员（陈磊）';
+  const sizeLabel = condition.teamSize === 'small' ? '3 人' : '5 人';
+  return {
+    topology: 'star',
+    summary: `星形网络：您居于中心担任委托者，直接连接 ${metrics.degreeCentrality} 个共担收益节点；由${delegateLabel}作为下游受托节点执行上报。`,
+    teamLabel: `${sizeLabel}协作小组`,
+    delegateType: condition.agentType === 'ai' ? 'AI 受托' : '人类受托',
+  };
 }
 
 function buildTeam(condition) {
@@ -150,10 +199,23 @@ function buildTeam(condition) {
         name: isAi ? 'AI 助手' : '陈磊',
         avatar: isAi ? '🤖' : '🧑‍💼',
         agentType: condition.agentType,
+        relationshipLabel: isAi ? 'AI 受托 · 执行上报' : '人类受托 · 执行上报',
       };
     }
     return { ...m };
   });
+}
+
+function getStarTopologyNodes(condition, team) {
+  const participant = team.find((m) => m.role === 'participant');
+  const delegate = team.find((m) => m.role === 'delegate');
+  const members = team.filter((m) => m.role === 'member');
+  return {
+    type: 'star',
+    center: participant,
+    downstream: delegate,
+    peers: members,
+  };
 }
 
 function dicePayout(value) {
@@ -177,8 +239,16 @@ function participantGoalText(delegateLabel) {
 module.exports = {
   PRE_SURVEY,
   POST_SURVEY,
+  AGENT_TYPES,
+  TEAM_SIZES,
+  ROLE_LABELS,
+  VALID_CELLS,
   assignCondition,
+  parseConditionOverride,
   buildTeam,
+  getNetworkMetrics,
+  getTopologyDescription,
+  getStarTopologyNodes,
   dicePayout,
   PAYOFF_MULTIPLIER,
   PAYOFF_RULE_SHORT,

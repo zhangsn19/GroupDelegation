@@ -8,9 +8,11 @@ async function runExperiment2(state) {
   content.innerHTML = `
     <div class="overview-box">
       <p>${config.narrative}</p>
+      <p style="margin-top:.5rem;font-size:.9rem">${config.topology?.summary || ''}</p>
       <p style="margin-top:.75rem">
         <span class="info-tag">您的角色：${config.roleLabel}</span>
         <span class="info-tag">AI 位置：${config.aiTopologyLabel}</span>
+        <span class="info-tag">距签发：${config.networkMetrics?.pathLengthToPartner ?? '—'} 步</span>
       </p>
     </div>
     <div class="step-nav"><button class="btn btn-primary" id="btn-start">了解团队</button></div>
@@ -26,6 +28,8 @@ async function runExperiment2(state) {
   const team = config.team;
   const host = team.find((m) => m.role === 'host') || { name: '协调员', avatar: '🎙️' };
   const chat = ChatUI.createChatUI(content, team, {
+    topology: config.topology,
+    topologyNodes: config.topologyNodes,
     onSend: async (message, chatApi) => {
       const res = await apiFetch(`/sessions/${sessionId}/exp1/chat`, {
         method: 'POST',
@@ -79,13 +83,12 @@ async function runExperiment2(state) {
   setPhase('文书审查');
   content.innerHTML = '';
   const workflowRes = await apiFetch(`/sessions/${sessionId}/exp2/script/workflow`);
-  const workflowMsg = workflowRes.messages[0];
 
   const reviewStartMs = Date.now();
   let verificationCount = 0;
 
   content.innerHTML = `
-    <div class="overview-box">${workflowMsg}</div>
+    <div class="overview-box">${workflowRes.messages.join('<br/><br/>')}</div>
     <div class="timer-display" id="review-timer">审查时间：0:00</div>
     <div class="memo-container">
       <div class="memo-toolbar">

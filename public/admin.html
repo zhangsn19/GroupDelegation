@@ -16,11 +16,32 @@
         <input type="password" id="adminToken" placeholder="与 .env 中 ADMIN_TOKEN 一致" />
       </div>
       <button class="btn btn-primary" id="btnLoad">加载数据信息</button>
+      <div id="conditions" style="margin-top:1.5rem"></div>
       <div id="info" style="margin-top:1.5rem"></div>
     </div>
   </div>
   <script>
     const infoEl = document.getElementById('info');
+    const conditionsEl = document.getElementById('conditions');
+
+    async function loadConditions() {
+      const [exp1, exp2] = await Promise.all([
+        fetch('/api/conditions/experiment1').then((r) => r.json()),
+        fetch('/api/conditions/experiment2').then((r) => r.json()),
+      ]);
+      const link = (exp, cell) =>
+        `<li><a href="/?experiment=${exp}&condition=${cell}" target="_blank"><code>${cell}</code></a></li>`;
+      conditionsEl.innerHTML = `
+        <h3>调试：强制条件</h3>
+        <p style="font-size:.88rem;color:var(--text-muted)">通过 URL 参数 <code>?experiment=...&amp;condition=...</code> 跳过随机分配，用于测试各拓扑。</p>
+        <h4 style="margin-top:.75rem">实验一（2×2）</h4>
+        <ul>${exp1.cells.map((c) => link('experiment1', c)).join('')}</ul>
+        <h4 style="margin-top:.75rem">实验二（3×3）</h4>
+        <ul>${exp2.cells.map((c) => link('experiment2', c)).join('')}</ul>
+      `;
+    }
+    loadConditions();
+
     document.getElementById('btnLoad').addEventListener('click', async () => {
       const token = document.getElementById('adminToken').value;
       try {

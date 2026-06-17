@@ -37,13 +37,14 @@ function writeSession(session) {
   notifyWebhook(session);
 }
 
-function createSession({ experimentId, condition, prolificId }) {
+function createSession({ experimentId, condition, prolificId, topology }) {
   ensureDirs();
   const { v4: uuidv4 } = require('uuid');
   const session = {
     id: uuidv4(),
     experimentId,
     condition,
+    topology: topology || null,
     prolificId: prolificId || null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -100,6 +101,7 @@ function exportSessions(format = 'json') {
         created_at: s.createdAt,
         completed: s.completed,
         ...flattenObject(s.condition || {}, 'condition'),
+        ...flattenObject(s.topology || {}, 'topology'),
         ...flattenObject(s.preSurvey || {}, 'pre'),
         ...flattenObject(s.postSurvey || {}, 'post'),
         ...flattenObject(s.taskData || {}, 'task'),

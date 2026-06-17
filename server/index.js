@@ -35,18 +35,39 @@ function requireSession(req, res, next) {
 // --- Session management ---
 
 app.post('/api/sessions', (req, res) => {
-  const { experimentId, prolificId } = req.body;
+  const { experimentId, prolificId, condition: conditionOverride } = req.body;
   if (!['experiment1', 'experiment2'].includes(experimentId)) {
     return res.status(400).json({ error: 'Invalid experimentId' });
   }
 
-  const condition =
-    experimentId === 'experiment1'
-      ? exp1Config.assignCondition()
-      : exp2Config.assignCondition();
+  let condition;
+  if (conditionOverride) {
+    const parsed =
+      experimentId === 'experiment1'
+        ? exp1Config.parseConditionOverride(conditionOverride)
+        : exp2Config.parseConditionOverride(conditionOverride);
+    if (!parsed) {
+      return res.status(400).json({
+        error: 'Invalid condition override',
+        validCells:
+          experimentId === 'experiment1' ? exp1Config.VALID_CELLS : exp2Config.VALID_CELLS,
+      });
+    }
+    condition = parsed;
+  } else {
+    condition =
+      experimentId === 'experiment1'
+        ? exp1Config.assignCondition()
+        : exp2Config.assignCondition();
+  }
 
-  const session = store.createSession({ experimentId, condition, prolificId });
-  store.appendEvent(session.id, { type: 'session_created', condition });
+  const topology = getTopologyPayload(experimentId, condition);
+  const session = store.createSession({ experimentId, condition, prolificId, topology });
+  store.appendEvent(session.id, {
+    type: 'session_created',
+    condition,
+    topology,
+  });
 
   const payload = {
     sessionId: session.id,
@@ -57,16 +78,55 @@ app.post('/api/sessions', (req, res) => {
   res.json(payload);
 });
 
+function getTopologyPayload(experimentId, condition) {
+  if (experimentId === 'experiment1') {
+    return {
+      ...exp1Config.getNetworkMetrics(condition),
+      ...exp1Config.getTopologyDescription(condition),
+    };
+  }
+  return {
+    ...exp2Config.getNetworkMetrics(condition),
+    ...exp2Config.getTopologyDescription(condition),
+  };
+}
+
+app.get('/api/conditions/:experimentId', (req, res) => {
+  const { experimentId } = req.params;
+  if (experimentId === 'experiment1') {
+    return res.json({
+      experimentId,
+      cells: exp1Config.VALID_CELLS,
+      factors: { agentType: exp1Config.AGENT_TYPES, teamSize: exp1Config.TEAM_SIZES },
+      exampleUrl: '/?experiment=experiment1&condition=ai_large',
+    });
+  }
+  if (experimentId === 'experiment2') {
+    return res.json({
+      experimentId,
+      cells: exp2Config.VALID_CELLS,
+      factors: { role: exp2Config.ROLES, aiTopology: exp2Config.AI_TOPOLOGIES },
+      exampleUrl: '/?experiment=experiment2&condition=reviewer_bypass',
+    });
+  }
+  return res.status(400).json({ error: 'Invalid experimentId' });
+});
+
 function buildExperimentConfig(experimentId, condition) {
   if (experimentId === 'experiment1') {
+    const team = exp1Config.buildTeam(condition);
     return {
       preSurvey: exp1Config.PRE_SURVEY,
       postSurvey: exp1Config.POST_SURVEY,
-      team: exp1Config.buildTeam(condition),
+      team,
       agentType: condition.agentType,
       teamSize: condition.teamSize,
+      topology: exp1Config.getTopologyDescription(condition),
+      networkMetrics: exp1Config.getNetworkMetrics(condition),
+      topologyNodes: exp1Config.getStarTopologyNodes(condition, team),
     };
   }
+  const team = exp2Config.getTeamMembers(condition);
   return {
     preSurvey: exp2Config.PRE_SURVEY,
     postSurvey: exp2Config.POST_SURVEY,
@@ -81,11 +141,15 @@ function buildExperimentConfig(experimentId, condition) {
     recognitionOptions: exp2Config.RECOGNITION_OPTIONS,
     memoContent: exp2Config.MEMO_CONTENT,
     narrative: exp2Config.getWorkflowNarrative(condition),
-    team: exp2Config.getTeamMembers(condition),
+    team,
     role: condition.role,
     roleLabel: exp2Config.ROLE_LABELS[condition.role],
     aiTopology: condition.aiTopology,
     aiTopologyLabel: exp2Config.AI_TOPOLOGY_LABELS[condition.aiTopology],
+    topology: exp2Config.getTopologyDescription(condition),
+    networkMetrics: exp2Config.getNetworkMetrics(condition),
+    topologyNodes: exp2Config.getHierarchyTopologyNodes(condition, team),
+    reportingChain: exp2Config.getReportingChain(condition),
   };
 }
 
@@ -238,16 +302,16 @@ app.get('/api/sessions/:sessionId/exp1/script/:step', requireSession, (req, res)
   let messages = [];
   switch (step) {
     case 'overview':
-      messages = [HOST_SCRIPTS.exp1_overview(condition.teamSize)];
+      messages = HOST_SCRIPTS.exp1_overview(condition.teamSize, condition);
       break;
     case 'intros':
-      messages = HOST_SCRIPTS.exp1_intro_round(team);
+      messages = HOST_SCRIPTS.exp1_intro_round(team, condition);
       break;
     case 'intro-complete':
       messages = [INTRO_COMPLETE_MESSAGE];
       break;
     case 'rules':
-      messages = HOST_SCRIPTS.exp1_task_rules(delegate.name, condition.agentType);
+      messages = HOST_SCRIPTS.exp1_task_rules(delegate.name, condition);
       break;
     case 'dice':
       messages = [HOST_SCRIPTS.exp1_dice_announce];
@@ -279,13 +343,13 @@ app.get('/api/sessions/:sessionId/exp2/script/:step', requireSession, (req, res)
       messages = HOST_SCRIPTS.exp2_overview(narrative);
       break;
     case 'intros':
-      messages = HOST_SCRIPTS.exp2_team_intro(team);
+      messages = HOST_SCRIPTS.exp2_team_intro(team, condition);
       break;
     case 'intro-complete':
       messages = [INTRO_COMPLETE_MESSAGE];
       break;
     case 'workflow':
-      messages = HOST_SCRIPTS.exp2_workflow(condition.role);
+      messages = HOST_SCRIPTS.exp2_workflow(condition);
       break;
     default:
       return res.status(400).json({ error: 'Unknown script step' });
@@ -460,6 +524,9 @@ function flattenForCsv(s) {
     created_at: s.createdAt,
     completed: s.completed,
     ...flat(s.condition, 'condition'),
+    ...(s.experimentId === 'experiment1'
+      ? flat(exp1Config.getNetworkMetrics(s.condition || {}), 'topology')
+      : flat(exp2Config.getNetworkMetrics(s.condition || {}), 'topology')),
     ...flat(s.preSurvey, 'pre'),
     ...flat(s.postSurvey, 'post'),
     ...flat(s.taskData, 'task'),

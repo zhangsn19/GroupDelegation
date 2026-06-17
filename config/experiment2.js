@@ -192,16 +192,109 @@ const ROLE_LABELS = {
   partner: '签发合伙人',
 };
 
+const MEMBER_ROLE_LABELS = {
+  host: '项目协调员',
+  ai: 'AI 助手',
+  drafter: '初级律师（起草）',
+  reviewer: '审核律师',
+  partner: '签发合伙人',
+  participant: '您',
+};
+
 const AI_TOPOLOGY_LABELS = {
   downstream: '下游（AI 起草）',
   upstream: '上游（AI 指令）',
   bypass: '旁路（AI 平行审核）',
 };
 
-function assignCondition() {
+const VALID_CELLS = ROLES.flatMap((role) =>
+  AI_TOPOLOGIES.map((aiTopology) => `${role}_${aiTopology}`)
+);
+
+function parseConditionOverride(cell) {
+  if (!cell || typeof cell !== 'string') return null;
+  const normalized = cell.trim().toLowerCase();
+  if (!VALID_CELLS.includes(normalized)) return null;
+  const [role, aiTopology] = normalized.split('_');
+  return { role, aiTopology, cell: normalized, forced: true };
+}
+
+function assignCondition(override) {
+  const parsed = typeof override === 'string' ? parseConditionOverride(override) : override;
+  if (parsed) return parsed;
   const role = ROLES[Math.floor(Math.random() * ROLES.length)];
   const aiTopology = AI_TOPOLOGIES[Math.floor(Math.random() * AI_TOPOLOGIES.length)];
   return { role, aiTopology, cell: `${role}_${aiTopology}` };
+}
+
+function getReportingChain(condition) {
+  const chain = ['drafter', 'reviewer', 'partner'];
+  const participantIdx = chain.indexOf(condition.role);
+  const upstream = chain.slice(0, participantIdx);
+  const downstream = chain.slice(participantIdx + 1);
+  return { chain, participantIdx, upstream, downstream };
+}
+
+function getNetworkMetrics(condition) {
+  const { participantIdx, upstream, downstream } = getReportingChain(condition);
+  const pathLengthToPartner = downstream.length;
+  const aiPosition =
+    condition.aiTopology === 'downstream'
+      ? 'below_participant'
+      : condition.aiTopology === 'upstream'
+        ? 'above_participant'
+        : 'parallel_reviewer';
+
+  return {
+    topology: `hierarchy_${condition.aiTopology}`,
+    participantRole: condition.role,
+    aiTopology: condition.aiTopology,
+    pathLengthToPartner,
+    degreeCentrality: upstream.length + downstream.length,
+    betweennessCentrality: condition.role === 'reviewer' ? 1 : condition.role === 'drafter' ? 0.5 : 0,
+    aiPosition,
+    reportingUpstream: upstream,
+    reportingDownstream: downstream,
+  };
+}
+
+function getTopologyDescription(condition) {
+  const metrics = getNetworkMetrics(condition);
+  const aiDesc = {
+    downstream: 'AI 位于下游起草环节',
+    upstream: 'AI 位于上游下达指令',
+    bypass: 'AI 作为平行第二审核者',
+  };
+  return {
+    topology: metrics.topology,
+    summary: `层级链：起草 → 审核 → 签发。您是${ROLE_LABELS[condition.role]}，距签发节点 ${metrics.pathLengthToPartner} 步；${aiDesc[condition.aiTopology]}。`,
+    roleLabel: ROLE_LABELS[condition.role],
+    aiTopologyLabel: AI_TOPOLOGY_LABELS[condition.aiTopology],
+  };
+}
+
+function relationshipLabelForMember(member, condition) {
+  const { role, aiTopology } = condition;
+  switch (member.role) {
+    case 'host':
+      return '流程协调';
+    case 'drafter':
+      return role === 'drafter' ? '您 · 上游起草' : '上游 · 起草者';
+    case 'reviewer':
+      if (role === 'reviewer') return '您 · 中段审核';
+      if (role === 'drafter') return '下游 · 审核把关';
+      return '上游 · 已审核';
+    case 'partner':
+      return role === 'partner' ? '您 · 最终签发' : '下游 · 最终签发';
+    case 'ai':
+      if (aiTopology === 'downstream') return '下游 · AI 起草';
+      if (aiTopology === 'upstream') return '上游 · AI 指令';
+      return '旁路 · AI 平行审核';
+    case 'participant':
+      return `您 · ${ROLE_LABELS[role]}`;
+    default:
+      return '';
+  }
 }
 
 function getWorkflowNarrative(condition) {
@@ -256,7 +349,31 @@ function getTeamMembers(condition) {
     members.push({ id: 'partner', name: '张合伙人', avatar: '👔', role: 'partner' });
   }
 
-  return members;
+  return members.map((m) => ({
+    ...m,
+    relationshipLabel: relationshipLabelForMember(m, condition),
+    roleLabel: MEMBER_ROLE_LABELS[m.role] || m.role,
+  }));
+}
+
+function getHierarchyTopologyNodes(condition, team) {
+  const participant = team.find((m) => m.role === 'participant');
+  const ordered = ['drafter', 'reviewer', 'partner'];
+  const nodes = ordered.map((role) => {
+    if (role === condition.role) {
+      return { ...participant, role: 'participant', isYou: true };
+    }
+    return team.find((m) => m.role === role) || null;
+  }).filter(Boolean);
+
+  const ai = team.find((m) => m.role === 'ai');
+  return {
+    type: 'hierarchy',
+    chain: nodes,
+    ai,
+    aiTopology: condition.aiTopology,
+    participantRole: condition.role,
+  };
 }
 
 const ROLE_DUTIES = {
@@ -362,12 +479,19 @@ module.exports = {
   ROLES,
   AI_TOPOLOGIES,
   ROLE_LABELS,
+  MEMBER_ROLE_LABELS,
   AI_TOPOLOGY_LABELS,
   ROLE_DUTIES,
   RECOGNITION_OPTIONS,
+  VALID_CELLS,
   assignCondition,
+  parseConditionOverride,
   getWorkflowNarrative,
   getTeamMembers,
+  getReportingChain,
+  getNetworkMetrics,
+  getTopologyDescription,
+  getHierarchyTopologyNodes,
   getParticipantRoleBriefing,
   getParticipantRoleBriefingShort,
   getRecognitionItems,
