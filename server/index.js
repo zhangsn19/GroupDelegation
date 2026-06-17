@@ -5,7 +5,13 @@ const path = require('path');
 
 const store = require('./store');
 const { generateBotReply } = require('./llm');
-const { HOST_SCRIPTS, getDelegateConfirm } = require('./scripts');
+const {
+  HOST_SCRIPTS,
+  getDelegateConfirm,
+  INTRO_COMPLETE_MESSAGE,
+  INTRO_NEXT_STEP_REPLY,
+  isIntroNextStepQuestion,
+} = require('./scripts');
 const exp1Config = require('../config/experiment1');
 const exp2Config = require('../config/experiment2');
 
@@ -182,17 +188,32 @@ app.post('/api/sessions/:sessionId/exp1/delegate', requireSession, async (req, r
 });
 
 app.post('/api/sessions/:sessionId/exp1/chat', requireSession, async (req, res) => {
-  const { message, botRole } = req.body;
+  const { message, botRole, phase } = req.body;
+  const role = botRole || 'member';
+  const inIntroPhase = phase === 'intro' && role === 'host';
+
+  if (inIntroPhase && isIntroNextStepQuestion(message)) {
+    store.appendEvent(req.session.id, { type: 'chat', role: 'participant', message });
+    store.appendEvent(req.session.id, {
+      type: 'chat',
+      role: 'host',
+      message: INTRO_NEXT_STEP_REPLY,
+      source: 'script',
+    });
+    return res.json({ reply: INTRO_NEXT_STEP_REPLY, source: 'script' });
+  }
+
   const fallbacks = {
-    host: '好的，我们继续。',
+    host: inIntroPhase ? INTRO_NEXT_STEP_REPLY : '好的，我们继续。',
     member: '收到！',
     delegate: getDelegateConfirm(),
   };
 
   const botReply = await generateBotReply({
-    role: botRole || 'member',
+    role,
     context: message,
-    fallback: fallbacks[botRole] || fallbacks.member,
+    fallback: fallbacks[role] || fallbacks.member,
+    phase: inIntroPhase ? 'intro' : undefined,
   });
 
   store.appendEvent(req.session.id, { type: 'chat', role: 'participant', message });
@@ -221,6 +242,9 @@ app.get('/api/sessions/:sessionId/exp1/script/:step', requireSession, (req, res)
       break;
     case 'intros':
       messages = HOST_SCRIPTS.exp1_intro_round(team);
+      break;
+    case 'intro-complete':
+      messages = [INTRO_COMPLETE_MESSAGE];
       break;
     case 'rules':
       messages = HOST_SCRIPTS.exp1_task_rules(delegate.name, condition.agentType);
@@ -256,6 +280,9 @@ app.get('/api/sessions/:sessionId/exp2/script/:step', requireSession, (req, res)
       break;
     case 'intros':
       messages = HOST_SCRIPTS.exp2_team_intro(team);
+      break;
+    case 'intro-complete':
+      messages = [INTRO_COMPLETE_MESSAGE];
       break;
     case 'workflow':
       messages = HOST_SCRIPTS.exp2_workflow(condition.role);

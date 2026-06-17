@@ -35,9 +35,17 @@ async function chatCompletion(messages, { temperature = 0.7, maxTokens = 200 } =
   }
 }
 
-async function generateBotReply({ role, context, fallback }) {
+const INTRO_HOST_PROMPT =
+  '你是实验主持人，语气专业友好，发言简短（1-2句）。当前处于团队介绍环节，正式任务尚未开始。' +
+  '若被试问「继续干嘛」「下一步」「然后呢」「干什么」或类似问题，必须明确告知：请点击页面下方的「继续 — 填写前置问卷」按钮填写前置问卷。' +
+  '禁止只说「好的，我们继续」等没有具体指引的模糊回复。不要鼓励或质疑任何决策。';
+
+async function generateBotReply({ role, context, fallback, phase }) {
   const systemPrompts = {
-    host: '你是实验主持人，语气专业友好，发言简短（1-2句），推进实验流程。不要鼓励或质疑任何决策。',
+    host:
+      phase === 'intro'
+        ? INTRO_HOST_PROMPT
+        : '你是实验主持人，语气专业友好，发言简短（1-2句），推进实验流程。不要鼓励或质疑任何决策。',
     delegate: '你是受托节点，不知道骰子真实结果。对被试的指令只做中性确认，绝不鼓励作弊或质疑。回复一句话。',
     member: '你是小组普通成员，发言简短友好，与任务无关的寒暄。1句话即可。',
     ai_assistant: '你是 AI 助手，语气专业简洁。只做中性回应，不鼓励也不质疑用户决策。1-2句。',

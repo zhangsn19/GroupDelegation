@@ -1,6 +1,27 @@
 const exp1Config = require('../config/experiment1');
 const exp2Config = require('../config/experiment2');
 
+const INTRO_COMPLETE_MESSAGE =
+  '团队介绍环节已结束。请点击页面下方的「继续 — 填写前置问卷」按钮，完成简短前置问卷后即可进入正式任务。';
+
+const INTRO_NEXT_STEP_REPLY =
+  '请点击页面下方的「继续 — 填写前置问卷」按钮进入下一步。需要先完成前置问卷，才会开始正式任务。';
+
+const INTRO_NEXT_STEP_PATTERNS = [
+  /继续.*(干嘛|干啥|做什么|干什么|怎么|如何)/,
+  /(干嘛|干啥|做什么|干什么|怎么|如何).*(继续|下一步|然后)/,
+  /^(干什么|干嘛|干啥)[？?！!。啊呀]?$/,
+  /下一步|然后呢|接下来|接下来干嘛|接下来做什么/,
+  /怎么继续|如何继续|去哪|点哪里|按钮/,
+  /填写.*问卷|前置问卷/,
+];
+
+function isIntroNextStepQuestion(message) {
+  const text = String(message || '').trim();
+  if (!text) return false;
+  return INTRO_NEXT_STEP_PATTERNS.some((re) => re.test(text));
+}
+
 const HOST_SCRIPTS = {
   exp1_overview: (teamSize) => {
     const sizeLabel = teamSize === 'small' ? '3 人' : '5 人';
@@ -82,4 +103,10 @@ function getDelegateConfirm() {
   return DELEGATE_CONFIRM[Math.floor(Math.random() * DELEGATE_CONFIRM.length)];
 }
 
-module.exports = { HOST_SCRIPTS, getDelegateConfirm };
+module.exports = {
+  HOST_SCRIPTS,
+  getDelegateConfirm,
+  INTRO_COMPLETE_MESSAGE,
+  INTRO_NEXT_STEP_REPLY,
+  isIntroNextStepQuestion,
+};

@@ -35,7 +35,7 @@ async function runExperiment1(state) {
     onSend: async (message, chatApi) => {
       const res = await apiFetch(`/sessions/${sessionId}/exp1/chat`, {
         method: 'POST',
-        body: JSON.stringify({ message, botRole: 'host' }),
+        body: JSON.stringify({ message, botRole: 'host', phase: 'intro' }),
       });
       chatApi.addMessage(host, res.reply);
     },
@@ -52,7 +52,14 @@ async function runExperiment1(state) {
   }
 
   await ChatUI.delay(1000);
-  content.insertAdjacentHTML('beforeend', '<div class="step-nav"><button class="btn btn-primary" id="btn-pre">继续 — 填写前置问卷</button></div>');
+  const introCompleteRes = await apiFetch(`/sessions/${sessionId}/exp1/script/intro-complete`);
+  await chat.addMessage(host, introCompleteRes.messages[0]);
+
+  await ChatUI.delay(800);
+  content.insertAdjacentHTML(
+    'beforeend',
+    '<div class="step-nav step-nav-cta"><p class="step-nav-hint">↓ 请点击下方按钮继续</p><button class="btn btn-primary" id="btn-pre">继续 — 填写前置问卷</button></div>'
+  );
   await new Promise((resolve) => {
     content.querySelector('#btn-pre').addEventListener('click', resolve);
   });

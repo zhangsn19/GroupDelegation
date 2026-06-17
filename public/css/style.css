@@ -362,6 +362,26 @@ h3 { font-size: 1.1rem; margin-bottom: .75rem; }
 .recognition-option input { flex-shrink: 0; }
 
 .step-nav { margin-top: 1.5rem; text-align: right; }
+.step-nav-cta {
+  padding: 1rem;
+  border-top: 1px solid var(--border);
+  background: #f8fafc;
+  border-radius: 0 0 8px 8px;
+}
+.step-nav-hint {
+  margin: 0 0 .6rem;
+  font-size: .88rem;
+  color: var(--primary);
+  font-weight: 500;
+}
+.step-nav-cta .btn-primary {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, .15);
+  animation: cta-pulse 2s ease-in-out infinite;
+}
+@keyframes cta-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(37, 99, 235, .15); }
+  50% { box-shadow: 0 0 0 6px rgba(37, 99, 235, .08); }
+}
 
 .info-tag {
   display: inline-block;
