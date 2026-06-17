@@ -1,5 +1,6 @@
 node_modules/
 .env
 data/sessions/
+data/synced/
 data/*.db
 .DS_Store

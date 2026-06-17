@@ -18,10 +18,23 @@ function readSession(sessionId) {
   return JSON.parse(fs.readFileSync(fp, 'utf8'));
 }
 
+function notifyWebhook(session) {
+  const url = process.env.DATA_WEBHOOK_URL;
+  if (!url) return;
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(session),
+  }).catch((err) => {
+    console.warn('[webhook] sync failed:', err.message);
+  });
+}
+
 function writeSession(session) {
   ensureDirs();
   session.updatedAt = new Date().toISOString();
   fs.writeFileSync(sessionPath(session.id), JSON.stringify(session, null, 2));
+  notifyWebhook(session);
 }
 
 function createSession({ experimentId, condition, prolificId }) {

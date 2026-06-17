@@ -174,6 +174,9 @@ hci-experiment/
 │   ├── css/style.css
 │   └── js/                 # 前端逻辑
 ├── data/sessions/          # 运行时数据（gitignore）
+├── data/synced/            # Webhook 同步到本地的备份（gitignore）
+├── scripts/
+│   └── local-receiver.js   # 本地 Webhook 接收器
 ├── render.yaml             # Render Blueprint 配置
 ├── .node-version
 ├── .env.example
@@ -275,6 +278,51 @@ git push -u origin main
 |------|------|
 | **无磁盘（免费层默认）** | `data/sessions/` 在容器重启后会丢失 |
 | **Render Disk（推荐）** | `render.yaml` 已配置 1GB 磁盘挂载到 `/var/data`，session JSON 持久保存 |
+
+### 数据能否写到本地 Mac？
+
+**不能。** Render 上的服务器运行在云端容器里，无法直接写入你电脑上的文件系统。数据只能存在 Render 容器/磁盘，或通过导出、同步等方式传到本地。
+
+| 方案 | 适用场景 | 操作 |
+|------|----------|------|
+| **A. 本地运行** | 小规模测试、局域网被试 | `npm start` → 数据在本地 `data/sessions/` |
+| **B. 管理页导出** | 已有 Render 部署，定期下载 | 访问 `/admin.html` 或 `curl` 导出 CSV/JSON |
+| **C. Webhook 实时同步** | 继续用 Render 公网 URL，同时本地备份 | 见下方「Webhook 同步到本地」 |
+| **D. 外部数据库** | 大规模、多研究员协作 | Supabase/MongoDB 等（需额外开发，一般不必） |
+| **E. ngrok + 本地服务** | 不想用 Render，但要公网 URL | `npm start` + `ngrok http 3456`，数据全在本地 |
+
+**折中方案：** Render 挂载 Persistent Disk（已在 `render.yaml` 配置）保证云端不丢数据，需要时再通过管理页或 `curl` 定期导出到 Mac。
+
+#### Webhook 同步到本地（方案 C）
+
+每次 session 保存时，若设置了 `DATA_WEBHOOK_URL`，服务器会 fire-and-forget POST 完整 session JSON，不阻塞被试流程。
+
+**1. 在本机启动接收器**
+
+```bash
+cd hci-experiment
+npm run receiver
+# 默认监听 http://127.0.0.1:9999，文件写入 data/synced/<session-id>.json
+```
+
+**2. 用 ngrok 暴露到公网**（需安装 [ngrok](https://ngrok.com/)）
+
+```bash
+ngrok http 9999
+# 记下 Forwarding URL，例如 https://abc123.ngrok-free.app
+```
+
+**3. 在 Render Dashboard → Environment 添加**
+
+| Key | Value |
+|-----|-------|
+| `DATA_WEBHOOK_URL` | `https://abc123.ngrok-free.app/` |
+
+保存后重新部署。**注意：** 做实验时 Mac 需开机且 ngrok + receiver 在运行；ngrok 免费 URL 每次重启会变，需更新 Render 环境变量。
+
+**4. 验证**
+
+完成一次实验流程后，检查 `data/synced/` 是否出现新的 JSON 文件。
 
 ### 部署后验证
 
