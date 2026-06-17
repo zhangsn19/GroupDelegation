@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HCI 实验 — 数据管理</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div id="app" style="max-width:720px">
+    <div class="card">
+      <h1>实验数据管理</h1>
+      <p style="color:var(--text-muted);margin-bottom:1rem">研究员专用。需要管理员令牌。</p>
+      <div class="form-group">
+        <label for="adminToken">Admin Token</label>
+        <input type="password" id="adminToken" placeholder="与 .env 中 ADMIN_TOKEN 一致" />
+      </div>
+      <button class="btn btn-primary" id="btnLoad">加载数据信息</button>
+      <div id="info" style="margin-top:1.5rem"></div>
+    </div>
+  </div>
+  <script>
+    const infoEl = document.getElementById('info');
+    document.getElementById('btnLoad').addEventListener('click', async () => {
+      const token = document.getElementById('adminToken').value;
+      try {
+        const res = await fetch('/api/admin/info?token=' + encodeURIComponent(token));
+        if (!res.ok) throw new Error('认证失败');
+        const data = await res.json();
+        infoEl.innerHTML = `
+          <h3>数据存储</h3>
+          <p><strong>服务器目录：</strong><code>${data.dataDirectory}</code></p>
+          <p>每条被试记录为一个 JSON 文件：<code>&lt;session-id&gt;.json</code></p>
+          <p>Session 总数：${data.sessionCount}（已完成 ${data.completedCount}）</p>
+          <h3 style="margin-top:1rem">导出</h3>
+          <ul>
+            <li><a href="/api/admin/export?token=${encodeURIComponent(token)}" target="_blank">JSON 全部数据</a></li>
+            <li><a href="/api/admin/export?format=csv&token=${encodeURIComponent(token)}" target="_blank">CSV 全部数据</a></li>
+            <li><a href="/api/admin/export?experiment=experiment1&format=csv&token=${encodeURIComponent(token)}" target="_blank">CSV 实验一</a></li>
+            <li><a href="/api/admin/export?experiment=experiment2&format=csv&token=${encodeURIComponent(token)}" target="_blank">CSV 实验二</a></li>
+          </ul>
+        `;
+      } catch (e) {
+        infoEl.innerHTML = '<p style="color:var(--danger)">加载失败：' + e.message + '</p>';
+      }
+    });
+  </script>
+</body>
+</html>

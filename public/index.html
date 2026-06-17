@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>HCI 协作实验平台</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Landing -->
+    <section id="screen-landing" class="screen active">
+      <div class="card hero">
+        <h1>人机协作实验平台</h1>
+        <p class="subtitle">不道德委托行为研究 — 被试参与界面</p>
+        <div class="experiment-select">
+          <button class="btn btn-primary btn-lg" data-experiment="experiment1">
+            <span class="btn-title">实验一：群聊骰子协作</span>
+            <span class="btn-desc">考察 AI vs 人类受托、团队规模对委托行为的影响</span>
+          </button>
+          <button class="btn btn-primary btn-lg" data-experiment="experiment2">
+            <span class="btn-title">实验二：法律文书审查</span>
+            <span class="btn-desc">考察层级位置、AI 拓扑对失察行为的影响</span>
+          </button>
+        </div>
+        <div class="form-group" style="margin-top:1.5rem">
+          <label for="prolificId">Prolific ID（可选）</label>
+          <input type="text" id="prolificId" placeholder="留空则自动生成" />
+        </div>
+      </div>
+    </section>
+
+    <!-- Consent -->
+    <section id="screen-consent" class="screen">
+      <div class="card">
+        <h2>知情同意书</h2>
+        <div class="consent-text">
+          <p>欢迎参加本研究。本实验由研究机构开展，旨在了解多人协作情境下的决策行为。</p>
+          <p><strong>实验说明：</strong></p>
+          <ul>
+            <li>您将参与一个模拟的团队协作任务，可能需要回答问卷。</li>
+            <li>实验中的部分「团队成员」由计算机程序扮演，这一点将在实验结束后向您说明。</li>
+            <li>您的回答将被匿名记录，仅用于学术研究。</li>
+            <li>您可以随时退出实验，但退出后将无法获得完整报酬。</li>
+            <li>实验预计耗时 15–25 分钟。</li>
+          </ul>
+          <p>点击「我同意参加」即表示您已阅读并理解上述内容，自愿参加本实验。</p>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-secondary" id="btn-consent-decline">不同意</button>
+          <button class="btn btn-primary" id="btn-consent-agree">我同意参加</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Generic content area for experiment flows -->
+    <section id="screen-experiment" class="screen">
+      <header class="top-bar">
+        <span id="exp-title" class="exp-title"></span>
+        <span id="phase-indicator" class="phase-badge"></span>
+      </header>
+      <main id="experiment-content"></main>
+    </section>
+
+    <!-- Debrief -->
+    <section id="screen-debrief" class="screen">
+      <div class="card">
+        <h2>实验结束 — 事后说明</h2>
+        <div id="debrief-content"></div>
+        <p class="thank-you">感谢您的参与！</p>
+      </div>
+    </section>
+  </div>
+
+  <script src="/js/survey.js"></script>
+  <script src="/js/chat.js"></script>
+  <script src="/js/experiment1.js"></script>
+  <script src="/js/experiment2.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>

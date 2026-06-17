@@ -1,0 +1,20 @@
+{
+  "name": "hci-experiment",
+  "version": "1.0.0",
+  "description": "HCI experiment platform for human-AI collaboration studies",
+  "main": "server/index.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "deploy": "git push origin main"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "uuid": "^10.0.0"
+  }
+}
