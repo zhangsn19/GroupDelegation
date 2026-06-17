@@ -3,9 +3,9 @@
  * Local webhook receiver — saves session JSON from Render to data/synced/
  *
  * Usage:
- *   node scripts/local-receiver.js
- *   # then expose with ngrok: ngrok http 9999
- *   # set DATA_WEBHOOK_URL on Render to https://<ngrok-id>.ngrok-free.app/
+ *   npm run receiver
+ *   npm run tunnel:receiver   # Cloudflare quick tunnel (recommended)
+ *   # set DATA_WEBHOOK_URL on Render to the tunnel URL
  */
 
 const fs = require('fs');

@@ -10,7 +10,9 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "deploy": "git push origin main",
-    "receiver": "node scripts/local-receiver.js"
+    "receiver": "node scripts/local-receiver.js",
+    "tunnel": "node scripts/tunnel.js",
+    "tunnel:receiver": "TUNNEL_PORT=9999 node scripts/tunnel.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

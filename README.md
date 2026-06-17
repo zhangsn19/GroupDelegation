@@ -22,8 +22,73 @@
 
 - **后端**：Node.js + Express
 - **前端**：原生 HTML / CSS / JavaScript
-- **数据存储**：JSON 文件（`data/sessions/`）
+- **数据存储**：JSON 文件（`data/sessions/`，自动写入，无需手动导出）
 - **LLM**：OpenAI 兼容 API（后端代理，密钥不暴露给前端）
+
+## 推荐工作流：本地优先
+
+**数据会自动保存到本地 JSON 文件，不需要 CSV 导出流程。**
+
+| 场景 | 推荐方案 | 数据位置 | 公网链接 |
+|------|----------|----------|----------|
+| **小规模实验 / 测试** | 本地运行 | `data/sessions/` | 局域网 IP 或 Cloudflare Tunnel |
+| **需要稳定公网 URL + 本地数据** | 本地 + Tunnel（**最推荐**） | `data/sessions/` | `*.trycloudflare.com` |
+| **已部署 Render，想同步到 Mac** | Render + Webhook | `data/synced/` | `groupdelegation.onrender.com` |
+| **纯云端、不介意手动备份** | Render 单部署 | Render 磁盘 | `*.onrender.com` |
+
+### 方案 A：本地运行 + Cloudflare Tunnel（最推荐）
+
+被试通过公网链接访问，数据直接写入你 Mac 上的 `data/sessions/`，无需 CSV 导出。
+
+**终端 1 — 启动实验服务**
+
+```bash
+cd hci-experiment
+npm install
+cp .env.example .env   # 填入 LLM_API_KEY
+npm start
+```
+
+**终端 2 — 暴露公网 URL（免费）**
+
+```bash
+npm run tunnel
+# 输出类似：https://random-name.trycloudflare.com
+# 把此链接发给被试即可
+```
+
+需要安装 [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)：`brew install cloudflared`
+
+> Tunnel 运行期间 URL 稳定；重启 tunnel 会换一个新地址。比 ngrok 免费版（每次重启随机变）更省心。
+
+### 方案 B：Render 公网 + Webhook 同步到本地
+
+继续使用 `groupdelegation.onrender.com`，同时每次 session 保存时自动 POST 到你 Mac。
+
+**终端 1**
+
+```bash
+npm run receiver
+```
+
+**终端 2**
+
+```bash
+npm run tunnel:receiver
+# 记下输出的 https://xxxx.trycloudflare.com
+```
+
+**Render Dashboard → Environment** 添加 `DATA_WEBHOOK_URL` = 上面的 tunnel URL，重新部署。
+
+同步文件写入 `data/synced/<session-id>.json`。做实验时 Mac 需开机且两个终端在运行。
+
+### 方案 C：仅局域网
+
+```bash
+npm start
+# 其他设备访问 http://<局域网IP>:3456
+ipconfig getifaddr en0
+```
 
 ## 快速开始
 
@@ -61,18 +126,7 @@ npm run dev
 
 浏览器访问：**http://localhost:3456**
 
-### 局域网 / 其他设备访问
-
-服务默认绑定 `0.0.0.0`，同一 Wi‑Fi 下的手机或其他电脑也可访问。
-
-1. 在本机查看局域网 IP（macOS）：
-   ```bash
-   ipconfig getifaddr en0
-   ```
-2. 在其他设备浏览器打开：`http://<局域网IP>:3456`  
-   例如：`http://192.168.1.100:3456`
-
-若无法访问，请检查本机防火墙是否放行 3456 端口。
+被试数据会自动写入 `data/sessions/`，无需手动导出。公网访问见上文「方案 A」。
 
 ## 使用说明
 
@@ -82,19 +136,19 @@ npm run dev
 4. 按提示完成全部实验流程
 5. 实验结束后查看事后说明（debriefing）
 
-## 数据存储与导出
+## 数据存储
 
-### 存储位置
+### 自动保存（主流程）
 
-每条被试的完整数据保存为一个 JSON 文件：
+每条被试的完整数据在实验过程中**自动**保存为一个 JSON 文件：
 
 ```
 hci-experiment/data/sessions/<session-id>.json
 ```
 
-运行时自动创建；该目录已加入 `.gitignore`，不会进入版本控制。
+Webhook 同步（方案 B）额外写入 `data/synced/`。两个目录均已加入 `.gitignore`。
 
-**研究员管理页：** 启动服务后访问 `http://localhost:3456/admin.html`，输入 `ADMIN_TOKEN` 可查看存储路径并下载导出文件。
+**研究员管理页：** 访问 `http://localhost:3456/admin.html`，输入 `ADMIN_TOKEN` 可查看 session 数量与存储路径。
 
 ### JSON 结构（单条 session）
 
@@ -125,17 +179,16 @@ hci-experiment/data/sessions/<session-id>.json
 - `verificationActions` / `verificationCount` — 核验按钮点击
 - `reviewDurationMs` — 审查时长
 
-### 导出命令
+### 备份导出（可选）
+
+管理页或 API 可下载 JSON/CSV 作为备份，**日常分析直接读 `data/sessions/` 里的 JSON 即可**，不必走 CSV 流程。
 
 ```bash
-# JSON 全部
+# JSON 全部（备份）
 curl -H "X-Admin-Token: hci-admin-dev" http://localhost:3456/api/admin/export -o all.json
 
-# CSV 全部（扁平化，适合 SPSS/R）
+# CSV（SPSS/R 用，可选）
 curl -H "X-Admin-Token: hci-admin-dev" "http://localhost:3456/api/admin/export?format=csv" -o results.csv
-
-# 按实验筛选
-curl -H "X-Admin-Token: hci-admin-dev" "http://localhost:3456/api/admin/export?experiment=experiment2&format=csv" -o exp2.csv
 
 # 查看存储路径与 session 数量
 curl -H "X-Admin-Token: hci-admin-dev" http://localhost:3456/api/admin/info
@@ -152,9 +205,32 @@ curl -H "X-Admin-Token: hci-admin-dev" http://localhost:3456/api/admin/info
 
 实验一的行为偏离 `task_deviation` 为主 DV；后置问卷 `post_inflate_awareness` / `post_inflate_considered` 补充自我报告。
 
-## 数据导出（简要）
+## 公网域名说明
 
-实验数据保存在 `data/sessions/<session-id>.json`。详见上文「数据存储与导出」。
+### 免费子域名（无需注册，推荐）
+
+| 服务 | 示例 | 说明 |
+|------|------|------|
+| **Cloudflare Tunnel** | `*.trycloudflare.com` | 免费、稳定，本项目 `npm run tunnel` 即用 |
+| **Render** | `groupdelegation.onrender.com` | 已有部署，免费子域名 |
+| **ngrok 免费版** | `*.ngrok-free.app` | 每次重启 URL 变化 |
+| Vercel / Netlify | `*.vercel.app` 等 | 需改部署方式，本项目未配置 |
+
+### 自定义域名（需付费）
+
+| 来源 | 情况 |
+|------|------|
+| **阿里云 / 腾讯云 / 华为云** | `.com` / `.cn` 通常 ¥30–70/年，偶有首年优惠，**没有长期免费的自定义域名** |
+| Freenom（`.tk` / `.ml`） | 已基本不可用，不建议 |
+| Namecheap / Porkbun | 首年有时 $1–2，非免费 |
+
+若已购买域名（如在阿里云注册 `yourlab.cn`），在 Render Dashboard → Settings → Custom Domains 添加，按提示配置 DNS CNAME 即可。
+
+### 针对本项目的建议
+
+1. **本地数据 + 公网被试链接**：`npm start` + `npm run tunnel`（方案 A）
+2. **继续用 Render**：保留 `groupdelegation.onrender.com` + Webhook 同步到 Mac（方案 B）
+3. **想要自己的域名**：在阿里云等购买后指向 Render，约几十元/年
 
 ## 项目结构
 
@@ -176,7 +252,8 @@ hci-experiment/
 ├── data/sessions/          # 运行时数据（gitignore）
 ├── data/synced/            # Webhook 同步到本地的备份（gitignore）
 ├── scripts/
-│   └── local-receiver.js   # 本地 Webhook 接收器
+│   ├── local-receiver.js   # 本地 Webhook 接收器（Render → Mac）
+│   └── tunnel.js           # Cloudflare quick tunnel
 ├── render.yaml             # Render Blueprint 配置
 ├── .node-version
 ├── .env.example
@@ -208,17 +285,17 @@ curl http://localhost:3456/api/health
 
 ---
 
-## 部署到 Render（云端访问）
+## 部署到 Render（备选：纯云端）
 
-> **说明：** `npm start` 仅在本地启动服务器，**不会**自动部署到 Render。  
-> 标准流程：**Git push → Render 自动构建部署**（推荐）。
+> 若采用上文 **方案 A（本地 + tunnel）** 或 **方案 B（Render + Webhook）**，可跳过本节的大部分内容。
 
 ### 本地 vs 云端
 
 | 命令 | 作用 |
 |------|------|
-| `npm start` | 本地运行，默认 `http://localhost:3456` |
-| `npm run deploy` | 推送代码到 GitHub `main` 分支，触发 Render 自动部署（需先完成下方一次性配置） |
+| `npm start` | 本地运行，数据在 `data/sessions/` |
+| `npm run tunnel` | 为本地服务生成公网 HTTPS 链接 |
+| `npm run deploy` | 推送代码到 GitHub，触发 Render 自动部署 |
 
 ### 一次性配置
 
@@ -272,74 +349,46 @@ git push -u origin main
    - Size: 1 GB
    - 设置 `DATA_DIR=/var/data`
 
-### 数据持久化说明
+### 数据持久化（仅纯 Render 时关注）
 
 | 方案 | 说明 |
 |------|------|
 | **无磁盘（免费层默认）** | `data/sessions/` 在容器重启后会丢失 |
-| **Render Disk（推荐）** | `render.yaml` 已配置 1GB 磁盘挂载到 `/var/data`，session JSON 持久保存 |
+| **Render Disk** | `render.yaml` 已配置 1GB 磁盘挂载到 `/var/data` |
+| **Webhook 同步（推荐）** | 配合方案 B，数据自动写到 Mac `data/synced/` |
 
-### 数据能否写到本地 Mac？
+### Webhook 同步到本地（方案 B 详情）
 
-**不能。** Render 上的服务器运行在云端容器里，无法直接写入你电脑上的文件系统。数据只能存在 Render 容器/磁盘，或通过导出、同步等方式传到本地。
-
-| 方案 | 适用场景 | 操作 |
-|------|----------|------|
-| **A. 本地运行** | 小规模测试、局域网被试 | `npm start` → 数据在本地 `data/sessions/` |
-| **B. 管理页导出** | 已有 Render 部署，定期下载 | 访问 `/admin.html` 或 `curl` 导出 CSV/JSON |
-| **C. Webhook 实时同步** | 继续用 Render 公网 URL，同时本地备份 | 见下方「Webhook 同步到本地」 |
-| **D. 外部数据库** | 大规模、多研究员协作 | Supabase/MongoDB 等（需额外开发，一般不必） |
-| **E. ngrok + 本地服务** | 不想用 Render，但要公网 URL | `npm start` + `ngrok http 3456`，数据全在本地 |
-
-**折中方案：** Render 挂载 Persistent Disk（已在 `render.yaml` 配置）保证云端不丢数据，需要时再通过管理页或 `curl` 定期导出到 Mac。
-
-#### Webhook 同步到本地（方案 C）
-
-每次 session 保存时，若设置了 `DATA_WEBHOOK_URL`，服务器会 fire-and-forget POST 完整 session JSON，不阻塞被试流程。
-
-**1. 在本机启动接收器**
+每次 session 保存时，若 Render 设置了 `DATA_WEBHOOK_URL`，服务器会 fire-and-forget POST 完整 session JSON，不阻塞被试流程。
 
 ```bash
-cd hci-experiment
+# 终端 1
 npm run receiver
-# 默认监听 http://127.0.0.1:9999，文件写入 data/synced/<session-id>.json
+
+# 终端 2
+npm run tunnel:receiver
+# 将输出的 https://xxxx.trycloudflare.com/ 填入 Render → DATA_WEBHOOK_URL
 ```
 
-**2. 用 ngrok 暴露到公网**（需安装 [ngrok](https://ngrok.com/)）
+完成一次实验后检查 `data/synced/` 是否出现新 JSON。
 
-```bash
-ngrok http 9999
-# 记下 Forwarding URL，例如 https://abc123.ngrok-free.app
-```
-
-**3. 在 Render Dashboard → Environment 添加**
-
-| Key | Value |
-|-----|-------|
-| `DATA_WEBHOOK_URL` | `https://abc123.ngrok-free.app/` |
-
-保存后重新部署。**注意：** 做实验时 Mac 需开机且 ngrok + receiver 在运行；ngrok 免费 URL 每次重启会变，需更新 Render 环境变量。
-
-**4. 验证**
-
-完成一次实验流程后，检查 `data/synced/` 是否出现新的 JSON 文件。
+也可用 ngrok：`ngrok http 9999`（免费版 URL 每次重启会变）。
 
 ### 部署后验证
 
 ```bash
-# 替换为你的 Render URL
-curl https://hci-experiment.onrender.com/api/health
+curl https://groupdelegation.onrender.com/api/health
 # 期望：{"ok":true,"llmConfigured":true}
 
-# 被试访问
-open https://hci-experiment.onrender.com
+# 被试访问（示例 URL，以 Dashboard 为准）
+open https://groupdelegation.onrender.com
 
-# 数据导出（使用 Render 中设置的 ADMIN_TOKEN）
+# 备用导出（Webhook 未配置时）
 curl -H "X-Admin-Token: <your-token>" \
-  "https://hci-experiment.onrender.com/api/admin/export?format=csv" -o results.csv
+  "https://groupdelegation.onrender.com/api/admin/export?format=csv" -o results.csv
 ```
 
-**线上 URL 示例：** `https://hci-experiment.onrender.com`（实际 URL 以 Render Dashboard 显示为准）
+**线上 URL：** `https://groupdelegation.onrender.com`
 
 ### 后续更新
 
