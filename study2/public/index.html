@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>团队报告与决策研究</title>
+    <link rel="stylesheet" href="/css/style.css">
+  </head>
+  <body>
+    <div id="debug-banner" class="debug-hint debug-banner" hidden>调试模式</div>
+    <div id="app">
+      <section id="screen-landing" class="screen active">
+        <div class="card hero">
+          <p class="eyebrow">Group Deception v2</p>
+          <h1>团队报告与决策研究</h1>
+          <p class="subtitle">共享群聊 AI 与个人报告提交任务</p>
+          <div class="hero-actions">
+            <button class="btn btn-primary btn-lg" id="btn-start">
+              <span class="btn-title">开始参与</span>
+              <span class="btn-desc">进入模拟同事群体</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <section id="screen-consent" class="screen">
+        <div class="card">
+          <h2>知情同意</h2>
+          <div class="consent-text">
+            <p>你将进入一个模拟同事群体，并使用共享群聊 AI 完成个人报告。</p>
+            <ul>
+              <li>部分群体互动内容由系统生成。</li>
+              <li>个人奖励由你自己的选择决定。</li>
+              <li>其他成员不能看到你的最终个人提交。</li>
+              <li>你可以随时退出。</li>
+              <li>实验结束后会说明完整安排。</li>
+            </ul>
+          </div>
+          <label class="consent-check">
+            <input type="checkbox" id="consent-check">
+            <span>我已阅读以上信息，并同意继续参与。</span>
+          </label>
+          <div class="btn-row">
+            <button class="btn btn-secondary" id="btn-consent-decline">退出</button>
+            <button class="btn btn-primary" id="btn-consent-agree" disabled>我同意参加</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="screen-experiment" class="screen">
+        <header class="top-bar">
+          <span id="exp-title" class="exp-title">团队报告与决策研究</span>
+          <span id="phase-indicator" class="phase-badge"></span>
+        </header>
+        <main id="experiment-content"></main>
+      </section>
+
+      <section id="screen-complete" class="screen">
+        <div class="card">
+          <p class="eyebrow">完成</p>
+          <h2>已完成</h2>
+          <p class="thank-you">你的记录已保存。感谢参与。</p>
+        </div>
+      </section>
+    </div>
+
+    <script src="/js/survey.js"></script>
+    <script src="/js/chat.js"></script>
+    <script src="/js/comprehension.js"></script>
+    <script src="/js/study2-income.js"></script>
+    <script src="/js/app.js"></script>
+  </body>
+</html>

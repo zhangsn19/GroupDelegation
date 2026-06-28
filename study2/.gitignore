@@ -1,0 +1,10 @@
+node_modules/
+.npm-cache/
+.env
+data/sessions/*.json
+data/test-sessions/
+data/synced/*
+!data/sessions/.gitkeep
+!data/synced/.gitkeep
+npm-debug.log*
+.DS_Store
