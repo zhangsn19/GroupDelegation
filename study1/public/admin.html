@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Group Deception v2 管理端</title>
+    <link rel="stylesheet" href="/css/style.css">
+  </head>
+  <body>
+    <main class="admin-page">
+      <section class="panel">
+        <div class="section-kicker">Admin</div>
+        <h1>管理端导出</h1>
+        <p class="muted">输入 `ADMIN_TOKEN` 后查看计数并下载导出表。</p>
+        <label class="field-label" for="admin-token">管理员 token</label>
+        <input id="admin-token" class="text-input" type="password" autocomplete="off">
+        <div class="action-row">
+          <button id="load-summary" class="primary-button">查看汇总</button>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>汇总</h2>
+        <pre id="summary-output" class="code-output">尚未加载。</pre>
+        <div id="export-links" class="export-grid"></div>
+      </section>
+    </main>
+    <script>
+      const tokenInput = document.querySelector("#admin-token");
+      const summaryOutput = document.querySelector("#summary-output");
+      const links = document.querySelector("#export-links");
+      const exportsList = [
+        ["JSON 原始数据", "/api/admin/export/json"],
+        ["participants.csv", "/api/admin/export/participants.csv"],
+        ["study1_dice_rounds.csv", "/api/admin/export/study1_dice_rounds.csv"],
+        ["study2_effort_rounds.csv", "/api/admin/export/study2_effort_rounds.csv"],
+        ["study2_income_reports.csv", "/api/admin/export/study2_income_reports.csv"]
+      ];
+      document.querySelector("#load-summary").addEventListener("click", async () => {
+        const token = encodeURIComponent(tokenInput.value.trim());
+        const response = await fetch(`/api/admin/summary?token=${token}`);
+        const data = await response.json();
+        summaryOutput.textContent = JSON.stringify(data, null, 2);
+        links.innerHTML = exportsList.map(([label, href]) => (
+          `<a class="secondary-button" href="${href}?token=${token}" target="_blank" rel="noreferrer">${label}</a>`
+        )).join("");
+      });
+    </script>
+  </body>
+</html>
