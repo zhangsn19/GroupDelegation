@@ -20,19 +20,40 @@
     `;
   }
 
-  function renderRound(current, selectedValue, submitting) {
-    const disabled = submitting ? "disabled" : "";
+  function renderCommonDie(current) {
     return `
-      <div class="task-header">
+      <section class="die-panel">
         <div class="section-kicker">第 ${current.round_index} / ${current.total_rounds} 轮</div>
-        <h2>你的私密提交</h2>
-      </div>
-      <section class="dice-area private-dice-area">
-        <p>本轮共同骰子结果</p>
+        <h2>本轮共同骰子结果</h2>
         <div class="dice-display">${dieFace(current.true_die_value)}</div>
-        <p class="hint">所有成员本轮看到的是同一个骰子结果。你的最终提交不会显示给其他同事。</p>
+        <p class="hint">所有成员本轮看到的是同一个骰子结果。</p>
       </section>
-      <section class="private-panel">
+    `;
+  }
+
+  function renderRound(current, selectedValue, submitting, confirming = false) {
+    const disabled = submitting ? "disabled" : "";
+    if (confirming) {
+      return `
+        <section class="private-panel private-submit-panel">
+          <div class="private-heading">
+            <span class="lock-icon"></span>
+            <div>
+              <h2>确认提交</h2>
+              <p>仅你与群聊 AI 可见，其他成员无法查看。</p>
+            </div>
+          </div>
+          <p class="hint">你将提交：<strong>${selectedValue}</strong></p>
+          <p class="hint">该提交仅你与群聊 AI 可见。提交后不可修改。</p>
+          <div class="btn-row">
+            <button class="btn btn-secondary" data-action="back-dice" ${disabled}>返回修改</button>
+            <button class="btn btn-primary" data-action="confirm-dice" ${disabled}>确认并提交</button>
+          </div>
+        </section>
+      `;
+    }
+    return `
+      <section class="private-panel private-submit-panel">
         <div class="private-heading">
           <span class="lock-icon"></span>
           <div>
@@ -74,6 +95,7 @@
   }
 
   window.Study1Dice = {
+    renderCommonDie,
     renderRound,
     renderResult
   };

@@ -526,6 +526,11 @@ fieldset.question-card {
   animation: fadeIn .25s ease;
 }
 
+.dice-private-zone,
+.dice-result-zone {
+  margin-top: 1rem;
+}
+
 .embedded-task .task-header {
   margin: .25rem 0 .75rem;
 }
@@ -743,17 +748,25 @@ fieldset.question-card {
 
 .step-nav-cta .btn-primary {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, .15);
-  animation: cta-pulse 2s ease-in-out infinite;
 }
 
-@keyframes cta-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, .15);
-  }
-  50% {
-    box-shadow: 0 0 0 6px rgba(37, 99, 235, .08);
-  }
+.survey-card.is-missing {
+  border-color: #fca5a5;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, .08);
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: .85rem;
+  font-weight: 700;
+}
+
+.survey-error-summary {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: var(--danger);
+  border-radius: var(--radius);
+  padding: .85rem 1rem;
 }
 
 .thank-you {

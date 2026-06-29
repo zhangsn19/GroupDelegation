@@ -9,17 +9,25 @@
   const content = document.querySelector("#experiment-content");
   const phaseIndicator = document.querySelector("#phase-indicator");
   const debugBanner = document.querySelector("#debug-banner");
+  const participantId = (
+    params.get("participant_id") ||
+    params.get("participantId") ||
+    params.get("PROLIFIC_PID") ||
+    params.get("pid") ||
+    ""
+  ).trim();
 
   const state = {
     config: null,
     session: null,
     study: params.get("study") || "study1",
     requestedCondition: params.get("condition"),
-    prolificId: params.get("PROLIFIC_PID") || params.get("prolific_id") || "",
+    participantId,
     members: [],
     comprehensionAnswers: {},
     diceCurrent: null,
     diceSelected: null,
+    diceConfirming: false,
     diceSubmitting: false,
     renderToken: 0
   };
@@ -55,13 +63,36 @@
     content.insertAdjacentHTML("afterbegin", `<div class="error-box">${message}</div>`);
   }
 
+  async function withButtonBusy(button, label, task) {
+    if (!button || button.dataset.busy === "true") return;
+    const originalText = button.textContent;
+    button.dataset.busy = "true";
+    button.disabled = true;
+    if (label) button.textContent = label;
+    try {
+      return await task();
+    } finally {
+      if (button.isConnected) {
+        button.disabled = false;
+        button.textContent = originalText;
+        delete button.dataset.busy;
+      }
+    }
+  }
+
+  function busyLabel(action) {
+    return ["show-rules", "back-rules", "retry-comprehension", "next-dice"].includes(action)
+      ? "正在加载…"
+      : "正在提交…";
+  }
+
   async function startSession() {
     const data = await api("/api/session", {
       method: "POST",
       body: {
         study: state.study,
         condition: state.requestedCondition,
-        prolific_id: state.prolificId
+        participant_id: state.participantId
       }
     });
     setSession(data.session);
@@ -72,7 +103,7 @@
     if (state.study === "study2") {
       showScreen("experiment");
       setPhase("Study 2");
-      content.innerHTML = window.Study2Income.renderPlaceholder(state.config.study2.message);
+      content.innerHTML = `<div class="card"><h2>Study 2</h2><p>${state.config.study2.message}</p></div>`;
       return;
     }
     if (state.session.status === "created") {
@@ -80,6 +111,7 @@
       return;
     }
     if (state.session.status === "completed") {
+      renderCompletion();
       showScreen("complete");
       return;
     }
@@ -116,7 +148,7 @@
 
   async function submitBaseline() {
     const { responses, missing } = window.Survey.collectSurvey(content, state.config.study1.baselineItems);
-    if (missing.length) return setError("请完成所有题目后继续。");
+    if (missing.length) return window.Survey.showMissing(content, missing);
     const data = await api(`/api/session/${state.session.id}/baseline`, { method: "POST", body: { responses } });
     setSession(data.session);
     await renderGroupIntro();
@@ -200,6 +232,7 @@
     setSession(data.session);
     state.diceCurrent = data.current;
     state.diceSelected = null;
+    state.diceConfirming = false;
     await renderDice(true);
   }
 
@@ -212,6 +245,8 @@
     }
     if (resetRoundView) window.scrollTo({ top: 0, behavior: "smooth" });
     content.innerHTML = "";
+    content.insertAdjacentHTML("beforeend", window.Study1Dice.renderCommonDie(state.diceCurrent));
+    content.insertAdjacentHTML("beforeend", `<p class="status-hint">正在展示成员提交记录</p>`);
     const chat = window.ChatView.createReadOnlyChat(content, state.members, {
       footerText: "个人任务阶段：其他成员无法查看你的最终提交"
     });
@@ -228,18 +263,32 @@
     } else {
       for (const item of roundMessages) chat.addMessage(item.sender, item.text);
     }
+    const presented = await api(`/api/session/${state.session.id}/dice/presented`, { method: "POST" });
+    if (token !== state.renderToken) return;
+    setSession(presented.session);
+    state.diceCurrent = presented.current;
     const task = document.createElement("div");
-    task.className = "embedded-task";
-    task.innerHTML = window.Study1Dice.renderRound(state.diceCurrent, state.diceSelected, state.diceSubmitting);
-    chat.messagesEl.appendChild(task);
-    if (resetRoundView) chat.messagesEl.scrollTop = 0;
-    else task.scrollIntoView({ block: "nearest" });
+    task.className = "embedded-task dice-private-zone";
+    task.innerHTML = window.Study1Dice.renderRound(
+      state.diceCurrent,
+      state.diceSelected,
+      state.diceSubmitting,
+      state.diceConfirming
+    );
+    content.appendChild(task);
+    content.querySelector(".status-hint")?.remove();
+    task.insertAdjacentHTML("beforebegin", `<p class="status-hint">请完成你的私密提交</p>`);
+    task.scrollIntoView({ block: "nearest", behavior: resetRoundView ? "smooth" : "auto" });
   }
 
   async function submitDice() {
     if (!state.diceSelected || state.diceSubmitting) return;
-    const confirmed = window.confirm(`请确认让群聊 AI 提交：${state.diceSelected}`);
-    if (!confirmed) return;
+    state.diceConfirming = true;
+    await renderDice(false);
+  }
+
+  async function confirmDice() {
+    if (!state.diceSelected || state.diceSubmitting) return;
     state.diceSubmitting = true;
     await renderDice(false);
     try {
@@ -259,12 +308,13 @@
       });
       chat.addMessage({ name: "群聊 AI", avatar: "AI" }, data.confirmation);
       const task = document.createElement("div");
-      task.className = "embedded-task";
+      task.className = "embedded-task dice-result-zone";
       task.innerHTML = window.Study1Dice.renderResult(data.round);
-      chat.messagesEl.appendChild(task);
-      chat.messagesEl.scrollTop = chat.messagesEl.scrollHeight;
+      content.appendChild(task);
+      task.scrollIntoView({ block: "nearest", behavior: "smooth" });
     } finally {
       state.diceSubmitting = false;
+      state.diceConfirming = false;
     }
   }
 
@@ -283,7 +333,7 @@
 
   async function submitPostSurvey() {
     const { responses, missing } = window.Survey.collectSurvey(content, state.config.study1.postSurveyItems);
-    if (missing.length) return setError("请完成所有题目后继续。");
+    if (missing.length) return window.Survey.showMissing(content, missing);
     const data = await api(`/api/session/${state.session.id}/post-survey`, { method: "POST", body: { responses } });
     setSession(data.session);
     renderDemographics();
@@ -305,7 +355,7 @@
 
   async function submitDemographics() {
     const { responses, missing } = window.Survey.collectSurvey(content, state.config.study1.demographicsItems);
-    if (missing.length) return setError("请完成所有题目后继续。");
+    if (missing.length) return window.Survey.showMissing(content, missing);
     const data = await api(`/api/session/${state.session.id}/demographics`, { method: "POST", body: { responses } });
     setSession(data.session);
     renderDebrief();
@@ -330,11 +380,28 @@
   async function completeSession() {
     const data = await api(`/api/session/${state.session.id}/complete`, { method: "POST" });
     setSession(data.session);
+    renderCompletion();
     showScreen("complete");
   }
 
-  document.querySelector("#btn-start").addEventListener("click", () => {
-    startSession().catch((error) => {
+  function renderCompletion() {
+    const completion = state.session?.completion || {};
+    const extra = `
+      ${completion.completion_code ? `<p class="thank-you">你的完成码：${completion.completion_code}</p>` : ""}
+      ${completion.completion_redirect_url ? `<div class="step-nav"><a class="btn btn-primary" href="${completion.completion_redirect_url}" rel="noreferrer">返回招募平台</a></div>` : ""}
+    `;
+    screens.complete.innerHTML = `
+      <div class="card">
+        <p class="eyebrow">完成</p>
+        <h2>已完成</h2>
+        <p class="thank-you">你的记录已保存。感谢参与。</p>
+        ${extra}
+      </div>
+    `;
+  }
+
+  document.querySelector("#btn-start").addEventListener("click", (event) => {
+    withButtonBusy(event.currentTarget, "正在加载…", () => startSession()).catch((error) => {
       showScreen("experiment");
       setError(error);
     });
@@ -344,8 +411,8 @@
     document.querySelector("#btn-consent-agree").disabled = !event.target.checked;
   });
 
-  document.querySelector("#btn-consent-agree").addEventListener("click", () => {
-    submitConsent().catch(setError);
+  document.querySelector("#btn-consent-agree").addEventListener("click", (event) => {
+    withButtonBusy(event.currentTarget, "正在提交…", () => submitConsent()).catch(setError);
   });
 
   document.querySelector("#btn-consent-decline").addEventListener("click", () => {
@@ -356,9 +423,11 @@
     const button = event.target.closest("button");
     if (!button) return;
     const action = button.dataset.action;
-    try {
+    if (button.dataset.busy === "true") return;
+    const run = async () => {
       if (button.dataset.value) {
         state.diceSelected = Number(button.dataset.value);
+        state.diceConfirming = false;
         await renderDice(false);
       } else if (action === "baseline") {
         await submitBaseline();
@@ -374,8 +443,14 @@
         renderComprehension();
       } else if (action === "submit-dice") {
         await submitDice();
+      } else if (action === "back-dice") {
+        state.diceConfirming = false;
+        await renderDice(false);
+      } else if (action === "confirm-dice") {
+        await confirmDice();
       } else if (action === "next-dice") {
         state.diceSelected = null;
+        state.diceConfirming = false;
         await renderDice(true);
       } else if (action === "post-survey") {
         await submitPostSurvey();
@@ -384,6 +459,10 @@
       } else if (action === "complete") {
         await completeSession();
       }
+    };
+    try {
+      if (button.dataset.value) await run();
+      else await withButtonBusy(button, busyLabel(action), run);
     } catch (error) {
       setError(error);
     }

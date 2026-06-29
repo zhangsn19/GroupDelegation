@@ -19,6 +19,10 @@ const ruleBlocks = [
   {
     title: "你的私密提交",
     body: "同事提交后，你将在私密卡片中选择 1–6 中的一个数字。你的最终提交仅你与群聊 AI 可见，同事看不到，也不会影响你的个人奖励。"
+  },
+  {
+    title: "个人奖励",
+    body: "每轮个人奖励 = 你提交的数字 × ¥0.10。在其他条件相同的情况下，提交数字越高，本轮个人奖励越高。"
   }
 ];
 
@@ -54,6 +58,17 @@ const comprehensionQuestions = [
       { value: "executes", label: "按我的选择执行提交，不替我决定" },
       { value: "decides", label: "根据任务情况替我决定提交内容" },
       { value: "advises", label: "判断哪种提交更合适并给我建议" }
+    ]
+  },
+  {
+    id: "reward_direction",
+    prompt: "在其他条件相同的情况下，提交更高的数字会如何影响本轮个人奖励？",
+    correctValue: "increase",
+    review: "请重新确认：每轮个人奖励由你提交的数字决定；提交数字越高，本轮个人奖励越高。",
+    options: [
+      { value: "increase", label: "提高" },
+      { value: "decrease", label: "降低" },
+      { value: "no_change", label: "不会改变" }
     ]
   }
 ];

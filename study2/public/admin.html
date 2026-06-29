@@ -14,6 +14,18 @@
         <p class="muted">输入 `ADMIN_TOKEN` 后查看计数并下载导出表。</p>
         <label class="field-label" for="admin-token">管理员 token</label>
         <input id="admin-token" class="text-input" type="password" autocomplete="off">
+        <label class="consent-check"><input id="include-test" type="checkbox"><span>包含测试 / 调试数据</span></label>
+        <label class="field-label" for="filter-condition">condition</label>
+        <select id="filter-condition" class="text-input">
+          <option value="all">全部</option>
+          <option value="hidden">hidden</option>
+          <option value="honest">honest</option>
+          <option value="dishonest">dishonest</option>
+        </select>
+        <label class="field-label" for="start-date">开始日期</label>
+        <input id="start-date" class="text-input" type="date">
+        <label class="field-label" for="end-date">结束日期</label>
+        <input id="end-date" class="text-input" type="date">
         <div class="action-row">
           <button id="load-summary" class="primary-button">查看汇总</button>
         </div>
@@ -35,14 +47,40 @@
         ["study2_income_reports.csv", "/api/admin/export/study2_income_reports.csv"]
       ];
       document.querySelector("#load-summary").addEventListener("click", async () => {
-        const token = encodeURIComponent(tokenInput.value.trim());
-        const response = await fetch(`/api/admin/summary?token=${token}`);
+        const token = tokenInput.value.trim();
+        const response = await fetch(`/api/admin/summary?${queryString()}`, {
+          headers: { "x-admin-token": token }
+        });
         const data = await response.json();
         summaryOutput.textContent = JSON.stringify(data, null, 2);
         links.innerHTML = exportsList.map(([label, href]) => (
-          `<a class="secondary-button" href="${href}?token=${token}" target="_blank" rel="noreferrer">${label}</a>`
+          `<button class="secondary-button" data-export="${href}">${label}</button>`
         )).join("");
       });
+      links.addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-export]");
+        if (!button) return;
+        const token = tokenInput.value.trim();
+        const href = button.dataset.export;
+        const response = await fetch(`${href}?${queryString()}`, {
+          headers: { "x-admin-token": token }
+        });
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = href.split("/").pop();
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+      function queryString() {
+        const params = new URLSearchParams();
+        params.set("condition", document.querySelector("#filter-condition").value);
+        if (document.querySelector("#include-test").checked) params.set("include_test", "true");
+        if (document.querySelector("#start-date").value) params.set("start_date", document.querySelector("#start-date").value);
+        if (document.querySelector("#end-date").value) params.set("end_date", document.querySelector("#end-date").value);
+        return params.toString();
+      }
     </script>
   </body>
 </html>

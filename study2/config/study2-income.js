@@ -15,7 +15,7 @@ const ruleBlocks = [
   },
   {
     title: "收入申报任务",
-    body: "你将完成 4 轮奇偶数分类任务获得实际收入，随后选择要申报的收入金额。申报金额越低，个人保留奖励越高。"
+    body: "你将完成 4 轮奇偶数分类任务获得实际收入，随后选择要申报的收入金额。模拟扣除金额 = 申报收入 × 0.5。任务保留奖励 = 实际收入 − 模拟扣除金额。在其他条件相同的情况下，申报收入越低，任务保留奖励越高。"
   }
 ];
 
@@ -56,7 +56,7 @@ const comprehensionQuestions = [
 ];
 
 const postSurveyItems = [
-  { section: "A", id: "a_specific_peer_records_seen", prompt: "我看到了同事此前收入申报记录中的具体内容。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
+  { section: "A", id: "a_specific_peer_records_seen", prompt: "在我作出自己的最终申报前，我看到了其他成员此前向群聊 AI 提交的具体申报内容。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
   {
     section: "A",
     id: "a_condition_memory",
@@ -70,23 +70,23 @@ const postSurveyItems = [
       "我不记得"
     ]
   },
-  { section: "A", id: "a_private_submission_understood", prompt: "我理解自己的最终收入申报只有我和群聊 AI 可以看到。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
+  { section: "A", id: "a_private_submission_understood", prompt: "我理解其他成员无法看到我最终向群聊 AI 提交的收入申报。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
   { section: "A", id: "a_independent_reward_understood", prompt: "我理解其他成员的申报不会改变我的个人奖励。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "A", id: "a_ai_executes_understood", prompt: "我理解群聊 AI 只是按我的选择完成收入申报。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "B", id: "b_peer_truthful_reporting_common", prompt: "在类似任务中，同事通常会如实申报实际收入。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "B", id: "b_peer_underreporting_common", prompt: "在类似任务中，同事通常会低报收入以保留更多个人奖励。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "B", id: "b_peer_behavior_predictable", prompt: "同事在这类收入申报任务中的做法比较容易判断。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
+  { section: "A", id: "a_ai_executes_understood", prompt: "我理解在本任务中，群聊 AI 只负责执行申报，不替成员决定应申报多少收入。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
+  { section: "B", id: "b_peer_truthful_reporting_common", prompt: "在这个群聊中，其他成员通常会如实申报自己实际获得的收入。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
+  { section: "B", id: "b_peer_underreporting_common", prompt: "在这个群聊中，其他成员通常会为了增加个人奖励而申报低于实际获得的收入。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
+  { section: "B", id: "b_peer_behavior_predictable", prompt: "我刚才看到的信息，足以让我判断这个群聊中其他成员通常会如何申报收入。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
   { section: "C", id: "c_truthful_reporting_acceptable", prompt: "在这个群聊中，其他成员认为如实申报实际收入是应该的。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "C", id: "c_underreporting_acceptable", prompt: "同事会认为低报收入以保留更多个人奖励是可以接受的。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
+  { section: "C", id: "c_underreporting_acceptable", prompt: "在这个群聊中，其他成员认为为了增加个人奖励而申报低于实际获得的收入是可以接受的。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
   { section: "D", id: "d_guilt", prompt: "回顾刚才的收入申报任务和我的最终提交，我感到内疚。", type: "likert", minLabel: "完全没有", maxLabel: "非常强烈" },
   { section: "D", id: "d_moral_discomfort", prompt: "回顾刚才的收入申报任务和我的最终提交，我感到道德上的不安。", type: "likert", minLabel: "完全没有", maxLabel: "非常强烈" },
-  { section: "E", id: "e_reflects_my_decision", prompt: "最终收入申报反映了我自己的决定。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "E", id: "e_personal_responsibility", prompt: "我认为自己应为最终收入申报承担责任。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "E", id: "e_ai_followed_choice", prompt: "群聊 AI 按我的选择执行了收入申报。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "E", id: "e_ai_influenced_decision", prompt: "群聊 AI 影响了我的申报决定。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "E", id: "e_ai_decided_outcome", prompt: "最终申报结果主要由群聊 AI 决定。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "F", id: "f_decision_considerations", prompt: "决定最终收入申报时，你主要考虑了什么？", type: "text" },
-  { section: "F", id: "f_design_influences", prompt: "同伴信息、AI 角色、奖励规则或其他设计中，哪些影响了你的决定？", type: "text" }
+  { section: "E", id: "e_reflects_my_decision", prompt: "我最终申报的收入反映了我自己的决定。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
+  { section: "E", id: "e_personal_responsibility", prompt: "我应当为自己最终申报的收入承担责任。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
+  { section: "E", id: "e_ai_followed_choice", prompt: "群聊 AI 按照我的选择完成了收入申报。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
+  { section: "E", id: "e_ai_influenced_decision", prompt: "群聊 AI 影响了我最终决定申报多少收入。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
+  { section: "E", id: "e_ai_decided_outcome", prompt: "我认为最终申报的收入主要由群聊 AI 决定。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
+  { section: "F", id: "f_decision_considerations", prompt: "请简要说明：在决定最终申报多少收入时，你主要考虑了哪些因素？", type: "text", required: false },
+  { section: "F", id: "f_design_influences", prompt: "任务中是否有任何信息或设计影响了你的决定？例如其他成员的申报情况、群聊 AI 的角色、奖励规则或其他因素。请说明；若没有，也请说明。", type: "text", required: false }
 ];
 
 const experienceItems = [

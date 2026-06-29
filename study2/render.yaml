@@ -2,12 +2,26 @@ services:
   - type: web
     name: group-deception-study2
     env: node
-    buildCommand: npm install
+    buildCommand: npm ci
     startCommand: npm start
+    healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: 20
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /var/data/sessions
       - key: DEBUG_LINKS
         value: false
-      - key: DATA_DIR
-        value: ./data/sessions
+      - key: REQUIRE_PARTICIPANT_ID
+        value: true
+      - key: ADMIN_TOKEN
+        sync: false
+      - key: COMPLETION_CODE
+        sync: false
+      - key: COMPLETION_REDIRECT_URL
+        sync: false
+    disk:
+      name: study2-data
+      mountPath: /var/data

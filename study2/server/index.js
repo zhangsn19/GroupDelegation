@@ -27,12 +27,36 @@ loadDotEnv();
 const PORT = Number(process.env.PORT || 3001);
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "dev-admin-token";
 const DEBUG_LINKS = String(process.env.DEBUG_LINKS).toLowerCase() === "true";
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const REQUIRE_PARTICIPANT_ID = IS_PRODUCTION || String(process.env.REQUIRE_PARTICIPANT_ID).toLowerCase() === "true";
+const STUDY_VERSION = process.env.STUDY_VERSION || "study2-v1.0.0";
+const PROTOCOL_VERSION = process.env.PROTOCOL_VERSION || "peer-reporting-v1";
+const COMPLETION_CODE = process.env.COMPLETION_CODE || "";
+const COMPLETION_REDIRECT_URL = process.env.COMPLETION_REDIRECT_URL || "";
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 function now() {
   return new Date().toISOString();
+}
+
+function parseParticipantId(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length > 128) {
+    const error = new Error("Participant ID too long");
+    error.statusCode = 400;
+    throw error;
+  }
+  return text;
+}
+
+function publicCompletion() {
+  return {
+    completion_code: COMPLETION_CODE || null,
+    completion_redirect_url: COMPLETION_REDIRECT_URL || null
+  };
 }
 
 function statusIndex(status) {
@@ -57,17 +81,23 @@ function transition(session, targetStatus) {
 }
 
 function publicSession(session) {
-  return {
+  const payload = {
     id: session.id,
+    participant_id: session.participant_id || session.prolific_id || "",
     study: "study2",
     condition_label: session.condition_label,
     debug_mode: session.debug_mode,
     status: session.status,
     effort_round_count: session.effort_rounds?.length || 0,
-    actual_income: session.actual_income || null,
-    actual_income_cents: session.actual_income_cents || null,
-    completed_at: session.completed_at || null
+    actual_income: session.actual_income ?? null,
+    actual_income_cents: session.actual_income_cents ?? null,
+    completed_at: session.completed_at || null,
+    completion_status: session.completion_status || null
   };
+  if (session.status === "completed" || session.completion_status === "completed") {
+    payload.completion = publicCompletion();
+  }
+  return payload;
 }
 
 function centsToMoney(cents) {
@@ -102,6 +132,110 @@ async function assignCondition() {
   }
   const min = Math.min(...Object.values(counts));
   return CONDITIONS.find((condition) => counts[condition] === min);
+}
+
+function randomizationDir() {
+  return path.dirname(store.DATA_DIR);
+}
+
+function randomizationStatePath() {
+  return path.join(randomizationDir(), "randomization-state.json");
+}
+
+function randomizationLockPath() {
+  return path.join(randomizationDir(), "randomization-state.lock");
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withRandomizationLock(fn) {
+  await fs.promises.mkdir(randomizationDir(), { recursive: true });
+  const lockPath = randomizationLockPath();
+  const started = Date.now();
+  while (true) {
+    try {
+      fs.mkdirSync(lockPath);
+      fs.writeFileSync(path.join(lockPath, "owner.json"), JSON.stringify({ pid: process.pid, at: now() }));
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      try {
+        const stat = fs.statSync(lockPath);
+        if (Date.now() - stat.mtimeMs > 15000) fs.rmSync(lockPath, { recursive: true, force: true });
+      } catch (_) {
+        // Retry when another process removes the stale lock.
+      }
+      if (Date.now() - started > 30000) throw new Error("Randomization lock timeout");
+      await sleep(50);
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    fs.rmSync(lockPath, { recursive: true, force: true });
+  }
+}
+
+function shuffle(values) {
+  const copy = [...values];
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const swap = crypto.randomInt(index + 1);
+    [copy[index], copy[swap]] = [copy[swap], copy[index]];
+  }
+  return copy;
+}
+
+async function readRandomizationState() {
+  try {
+    return JSON.parse(await fs.promises.readFile(randomizationStatePath(), "utf8"));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    return { next_block: 1, current_block: null, allocations: [] };
+  }
+}
+
+async function writeRandomizationState(state) {
+  await fs.promises.mkdir(randomizationDir(), { recursive: true });
+  const file = randomizationStatePath();
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.promises.writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await fs.promises.rename(tmp, file);
+}
+
+function allocateBlockCondition(state, { participantId, study }) {
+  const existing = state.allocations.find((item) => item.participant_id === participantId && item.study === study);
+  if (existing) return { allocation: existing, changed: false };
+  if (!state.current_block || state.current_block.position >= state.current_block.sequence.length) {
+    state.current_block = {
+      block: state.next_block,
+      position: 0,
+      sequence: shuffle(["hidden", "hidden", "honest", "honest", "dishonest", "dishonest"])
+    };
+    state.next_block += 1;
+  }
+  const position = state.current_block.position + 1;
+  const allocation = {
+    participant_id: participantId,
+    study,
+    condition: state.current_block.sequence[state.current_block.position],
+    randomization_block: state.current_block.block,
+    randomization_position: position,
+    assigned_at: now()
+  };
+  state.current_block.position += 1;
+  state.allocations.push(allocation);
+  return { allocation, changed: true };
+}
+
+async function assignBlockCondition({ participantId, study }) {
+  return withRandomizationLock(async () => {
+    const state = await readRandomizationState();
+    const { allocation, changed } = allocateBlockCondition(state, { participantId, study });
+    if (changed) await writeRandomizationState(state);
+    return allocation;
+  });
 }
 
 function makeEffortMaterials() {
@@ -140,20 +274,52 @@ function prepareCurrentEffortRound(session) {
   return material;
 }
 
-async function createSession({ prolificId, requestedCondition }) {
-  const normalizedProlific = String(prolificId || "").trim();
+async function createSession({ participantId, requestedCondition, lockHeld = false }) {
+  const normalizedParticipant = parseParticipantId(participantId);
+  if (!normalizedParticipant && REQUIRE_PARTICIPANT_ID) {
+    const error = new Error("参与编号缺失。请返回招募平台后通过原始研究链接进入。");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (normalizedParticipant && !lockHeld) {
+    return withRandomizationLock(async () => {
+      return createSession({ participantId: normalizedParticipant, requestedCondition, lockHeld: true });
+    });
+  }
   const existing = (await store.listSessions()).find((session) => (
-    normalizedProlific &&
-    session.prolific_id === normalizedProlific
+    normalizedParticipant &&
+    (session.participant_id === normalizedParticipant || session.prolific_id === normalizedParticipant)
   ));
   if (existing) return existing;
 
   let condition;
-  if (DEBUG_LINKS && requestedCondition) {
+  let allocation = null;
+  const debugOverride = DEBUG_LINKS && !IS_PRODUCTION && requestedCondition;
+  if (debugOverride) {
     validateCondition(requestedCondition);
     condition = requestedCondition;
+    allocation = {
+      assigned_at: now(),
+      randomization_block: null,
+      randomization_position: null
+    };
+  } else if (normalizedParticipant) {
+    if (lockHeld) {
+      const state = await readRandomizationState();
+      const result = allocateBlockCondition(state, { participantId: normalizedParticipant, study: "study2" });
+      allocation = result.allocation;
+      if (result.changed) await writeRandomizationState(state);
+    } else {
+      allocation = await assignBlockCondition({ participantId: normalizedParticipant, study: "study2" });
+    }
+    condition = allocation.condition;
   } else {
     condition = await assignCondition();
+    allocation = {
+      assigned_at: now(),
+      randomization_block: null,
+      randomization_position: null
+    };
   }
 
   const id = `s2_${crypto.randomUUID().replace(/-/g, "").slice(0, 18)}`;
@@ -161,19 +327,27 @@ async function createSession({ prolificId, requestedCondition }) {
   const session = {
     id,
     version: VERSION,
+    study_version: STUDY_VERSION,
+    protocol_version: PROTOCOL_VERSION,
     study: "study2",
     condition,
+    condition_assigned_at: allocation.assigned_at,
+    randomization_block: allocation.randomization_block,
+    randomization_position: allocation.randomization_position,
+    is_test_session: !IS_PRODUCTION || DEBUG_LINKS,
     condition_label: {
       hidden: "同伴具体行为隐藏",
       honest: "同伴如实申报",
       dishonest: "同伴自利低报"
     }[condition],
-    debug_mode: Boolean(DEBUG_LINKS && requestedCondition),
-    prolific_id: normalizedProlific,
+    debug_mode: Boolean(debugOverride),
+    participant_id: normalizedParticipant,
+    prolific_id: normalizedParticipant,
     status: "created",
     created_at: createdAt,
     assigned_at: createdAt,
     completed_at: null,
+    completion_status: null,
     stage_timestamps: { created: createdAt },
     event_log: [],
     baseline: {},
@@ -186,6 +360,7 @@ async function createSession({ prolificId, requestedCondition }) {
     income_viewed_at: null,
     peer_income_records: buildIncomePeerRecords(condition),
     peer_records_view: null,
+    income_report_selection_started_at: null,
     income_report: null,
     post_survey: {},
     experience: {},
@@ -197,7 +372,7 @@ async function createSession({ prolificId, requestedCondition }) {
 }
 
 function requireAdmin(req, res, next) {
-  const token = req.query.token || req.get("x-admin-token");
+  const token = req.get("x-admin-token");
   if (!token || token !== ADMIN_TOKEN) return res.status(401).json({ error: "Admin token required" });
   next();
 }
@@ -206,18 +381,45 @@ function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
 
+function filterSessions(sessions, query = {}) {
+  const includeTest = String(query.include_test || query.includeTest || "").toLowerCase() === "true";
+  const condition = query.condition || "all";
+  const start = query.start_date ? new Date(`${query.start_date}T00:00:00.000Z`) : null;
+  const end = query.end_date ? new Date(`${query.end_date}T23:59:59.999Z`) : null;
+  return sessions.filter((session) => {
+    if (!includeTest && session.is_test_session) return false;
+    if (condition !== "all" && condition && session.condition !== condition) return false;
+    const created = session.created_at ? new Date(session.created_at) : null;
+    if (start && created && created < start) return false;
+    if (end && created && created > end) return false;
+    return true;
+  });
+}
+
 app.get("/api/config", (req, res) => {
   res.json({
     version: VERSION,
+    study_version: STUDY_VERSION,
+    protocol_version: PROTOCOL_VERSION,
     debug_links_enabled: DEBUG_LINKS,
+    require_participant_id: REQUIRE_PARTICIPANT_ID,
     members: MEMBERS,
     study2
   });
 });
 
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    study: "study2",
+    study_version: STUDY_VERSION,
+    protocol_version: PROTOCOL_VERSION
+  });
+});
+
 app.post("/api/session", asyncHandler(async (req, res) => {
   const session = await createSession({
-    prolificId: req.body.prolific_id,
+    participantId: req.body.participant_id || req.body.participantId || req.body.PROLIFIC_PID || req.body.pid || req.body.prolific_id,
     requestedCondition: req.body.condition
   });
   res.json({ session: publicSession(session) });
@@ -324,11 +526,13 @@ app.post("/api/session/:id/effort/round", asyncHandler(async (req, res) => {
     const durationMs = Math.min(rawDurationMs, study2.effortTask.timeLimitSeconds * 1000);
     const timedOut = new Date(submittedAt) > new Date(material.deadline_at);
     let correctCount = 0;
-    material.numbers.forEach((number, index) => {
-      const correct = number % 2 === 0 ? "even" : "odd";
-      if (answers[String(index)] === correct) correctCount += 1;
-    });
-    const incomeCents = calculateRoundIncomeCents(correctCount, durationMs);
+    if (!timedOut) {
+      material.numbers.forEach((number, index) => {
+        const correct = number % 2 === 0 ? "even" : "odd";
+        if (answers[String(index)] === correct) correctCount += 1;
+      });
+    }
+    const incomeCents = timedOut ? 0 : calculateRoundIncomeCents(correctCount, durationMs);
     const round = {
       round_index: expectedRound,
       numbers: material.numbers,
@@ -362,8 +566,6 @@ app.post("/api/session/:id/effort/round", asyncHandler(async (req, res) => {
         total_income: draft.actual_income
       };
       transition(draft, "effort_completed");
-    } else {
-      prepareCurrentEffortRound(draft);
     }
     draft._lastRound = round;
     return draft;
@@ -393,12 +595,16 @@ app.get("/api/session/:id/peer-records", asyncHandler(async (req, res) => {
 app.post("/api/session/:id/peer-records-viewed", asyncHandler(async (req, res) => {
   const session = await store.updateSession(req.params.id, (draft) => {
     if (draft.status !== "income_viewed") throw new Error("Peer records require income_viewed status");
+    const continuedAt = now();
     draft.peer_records_view = {
-      displayed_at: req.body.displayed_at || now(),
-      continued_at: now(),
-      duration_ms: Number(req.body.duration_ms || 0)
+      displayed_at: continuedAt,
+      continued_at: continuedAt,
+      duration_ms: null
     };
-    addEvent(draft, "peer_records_viewed", { duration_ms: draft.peer_records_view.duration_ms });
+    if (!draft.income_report_selection_started_at) {
+      draft.income_report_selection_started_at = continuedAt;
+    }
+    addEvent(draft, "peer_records_viewed");
     transition(draft, "peer_records_viewed");
     return draft;
   });
@@ -409,11 +615,12 @@ app.post("/api/session/:id/income-report", asyncHandler(async (req, res) => {
   const reportedCents = req.body.reported_income_cents !== undefined
     ? Number(req.body.reported_income_cents)
     : moneyToCents(req.body.reported_income);
-  const startedAt = req.body.selection_started_at || now();
   const session = await store.updateSession(req.params.id, (draft) => {
     if (draft.status !== "peer_records_viewed") throw new Error("Income report requires peer_records_viewed status");
     if (draft.income_report) throw new Error("Income report already submitted");
     if (!Number.isInteger(reportedCents) || reportedCents < 0 || reportedCents > draft.actual_income_cents) throw new Error("Reported income out of range");
+    const startedAt = draft.income_report_selection_started_at;
+    if (!startedAt) throw new Error("Income report selection was not started by server");
     const underreportAmountCents = draft.actual_income_cents - reportedCents;
     const underreportRate = draft.actual_income_cents > 0 ? Number((underreportAmountCents / draft.actual_income_cents).toFixed(4)) : 0;
     const deductionCents = Math.round(study2.effortTask.deductionRate * reportedCents);
@@ -495,8 +702,8 @@ function validateItems(items, responses) {
   const invalid = [];
   for (const item of items) {
     const value = responses[item.id];
-    if (value === undefined || value === "") {
-      missing.push(item.id);
+    if (value === undefined || value === "" || value === null) {
+      if (item.required !== false) missing.push(item.id);
       continue;
     }
     if (item.type === "likert") {
@@ -519,6 +726,7 @@ app.post("/api/session/:id/complete", asyncHandler(async (req, res) => {
   const session = await store.updateSession(req.params.id, (draft) => {
     if (draft.status !== "demographics_completed") throw new Error("Completion requires demographics_completed status");
     draft.completed_at = now();
+    draft.completion_status = "completed";
     addEvent(draft, "completed");
     transition(draft, "completed");
     return draft;
@@ -527,24 +735,24 @@ app.post("/api/session/:id/complete", asyncHandler(async (req, res) => {
 }));
 
 app.get("/api/admin/summary", requireAdmin, asyncHandler(async (req, res) => {
-  const sessions = await store.listSessions();
+  const sessions = filterSessions(await store.listSessions(), req.query);
   res.json({ version: VERSION, summary: exporters.summary(sessions), data_dir: store.DATA_DIR });
 }));
 
 app.get("/api/admin/export/json", requireAdmin, asyncHandler(async (req, res) => {
-  res.json({ version: VERSION, sessions: await store.listSessions() });
+  res.json({ version: VERSION, sessions: filterSessions(await store.listSessions(), req.query) });
 }));
 
 app.get("/api/admin/export/participants.csv", requireAdmin, asyncHandler(async (req, res) => {
-  res.type("text/csv").send(exporters.participantsCsv(await store.listSessions()));
+  res.type("text/csv").send(exporters.participantsCsv(filterSessions(await store.listSessions(), req.query)));
 }));
 
 app.get("/api/admin/export/study2_effort_rounds.csv", requireAdmin, asyncHandler(async (req, res) => {
-  res.type("text/csv").send(exporters.effortRoundsCsv(await store.listSessions()));
+  res.type("text/csv").send(exporters.effortRoundsCsv(filterSessions(await store.listSessions(), req.query)));
 }));
 
 app.get("/api/admin/export/study2_income_reports.csv", requireAdmin, asyncHandler(async (req, res) => {
-  res.type("text/csv").send(exporters.incomeReportsCsv(await store.listSessions()));
+  res.type("text/csv").send(exporters.incomeReportsCsv(filterSessions(await store.listSessions(), req.query)));
 }));
 
 app.get("*", (req, res) => {
@@ -555,11 +763,32 @@ app.use((error, req, res, next) => {
   res.status(error.statusCode || 409).json({ error: error.message || "Server error" });
 });
 
+async function validateRuntime() {
+  if (!IS_PRODUCTION) {
+    await store.ensureDataDir();
+    return;
+  }
+  if (!process.env.ADMIN_TOKEN || process.env.ADMIN_TOKEN === "dev-admin-token") {
+    throw new Error("ADMIN_TOKEN must be set to a non-development value in production");
+  }
+  if (!process.env.DATA_DIR) throw new Error("DATA_DIR must be set in production");
+  if (!path.isAbsolute(process.env.DATA_DIR)) throw new Error("DATA_DIR must be an absolute path in production");
+  await store.ensureDataDir();
+  const parent = path.dirname(store.DATA_DIR);
+  await fs.promises.mkdir(parent, { recursive: true });
+  const probe = path.join(parent, `.write-test-${process.pid}-${Date.now()}`);
+  await fs.promises.writeFile(probe, "ok", "utf8");
+  await fs.promises.unlink(probe);
+}
+
 if (require.main === module) {
-  store.ensureDataDir().then(() => {
+  validateRuntime().then(() => {
     app.listen(PORT, () => {
       console.log(`group-deception-study2 listening on http://localhost:${PORT}`);
     });
+  }).catch((error) => {
+    console.error(error.message);
+    process.exit(1);
   });
 }
 

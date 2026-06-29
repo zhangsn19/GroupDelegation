@@ -4,7 +4,6 @@ const path = require("path");
 const crypto = require("crypto");
 const { VERSION, STUDIES, CONDITIONS, STATUS_ORDER, MEMBERS } = require("../config/common");
 const study1 = require("../config/study1-dice");
-const study2 = require("../config/study2-income");
 const { buildPeerRecordSequence } = require("../config/peer-records");
 const store = require("./store");
 const exporters = require("./export");
@@ -27,6 +26,12 @@ const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "dev-admin-token";
 const DEBUG_LINKS = String(process.env.DEBUG_LINKS).toLowerCase() === "true";
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+const REQUIRE_PARTICIPANT_ID = IS_PRODUCTION || String(process.env.REQUIRE_PARTICIPANT_ID).toLowerCase() === "true";
+const STUDY_VERSION = process.env.STUDY_VERSION || "study1-v1.0.0";
+const PROTOCOL_VERSION = process.env.PROTOCOL_VERSION || "peer-reporting-v1";
+const COMPLETION_CODE = process.env.COMPLETION_CODE || "";
+const COMPLETION_REDIRECT_URL = process.env.COMPLETION_REDIRECT_URL || "";
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
@@ -35,9 +40,28 @@ function now() {
   return new Date().toISOString();
 }
 
-function publicSession(session) {
+function parseParticipantId(value) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length > 128) {
+    const error = new Error("Participant ID too long");
+    error.statusCode = 400;
+    throw error;
+  }
+  return text;
+}
+
+function publicCompletion() {
   return {
+    completion_code: COMPLETION_CODE || null,
+    completion_redirect_url: COMPLETION_REDIRECT_URL || null
+  };
+}
+
+function publicSession(session) {
+  const payload = {
     id: session.id,
+    participant_id: session.participant_id || session.prolific_id || "",
     prolific_id: session.prolific_id,
     study: session.study,
     condition_label: session.condition_label,
@@ -45,8 +69,13 @@ function publicSession(session) {
     status: session.status,
     dice_round_count: session.dice_rounds?.length || 0,
     dice_total_rounds: session.dice_sequence?.length || 0,
-    completed_at: session.completed_at || null
+    completed_at: session.completed_at || null,
+    completion_status: session.completion_status || null
   };
+  if (session.status === "completed" || session.completion_status === "completed") {
+    payload.completion = publicCompletion();
+  }
+  return payload;
 }
 
 function publicStudy1Config() {
@@ -112,22 +141,158 @@ async function assignCondition(study) {
   return CONDITIONS.find((condition) => counts[condition] === min);
 }
 
-async function createSession({ study, prolificId, requestedCondition }) {
+function randomizationDir() {
+  return path.dirname(store.DATA_DIR);
+}
+
+function randomizationStatePath() {
+  return path.join(randomizationDir(), "randomization-state.json");
+}
+
+function randomizationLockPath() {
+  return path.join(randomizationDir(), "randomization-state.lock");
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withRandomizationLock(fn) {
+  await fs.promises.mkdir(randomizationDir(), { recursive: true });
+  const lockPath = randomizationLockPath();
+  const started = Date.now();
+  while (true) {
+    try {
+      fs.mkdirSync(lockPath);
+      fs.writeFileSync(path.join(lockPath, "owner.json"), JSON.stringify({ pid: process.pid, at: now() }));
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      try {
+        const stat = fs.statSync(lockPath);
+        if (Date.now() - stat.mtimeMs > 15000) fs.rmSync(lockPath, { recursive: true, force: true });
+      } catch (_) {
+        // Retry when another process removes the stale lock.
+      }
+      if (Date.now() - started > 30000) throw new Error("Randomization lock timeout");
+      await sleep(50);
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    fs.rmSync(lockPath, { recursive: true, force: true });
+  }
+}
+
+function shuffle(values) {
+  const copy = [...values];
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const swap = crypto.randomInt(index + 1);
+    [copy[index], copy[swap]] = [copy[swap], copy[index]];
+  }
+  return copy;
+}
+
+async function readRandomizationState() {
+  try {
+    return JSON.parse(await fs.promises.readFile(randomizationStatePath(), "utf8"));
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+    return { next_block: 1, current_block: null, allocations: [] };
+  }
+}
+
+async function writeRandomizationState(state) {
+  await fs.promises.mkdir(randomizationDir(), { recursive: true });
+  const file = randomizationStatePath();
+  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.promises.writeFile(tmp, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await fs.promises.rename(tmp, file);
+}
+
+function allocateBlockCondition(state, { participantId, study }) {
+  const existing = state.allocations.find((item) => item.participant_id === participantId && item.study === study);
+  if (existing) return { allocation: existing, changed: false };
+  if (!state.current_block || state.current_block.position >= state.current_block.sequence.length) {
+    state.current_block = {
+      block: state.next_block,
+      position: 0,
+      sequence: shuffle(["hidden", "hidden", "honest", "honest", "dishonest", "dishonest"])
+    };
+    state.next_block += 1;
+  }
+  const position = state.current_block.position + 1;
+  const allocation = {
+    participant_id: participantId,
+    study,
+    condition: state.current_block.sequence[state.current_block.position],
+    randomization_block: state.current_block.block,
+    randomization_position: position,
+    assigned_at: now()
+  };
+  state.current_block.position += 1;
+  state.allocations.push(allocation);
+  return { allocation, changed: true };
+}
+
+async function assignBlockCondition({ participantId, study }) {
+  return withRandomizationLock(async () => {
+    const state = await readRandomizationState();
+    const { allocation, changed } = allocateBlockCondition(state, { participantId, study });
+    if (changed) await writeRandomizationState(state);
+    return allocation;
+  });
+}
+
+async function createSession({ study, participantId, requestedCondition, lockHeld = false }) {
   validateStudy(study);
-  const normalizedProlific = String(prolificId || "").trim();
+  const normalizedParticipant = parseParticipantId(participantId);
+  if (!normalizedParticipant && REQUIRE_PARTICIPANT_ID) {
+    const error = new Error("参与编号缺失。请返回招募平台后通过原始研究链接进入。");
+    error.statusCode = 400;
+    throw error;
+  }
+  if (normalizedParticipant && !lockHeld) {
+    return withRandomizationLock(async () => {
+      return createSession({ study, participantId: normalizedParticipant, requestedCondition, lockHeld: true });
+    });
+  }
   const existing = (await store.listSessions()).find((session) => (
-    normalizedProlific &&
-    session.prolific_id === normalizedProlific &&
+    normalizedParticipant &&
+    (session.participant_id === normalizedParticipant || session.prolific_id === normalizedParticipant) &&
     session.study === study
   ));
   if (existing) return existing;
 
   let condition;
-  if (DEBUG_LINKS && requestedCondition) {
+  let allocation = null;
+  const debugOverride = DEBUG_LINKS && !IS_PRODUCTION && requestedCondition;
+  if (debugOverride) {
     validateCondition(requestedCondition);
     condition = requestedCondition;
+    allocation = {
+      assigned_at: now(),
+      randomization_block: null,
+      randomization_position: null
+    };
+  } else if (normalizedParticipant) {
+    if (lockHeld) {
+      const state = await readRandomizationState();
+      const result = allocateBlockCondition(state, { participantId: normalizedParticipant, study });
+      allocation = result.allocation;
+      if (result.changed) await writeRandomizationState(state);
+    } else {
+      allocation = await assignBlockCondition({ participantId: normalizedParticipant, study });
+    }
+    condition = allocation.condition;
   } else {
     condition = await assignCondition(study);
+    allocation = {
+      assigned_at: now(),
+      randomization_block: null,
+      randomization_position: null
+    };
   }
 
   const id = `s_${crypto.randomUUID().replace(/-/g, "").slice(0, 18)}`;
@@ -136,19 +301,27 @@ async function createSession({ study, prolificId, requestedCondition }) {
   const session = {
     id,
     version: VERSION,
+    study_version: STUDY_VERSION,
+    protocol_version: PROTOCOL_VERSION,
     study,
     condition,
+    condition_assigned_at: allocation.assigned_at,
+    randomization_block: allocation.randomization_block,
+    randomization_position: allocation.randomization_position,
+    is_test_session: !IS_PRODUCTION || DEBUG_LINKS,
     condition_label: {
       hidden: "同伴具体提交隐藏",
       honest: "同伴如实提交",
       dishonest: "同伴提交更高数字"
     }[condition],
-    debug_mode: Boolean(DEBUG_LINKS && requestedCondition),
-    prolific_id: normalizedProlific,
+    debug_mode: Boolean(debugOverride),
+    participant_id: normalizedParticipant,
+    prolific_id: normalizedParticipant,
     status: "created",
     created_at: createdAt,
     assigned_at: createdAt,
     completed_at: null,
+    completion_status: null,
     stage_timestamps: { created: createdAt },
     event_log: [],
     baseline: {},
@@ -174,11 +347,21 @@ function prepareCurrentDiceRound(session) {
   if (!session.dice_round_state[key]) {
     session.dice_round_state[key] = {
       round_index: roundIndex,
-      selection_started_at: now()
+      selection_started_at: null
     };
-    addEvent(session, "dice_round_presented", { round_index: roundIndex });
+    addEvent(session, "dice_round_prepared", { round_index: roundIndex });
   }
   return session.dice_round_state[key];
+}
+
+function markCurrentDiceRoundPresented(session) {
+  const state = prepareCurrentDiceRound(session);
+  if (!state) return null;
+  if (!state.selection_started_at) {
+    state.selection_started_at = now();
+    addEvent(session, "dice_round_presented", { round_index: state.round_index });
+  }
+  return state;
 }
 
 function currentDicePayload(session) {
@@ -201,8 +384,8 @@ function validateItems(items, responses) {
   const invalid = [];
   for (const item of items) {
     const value = responses[item.id];
-    if (value === undefined || value === "") {
-      missing.push(item.id);
+    if (value === undefined || value === "" || value === null) {
+      if (item.required !== false) missing.push(item.id);
       continue;
     }
     if (item.type === "likert" || !item.type) {
@@ -222,7 +405,7 @@ function validateItems(items, responses) {
 }
 
 function requireAdmin(req, res, next) {
-  const token = req.query.token || req.get("x-admin-token");
+  const token = req.get("x-admin-token");
   if (!token || token !== ADMIN_TOKEN) return res.status(401).json({ error: "Admin token required" });
   next();
 }
@@ -231,20 +414,47 @@ function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
 
+function filterSessions(sessions, query = {}) {
+  const includeTest = String(query.include_test || query.includeTest || "").toLowerCase() === "true";
+  const condition = query.condition || "all";
+  const start = query.start_date ? new Date(`${query.start_date}T00:00:00.000Z`) : null;
+  const end = query.end_date ? new Date(`${query.end_date}T23:59:59.999Z`) : null;
+  return sessions.filter((session) => {
+    if (!includeTest && session.is_test_session) return false;
+    if (condition !== "all" && condition && session.condition !== condition) return false;
+    const created = session.created_at ? new Date(session.created_at) : null;
+    if (start && created && created < start) return false;
+    if (end && created && created > end) return false;
+    return true;
+  });
+}
+
 app.get("/api/config", (req, res) => {
   res.json({
     version: VERSION,
+    study_version: STUDY_VERSION,
+    protocol_version: PROTOCOL_VERSION,
     debug_links_enabled: DEBUG_LINKS,
+    require_participant_id: REQUIRE_PARTICIPANT_ID,
     members: MEMBERS,
     study1: publicStudy1Config(),
-    study2: { id: "study2", title: study2.title || "Study 2", message: "Study 2 is maintained separately." }
+    study2: { id: "study2", title: "Study 2", message: "Study 2 is maintained separately." }
+  });
+});
+
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    study: "study1",
+    study_version: STUDY_VERSION,
+    protocol_version: PROTOCOL_VERSION
   });
 });
 
 app.post("/api/session", asyncHandler(async (req, res) => {
   const session = await createSession({
     study: req.body.study || "study1",
-    prolificId: req.body.prolific_id,
+    participantId: req.body.participant_id || req.body.participantId || req.body.PROLIFIC_PID || req.body.pid || req.body.prolific_id,
     requestedCondition: req.body.condition
   });
   res.json({ session: publicSession(session) });
@@ -347,6 +557,15 @@ app.get("/api/session/:id/dice/current", asyncHandler(async (req, res) => {
   res.json({ session: publicSession(session), current: currentDicePayload(session) });
 }));
 
+app.post("/api/session/:id/dice/presented", asyncHandler(async (req, res) => {
+  const session = await store.updateSession(req.params.id, (draft) => {
+    if (draft.status !== "task_in_progress") throw new Error("Dice round requires task_in_progress status");
+    markCurrentDiceRoundPresented(draft);
+    return draft;
+  });
+  res.json({ session: publicSession(session), current: currentDicePayload(session) });
+}));
+
 app.post("/api/session/:id/dice/round", asyncHandler(async (req, res) => {
   const reported = Number(req.body.reported_value);
   const roundIndex = Number(req.body.round_index);
@@ -388,8 +607,6 @@ app.post("/api/session/:id/dice/round", asyncHandler(async (req, res) => {
     addEvent(draft, "dice_round_submitted", { round_index: expectedRound });
     if (draft.dice_rounds.length === draft.dice_sequence.length) {
       transition(draft, "task_completed");
-    } else {
-      prepareCurrentDiceRound(draft);
     }
     draft._lastRound = round;
     return draft;
@@ -440,6 +657,7 @@ app.post("/api/session/:id/complete", asyncHandler(async (req, res) => {
   const session = await store.updateSession(req.params.id, (draft) => {
     if (draft.status !== "demographics_completed") throw new Error("Completion requires demographics_completed status");
     draft.completed_at = now();
+    draft.completion_status = "completed";
     addEvent(draft, "completed");
     transition(draft, "completed");
     return draft;
@@ -448,20 +666,20 @@ app.post("/api/session/:id/complete", asyncHandler(async (req, res) => {
 }));
 
 app.get("/api/admin/summary", requireAdmin, asyncHandler(async (req, res) => {
-  const sessions = await store.listSessions();
+  const sessions = filterSessions(await store.listSessions(), req.query);
   res.json({ version: VERSION, summary: exporters.summary(sessions), data_dir: store.DATA_DIR });
 }));
 
 app.get("/api/admin/export/json", requireAdmin, asyncHandler(async (req, res) => {
-  res.json({ version: VERSION, sessions: await store.listSessions() });
+  res.json({ version: VERSION, sessions: filterSessions(await store.listSessions(), req.query) });
 }));
 
 app.get("/api/admin/export/participants.csv", requireAdmin, asyncHandler(async (req, res) => {
-  res.type("text/csv").send(exporters.participantsCsv(await store.listSessions()));
+  res.type("text/csv").send(exporters.participantsCsv(filterSessions(await store.listSessions(), req.query)));
 }));
 
 app.get("/api/admin/export/study1_dice_rounds.csv", requireAdmin, asyncHandler(async (req, res) => {
-  res.type("text/csv").send(exporters.study1DiceRoundsCsv(await store.listSessions()));
+  res.type("text/csv").send(exporters.study1DiceRoundsCsv(filterSessions(await store.listSessions(), req.query)));
 }));
 
 app.get("/api/admin/export/study2_effort_rounds.csv", requireAdmin, (req, res) => {
@@ -481,11 +699,32 @@ app.use((error, req, res, next) => {
   res.status(status).json({ error: error.message || "Server error" });
 });
 
+async function validateRuntime() {
+  if (!IS_PRODUCTION) {
+    await store.ensureDataDir();
+    return;
+  }
+  if (!process.env.ADMIN_TOKEN || process.env.ADMIN_TOKEN === "dev-admin-token") {
+    throw new Error("ADMIN_TOKEN must be set to a non-development value in production");
+  }
+  if (!process.env.DATA_DIR) throw new Error("DATA_DIR must be set in production");
+  if (!path.isAbsolute(process.env.DATA_DIR)) throw new Error("DATA_DIR must be an absolute path in production");
+  await store.ensureDataDir();
+  const parent = path.dirname(store.DATA_DIR);
+  await fs.promises.mkdir(parent, { recursive: true });
+  const probe = path.join(parent, `.write-test-${process.pid}-${Date.now()}`);
+  await fs.promises.writeFile(probe, "ok", "utf8");
+  await fs.promises.unlink(probe);
+}
+
 if (require.main === module) {
-  store.ensureDataDir().then(() => {
+  validateRuntime().then(() => {
     app.listen(PORT, () => {
       console.log(`group-deception-v2 listening on http://localhost:${PORT}`);
     });
+  }).catch((error) => {
+    console.error(error.message);
+    process.exit(1);
   });
 }
 

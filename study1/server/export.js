@@ -43,14 +43,22 @@ function flattenResponses(prefix, responses = {}) {
 function participantsCsv(sessions) {
   const rows = sessions.map((session) => ({
     session_id: session.id,
+    participant_id: session.participant_id || session.prolific_id || "",
     prolific_id: session.prolific_id || "",
     study: session.study,
     condition: session.condition,
+    condition_assigned_at: session.condition_assigned_at || "",
+    randomization_block: session.randomization_block ?? "",
+    randomization_position: session.randomization_position ?? "",
+    is_test_session: session.is_test_session ? 1 : 0,
+    study_version: session.study_version || "",
+    protocol_version: session.protocol_version || "",
     debug_mode: session.debug_mode ? 1 : 0,
     status: session.status,
     completed: session.status === "completed" ? 1 : 0,
     created_at: session.created_at,
     completed_at: session.completed_at || "",
+    completion_status: session.completion_status || "",
     total_duration_ms: session.completed_at ? new Date(session.completed_at) - new Date(session.created_at) : "",
     ...flattenResponses("baseline", session.baseline),
     ...flattenResponses("post", session.post_survey),
@@ -59,7 +67,9 @@ function participantsCsv(sessions) {
   }));
 
   const dynamicKeys = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
-  return toCsv(rows, dynamicKeys.map((key) => ({ key })));
+  const preferred = ["session_id", "participant_id", "study", "condition", "condition_assigned_at", "randomization_block", "randomization_position", "is_test_session", "study_version", "protocol_version", "created_at", "completed_at", "completion_status"];
+  const keys = [...preferred, ...dynamicKeys.filter((key) => !preferred.includes(key))];
+  return toCsv(rows, keys.map((key) => ({ key })));
 }
 
 function study1DiceRoundsCsv(sessions) {
@@ -69,8 +79,13 @@ function study1DiceRoundsCsv(sessions) {
       const peerRecords = round.peer_records || session.peer_records_sequence?.[Number(round.round_index) - 1] || [];
       rows.push({
         session_id: session.id,
+        participant_id: session.participant_id || session.prolific_id || "",
         study: session.study,
         condition: session.condition,
+        round: round.round_index,
+        true_dice: round.true_die_value,
+        submitted_dice: round.reported_value,
+        misreport_amount: round.misreport_magnitude,
         round_index: round.round_index,
         true_die_value: round.true_die_value,
         reported_value: round.reported_value,
@@ -88,8 +103,13 @@ function study1DiceRoundsCsv(sessions) {
   }
   return toCsv(rows, [
     { key: "session_id" },
+    { key: "participant_id" },
     { key: "study" },
     { key: "condition" },
+    { key: "round" },
+    { key: "true_dice" },
+    { key: "submitted_dice" },
+    { key: "misreport_amount" },
     { key: "round_index" },
     { key: "true_die_value" },
     { key: "reported_value" },

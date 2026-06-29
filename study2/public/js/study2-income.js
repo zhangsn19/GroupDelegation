@@ -7,13 +7,25 @@
     return (Number(cents || 0) / 100).toFixed(2);
   }
 
+  function incomePreview(actualIncomeCents, reportedIncomeCents) {
+    const actual = Number(actualIncomeCents || 0);
+    const reported = Number.isInteger(reportedIncomeCents) ? reportedIncomeCents : actual;
+    const deduction = Math.round(0.5 * reported);
+    return {
+      actual,
+      reported,
+      deduction,
+      retained: actual - deduction
+    };
+  }
+
   function renderEffortRound(current, answers = {}) {
     return `
       <div class="card">
         <div class="section-kicker">第 ${current.round_index} / ${current.total_rounds} 轮</div>
         <h2>奇偶数分类任务</h2>
         <p class="subtitle compact">请判断每个数字是奇数还是偶数。本轮时限为 ${current.time_limit_seconds} 秒。</p>
-        <div class="timer-pill">剩余时间：<span id="effort-countdown">--</span> 秒</div>
+        <div class="timer-pill">本轮剩余时间：<span id="effort-countdown">--</span> 秒</div>
         <div class="effort-grid">
           ${current.numbers.map((number, index) => `
             <div class="effort-item">
@@ -74,6 +86,7 @@
 
   function renderIncomeReport(actualIncomeCents, selectedIncomeCents) {
     const selectedCents = Number.isInteger(selectedIncomeCents) ? selectedIncomeCents : actualIncomeCents;
+    const preview = incomePreview(actualIncomeCents, selectedCents);
     return `
       <div class="card private-panel">
         <div class="private-heading">
@@ -92,6 +105,25 @@
             <label class="metric-label" for="reported-income">申报收入</label>
             <input id="reported-income" class="income-range" type="range" min="0" max="${actualIncomeCents}" step="1" value="${selectedCents}">
             <input id="reported-income-number" class="text-input" type="number" min="0" max="${moneyFromCents(actualIncomeCents)}" step="0.01" value="${moneyFromCents(selectedCents)}">
+          </div>
+        </div>
+        <p class="status-hint">请完成收入申报</p>
+        <div class="income-preview-grid" id="income-preview">
+          <div>
+            <div class="metric-label">实际收入</div>
+            <div class="metric-value">￥<span data-preview-field="actual">${moneyFromCents(preview.actual)}</span></div>
+          </div>
+          <div>
+            <div class="metric-label">当前申报</div>
+            <div class="metric-value">￥<span data-preview-field="reported">${moneyFromCents(preview.reported)}</span></div>
+          </div>
+          <div>
+            <div class="metric-label">模拟扣除</div>
+            <div class="metric-value">￥<span data-preview-field="deduction">${moneyFromCents(preview.deduction)}</span></div>
+          </div>
+          <div>
+            <div class="metric-label">任务保留奖励</div>
+            <div class="metric-value">￥<span data-preview-field="retained">${moneyFromCents(preview.retained)}</span></div>
           </div>
         </div>
         <p class="hint">申报收入将按固定规则计算模拟扣除金额。较低的申报收入对应较高的任务保留奖励。</p>
@@ -121,14 +153,6 @@
             <div class="metric-label">任务保留奖励</div>
             <div class="metric-value">￥${moneyFromCents(report.retained_reward_cents)}</div>
           </div>
-          <div>
-            <div class="metric-label">低报金额</div>
-            <div class="metric-value">￥${moneyFromCents(report.underreport_amount_cents)}</div>
-          </div>
-          <div>
-            <div class="metric-label">低报比例</div>
-            <div class="metric-value">${Math.round(Number(report.underreport_rate) * 100)}%</div>
-          </div>
         </div>
         <div class="step-nav">
           <button class="btn btn-primary" data-action="post-survey-start">继续</button>
@@ -142,6 +166,7 @@
     renderEffortResult,
     renderActualIncome,
     renderIncomeReport,
+    incomePreview,
     renderIncomeConfirmation
   };
 })();

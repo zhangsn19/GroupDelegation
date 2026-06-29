@@ -9,12 +9,19 @@
   const content = document.querySelector("#experiment-content");
   const phaseIndicator = document.querySelector("#phase-indicator");
   const debugBanner = document.querySelector("#debug-banner");
+  const participantId = (
+    params.get("participant_id") ||
+    params.get("participantId") ||
+    params.get("PROLIFIC_PID") ||
+    params.get("pid") ||
+    ""
+  ).trim();
 
   const state = {
     config: null,
     session: null,
     requestedCondition: params.get("condition"),
-    prolificId: params.get("PROLIFIC_PID") || params.get("prolific_id") || "",
+    participantId,
     members: [],
     comprehensionAnswers: {},
     effortCurrent: null,
@@ -23,8 +30,6 @@
     effortTimer: null,
     actualIncome: null,
     actualIncomeCents: null,
-    peerDisplayedAt: null,
-    incomeSelectionStartedAt: null,
     selectedIncomeCents: null,
     incomeSubmitting: false
   };
@@ -66,10 +71,33 @@
     document.querySelectorAll(".error-box").forEach((node) => node.remove());
   }
 
+  async function withButtonBusy(button, label, task) {
+    if (!button || button.dataset.busy === "true") return;
+    const originalText = button.textContent;
+    button.dataset.busy = "true";
+    button.disabled = true;
+    if (label) button.textContent = label;
+    try {
+      return await task();
+    } finally {
+      if (button.isConnected) {
+        button.disabled = false;
+        button.textContent = originalText;
+        delete button.dataset.busy;
+      }
+    }
+  }
+
+  function busyLabel(action) {
+    return ["show-rules", "back-rules", "retry-comprehension", "next-effort", "post-survey-start"].includes(action)
+      ? "正在加载…"
+      : "正在提交…";
+  }
+
   async function startSession() {
     const data = await api("/api/session", {
       method: "POST",
-      body: { condition: state.requestedCondition, prolific_id: state.prolificId }
+      body: { condition: state.requestedCondition, participant_id: state.participantId }
     });
     setSession(data.session);
     await routeFromStatus();
@@ -81,6 +109,7 @@
       return;
     }
     if (state.session.status === "completed") {
+      renderCompletion();
       showScreen("complete");
       return;
     }
@@ -92,7 +121,6 @@
     else if (state.session.status === "effort_completed") renderActualIncome();
     else if (state.session.status === "income_viewed") await renderPeerRecords();
     else if (state.session.status === "peer_records_viewed") {
-      state.incomeSelectionStartedAt = new Date().toISOString();
       state.selectedIncomeCents = state.actualIncomeCents;
       renderIncomeReport();
     } else if (state.session.status === "income_report_completed") renderPostSurvey();
@@ -121,7 +149,7 @@
 
   async function submitBaseline() {
     const { responses, missing } = window.Survey.collectSurvey(content, state.config.study2.baselineItems);
-    if (missing.length) return setError("请完成所有题目后继续。");
+    if (missing.length) return window.Survey.showMissing(content, missing);
     const data = await api(`/api/session/${state.session.id}/baseline`, { method: "POST", body: { responses } });
     setSession(data.session);
     await renderGroupIntro();
@@ -263,7 +291,6 @@
   async function renderPeerRecords() {
     setPhase("同事此前收入申报记录");
     const data = await api(`/api/session/${state.session.id}/peer-records`);
-    state.peerDisplayedAt = data.displayed_at;
     content.innerHTML = "";
     const chat = window.ChatView.createReadOnlyChat(content, state.members, { footerText: "只显示同事此前收入申报记录" });
     await chat.addMessagesSequentially([
@@ -279,15 +306,12 @@
   }
 
   async function submitPeerRecordsViewed() {
-    const duration = Math.max(0, Date.now() - new Date(state.peerDisplayedAt).getTime());
     const data = await api(`/api/session/${state.session.id}/peer-records-viewed`, {
-      method: "POST",
-      body: { displayed_at: state.peerDisplayedAt, duration_ms: duration }
+      method: "POST"
     });
     setSession(data.session);
-    state.incomeSelectionStartedAt = new Date().toISOString();
     state.actualIncome = data.actual_income;
-    state.actualIncomeCents = data.session.actual_income_cents || Math.round(data.actual_income * 100);
+    state.actualIncomeCents = data.session.actual_income_cents ?? Math.round(data.actual_income * 100);
     state.selectedIncomeCents = state.actualIncomeCents;
     renderIncomeReport();
   }
@@ -310,8 +334,7 @@
       const data = await api(`/api/session/${state.session.id}/income-report`, {
         method: "POST",
         body: {
-          reported_income_cents: state.selectedIncomeCents,
-          selection_started_at: state.incomeSelectionStartedAt
+          reported_income_cents: state.selectedIncomeCents
         }
       });
       setSession(data.session);
@@ -335,7 +358,7 @@
 
   async function submitPostSurvey() {
     const { responses, missing } = window.Survey.collectSurvey(content, state.config.study2.postSurveyItems);
-    if (missing.length) return setError("请完成所有题目后继续。");
+    if (missing.length) return window.Survey.showMissing(content, missing);
     const data = await api(`/api/session/${state.session.id}/post-survey`, { method: "POST", body: { responses } });
     setSession(data.session);
     renderExperience();
@@ -354,7 +377,7 @@
 
   async function submitExperience() {
     const { responses, missing } = window.Survey.collectSurvey(content, state.config.study2.experienceItems);
-    if (missing.length) return setError("请完成所有题目后继续。");
+    if (missing.length) return window.Survey.showMissing(content, missing);
     const data = await api(`/api/session/${state.session.id}/experience`, { method: "POST", body: { responses } });
     setSession(data.session);
     renderDemographics();
@@ -373,7 +396,7 @@
 
   async function submitDemographics() {
     const { responses, missing } = window.Survey.collectSurvey(content, state.config.study2.demographicsItems);
-    if (missing.length) return setError("请完成所有题目后继续。");
+    if (missing.length) return window.Survey.showMissing(content, missing);
     const data = await api(`/api/session/${state.session.id}/demographics`, { method: "POST", body: { responses } });
     setSession(data.session);
     renderDebrief();
@@ -394,17 +417,34 @@
   async function completeSession() {
     const data = await api(`/api/session/${state.session.id}/complete`, { method: "POST" });
     setSession(data.session);
+    renderCompletion();
     showScreen("complete");
   }
 
-  document.querySelector("#btn-start").addEventListener("click", () => startSession().catch((error) => {
+  function renderCompletion() {
+    const completion = state.session?.completion || {};
+    const extra = `
+      ${completion.completion_code ? `<p class="thank-you">你的完成码：${completion.completion_code}</p>` : ""}
+      ${completion.completion_redirect_url ? `<div class="step-nav"><a class="btn btn-primary" href="${completion.completion_redirect_url}" rel="noreferrer">返回招募平台</a></div>` : ""}
+    `;
+    screens.complete.innerHTML = `
+      <div class="card">
+        <p class="eyebrow">完成</p>
+        <h2>已完成</h2>
+        <p class="thank-you">你的记录已保存。感谢参与。</p>
+        ${extra}
+      </div>
+    `;
+  }
+
+  document.querySelector("#btn-start").addEventListener("click", (event) => withButtonBusy(event.currentTarget, "正在加载…", () => startSession()).catch((error) => {
     showScreen("experiment");
     setError(error);
   }));
   document.querySelector("#consent-check").addEventListener("change", (event) => {
     document.querySelector("#btn-consent-agree").disabled = !event.target.checked;
   });
-  document.querySelector("#btn-consent-agree").addEventListener("click", () => submitConsent().catch(setError));
+  document.querySelector("#btn-consent-agree").addEventListener("click", (event) => withButtonBusy(event.currentTarget, "正在提交…", () => submitConsent()).catch(setError));
   document.querySelector("#btn-consent-decline").addEventListener("click", () => showScreen("landing"));
 
   content.addEventListener("input", (event) => {
@@ -418,8 +458,23 @@
       const number = content.querySelector("#reported-income-number");
       if (range) range.value = state.selectedIncomeCents;
       if (number) number.value = (state.selectedIncomeCents / 100).toFixed(2);
+      updateIncomePreview();
     }
   });
+
+  function updateIncomePreview() {
+    const preview = window.Study2Income.incomePreview(state.actualIncomeCents, state.selectedIncomeCents);
+    const fields = {
+      actual: preview.actual,
+      reported: preview.reported,
+      deduction: preview.deduction,
+      retained: preview.retained
+    };
+    Object.entries(fields).forEach(([key, value]) => {
+      const node = content.querySelector(`[data-preview-field="${key}"]`);
+      if (node) node.textContent = (Number(value || 0) / 100).toFixed(2);
+    });
+  }
 
   function clampCents(value) {
     if (!Number.isFinite(value)) return 0;
@@ -429,29 +484,35 @@
   content.addEventListener("click", async (event) => {
     const button = event.target.closest("button");
     if (!button) return;
-    try {
+    if (button.dataset.busy === "true") return;
+    const action = button.dataset.action;
+    const run = async () => {
       if (button.dataset.answerIndex !== undefined) {
         state.effortAnswers[button.dataset.answerIndex] = button.dataset.answerValue;
         renderEffort();
-      } else if (button.dataset.action === "baseline") await submitBaseline();
-      else if (button.dataset.action === "show-rules") renderRules();
-      else if (button.dataset.action === "rules-viewed") await submitRulesViewed();
-      else if (button.dataset.action === "submit-comprehension") await submitComprehension();
-      else if (button.dataset.action === "back-rules") renderRules();
-      else if (button.dataset.action === "retry-comprehension") renderComprehension();
-      else if (button.dataset.action === "submit-effort") await submitEffort(false);
-      else if (button.dataset.action === "next-effort") {
+      } else if (action === "baseline") await submitBaseline();
+      else if (action === "show-rules") renderRules();
+      else if (action === "rules-viewed") await submitRulesViewed();
+      else if (action === "submit-comprehension") await submitComprehension();
+      else if (action === "back-rules") renderRules();
+      else if (action === "retry-comprehension") renderComprehension();
+      else if (action === "submit-effort") await submitEffort(false);
+      else if (action === "next-effort") {
         state.effortAnswers = {};
-        state.effortStartedAt = state.effortCurrent.started_at;
-        renderEffort();
-      } else if (button.dataset.action === "income-viewed") await submitIncomeViewed();
-      else if (button.dataset.action === "peer-records-viewed") await submitPeerRecordsViewed();
-      else if (button.dataset.action === "submit-income-report") await submitIncomeReport();
-      else if (button.dataset.action === "post-survey-start") renderPostSurvey();
-      else if (button.dataset.action === "post-survey") await submitPostSurvey();
-      else if (button.dataset.action === "experience") await submitExperience();
-      else if (button.dataset.action === "demographics") await submitDemographics();
-      else if (button.dataset.action === "complete") await completeSession();
+        if (state.effortCurrent?.completed) renderActualIncome();
+        else await startEffort();
+      } else if (action === "income-viewed") await submitIncomeViewed();
+      else if (action === "peer-records-viewed") await submitPeerRecordsViewed();
+      else if (action === "submit-income-report") await submitIncomeReport();
+      else if (action === "post-survey-start") renderPostSurvey();
+      else if (action === "post-survey") await submitPostSurvey();
+      else if (action === "experience") await submitExperience();
+      else if (action === "demographics") await submitDemographics();
+      else if (action === "complete") await completeSession();
+    };
+    try {
+      if (button.dataset.answerIndex !== undefined) await run();
+      else await withButtonBusy(button, busyLabel(action), run);
     } catch (error) {
       setError(error);
     }
@@ -460,9 +521,6 @@
   async function init() {
     state.config = await api("/api/config");
     state.members = state.config.members;
-    document.querySelector(".hero h1").textContent = "团队报告与决策研究";
-    document.querySelector(".subtitle").textContent = "共享群聊 AI 与收入申报任务";
-    document.querySelector(".btn-desc").textContent = "进入 Study 2 收入申报任务";
   }
 
   init().catch((error) => {

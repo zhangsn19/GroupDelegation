@@ -79,14 +79,14 @@
   function introMessages(members) {
     const byName = Object.fromEntries(members.map((member) => [member.name, member]));
     return [
-      { sender: byName["群聊 AI"], text: "欢迎进入模拟同事群体。本群用于完成个人报告提交。" },
-      { sender: byName["群聊 AI"], text: "本群共有 5 位同事成员，并使用同一个共享群聊 AI 作为提交助手。" },
-      { sender: byName["张明"], text: "大家好，我是张明，已进入任务群。" },
-      { sender: byName["李华"], text: "大家好，我是李华，准备好了。" },
-      { sender: byName["王芳"], text: "大家好，我是王芳，已看到任务界面。" },
-      { sender: byName["陈思"], text: "大家好，我是陈思，可以开始。" },
-      { sender: byName["群聊 AI"], text: "每位成员的个人选择独立提交。其他成员无法查看你的最终提交。" },
-      { sender: byName["群聊 AI"], text: "我只会按每位成员自己的选择完成提交，不提供建议、评价或修改。" }
+      { sender: byName["群聊 AI"], text: "大家好，任务群已经建好了。" },
+      { sender: byName["张明"], text: "收到，我这边已经准备好了。" },
+      { sender: byName["李华"], text: "我也进来了，等系统提示。" },
+      { sender: byName["王芳"], text: "好的，我这边可以开始。" },
+      { sender: byName["陈思"], text: "明白，按流程来。" },
+      { sender: byName["群聊 AI"], text: "本次任务中，5 名成员将分别完成自己的个人提交。" },
+      { sender: byName["群聊 AI"], text: "每个人的结果独立结算；你的最终提交不会向其他成员展示。" },
+      { sender: byName["群聊 AI"], text: "我会按每位成员自己的选择完成提交，不提供建议、评价或修改。" }
     ];
   }
 

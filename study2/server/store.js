@@ -23,9 +23,15 @@ async function readSession(id) {
 async function writeSession(session) {
   await ensureDataDir();
   const file = sessionPath(session.id);
-  const tmp = `${file}.tmp`;
+  const tmp = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
   await fs.writeFile(tmp, `${JSON.stringify(session, null, 2)}\n`, "utf8");
-  await fs.rename(tmp, file);
+  try {
+    await fs.rename(tmp, file);
+  } catch (error) {
+    if (error.code !== "EPERM" && error.code !== "EACCES") throw error;
+    await fs.copyFile(tmp, file);
+    await fs.unlink(tmp);
+  }
   return session;
 }
 
