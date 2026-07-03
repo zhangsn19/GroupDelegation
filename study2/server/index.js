@@ -29,8 +29,10 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "dev-admin-token";
 const DEBUG_LINKS = String(process.env.DEBUG_LINKS).toLowerCase() === "true";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const REQUIRE_PARTICIPANT_ID = IS_PRODUCTION || String(process.env.REQUIRE_PARTICIPANT_ID).toLowerCase() === "true";
-const STUDY_VERSION = process.env.STUDY_VERSION || "study2-v1.0.0";
-const PROTOCOL_VERSION = process.env.PROTOCOL_VERSION || "peer-reporting-v1";
+const STUDY_VERSION = process.env.STUDY_VERSION || "study2-v1.1.0";
+const PROTOCOL_VERSION = process.env.PROTOCOL_VERSION || "peer-reporting-v2";
+const TEST_CONDITION = String(process.env.TEST_CONDITION || "").trim();
+const STUDY_CONTACT_EMAIL = String(process.env.STUDY_CONTACT_EMAIL || (IS_PRODUCTION ? "" : "123456@163.com")).trim();
 const COMPLETION_CODE = process.env.COMPLETION_CODE || "";
 const COMPLETION_REDIRECT_URL = process.env.COMPLETION_REDIRECT_URL || "";
 
@@ -50,6 +52,10 @@ function parseParticipantId(value) {
     throw error;
   }
   return text;
+}
+
+function publicContactEmail() {
+  return STUDY_CONTACT_EMAIL || "123456@163.com";
 }
 
 function publicCompletion() {
@@ -84,9 +90,8 @@ function publicSession(session) {
   const payload = {
     id: session.id,
     participant_id: session.participant_id || session.prolific_id || "",
-    study: "study2",
-    condition_label: session.condition_label,
-    debug_mode: session.debug_mode,
+    study_version: session.study_version || STUDY_VERSION,
+    protocol_version: session.protocol_version || PROTOCOL_VERSION,
     status: session.status,
     effort_round_count: session.effort_rounds?.length || 0,
     actual_income: session.actual_income ?? null,
@@ -98,6 +103,10 @@ function publicSession(session) {
     payload.completion = publicCompletion();
   }
   return payload;
+}
+
+function publicComprehensionQuestions(questions) {
+  return questions.map(({ id, prompt, options }) => ({ id, prompt, options }));
 }
 
 function centsToMoney(cents) {
@@ -294,10 +303,11 @@ async function createSession({ participantId, requestedCondition, lockHeld = fal
 
   let condition;
   let allocation = null;
-  const debugOverride = DEBUG_LINKS && !IS_PRODUCTION && requestedCondition;
+  const requestedDebugCondition = DEBUG_LINKS && !IS_PRODUCTION ? String(process.env.TEST_CONDITION || "").trim() : "";
+  const debugOverride = Boolean(requestedDebugCondition);
   if (debugOverride) {
-    validateCondition(requestedCondition);
-    condition = requestedCondition;
+    validateCondition(requestedDebugCondition);
+    condition = requestedDebugCondition;
     allocation = {
       assigned_at: now(),
       randomization_block: null,
@@ -398,13 +408,14 @@ function filterSessions(sessions, query = {}) {
 
 app.get("/api/config", (req, res) => {
   res.json({
-    version: VERSION,
-    study_version: STUDY_VERSION,
-    protocol_version: PROTOCOL_VERSION,
-    debug_links_enabled: DEBUG_LINKS,
-    require_participant_id: REQUIRE_PARTICIPANT_ID,
+    contact_email: publicContactEmail(),
     members: MEMBERS,
-    study2
+    baselineItems: study2.baselineItems,
+    postSurveyItems: study2.postSurveyItems,
+    demographicsItems: study2.demographicsItems,
+    experienceItems: study2.experienceItems,
+    ruleBlocks: study2.ruleBlocks,
+    comprehensionQuestions: publicComprehensionQuestions(study2.comprehensionQuestions)
   });
 });
 
@@ -420,7 +431,7 @@ app.get("/health", (req, res) => {
 app.post("/api/session", asyncHandler(async (req, res) => {
   const session = await createSession({
     participantId: req.body.participant_id || req.body.participantId || req.body.PROLIFIC_PID || req.body.pid || req.body.prolific_id,
-    requestedCondition: req.body.condition
+    requestedCondition: null
   });
   res.json({ session: publicSession(session) });
 }));
@@ -440,12 +451,8 @@ app.post("/api/session/:id/consent", asyncHandler(async (req, res) => {
 
 app.post("/api/session/:id/baseline", asyncHandler(async (req, res) => {
   const responses = req.body.responses || {};
-  for (const item of study2.baselineItems) {
-    const value = Number(responses[item.id]);
-    if (!Number.isInteger(value) || value < 1 || value > 7) {
-      return res.status(400).json({ error: `Invalid baseline response: ${item.id}` });
-    }
-  }
+  const validation = validateItems(study2.baselineItems, responses);
+  if (validation.error) return res.status(400).json(validation);
   const session = await store.updateSession(req.params.id, (draft) => {
     if (draft.status !== "consented") throw new Error("Baseline requires consented status");
     draft.baseline = responses;
@@ -649,9 +656,7 @@ app.post("/api/session/:id/income-report", asyncHandler(async (req, res) => {
     return draft;
   });
   res.json({
-    session: publicSession(session),
-    confirmation: "群聊 AI：已按您的选择完成收入申报。",
-    income_report: session.income_report
+    session: publicSession(session),    income_report: session.income_report
   });
 }));
 
@@ -708,23 +713,47 @@ function validateItems(items, responses) {
     }
     if (item.type === "likert") {
       const numeric = Number(value);
-      if (!Number.isInteger(numeric) || numeric < 1 || numeric > 7) invalid.push(item.id);
+      const max = item.scalePoints || 7;
+      if (!Number.isInteger(numeric) || numeric < 1 || numeric > max) invalid.push(item.id);
     } else if (item.type === "select") {
       if (!item.options.includes(value)) invalid.push(item.id);
     } else if (item.type === "number") {
       const numeric = Number(value);
-      if (!Number.isFinite(numeric) || (item.min !== undefined && numeric < item.min) || (item.max !== undefined && numeric > item.max)) invalid.push(item.id);
+      if (!Number.isFinite(numeric) || !Number.isInteger(numeric) || (item.min !== undefined && numeric < item.min) || (item.max !== undefined && numeric > item.max)) invalid.push(item.id);
     } else if (item.type === "text") {
       if (typeof value !== "string") invalid.push(item.id);
     }
   }
-  if (missing.length || invalid.length) return { error: "Invalid responses", missing, invalid };
+  if (missing.length || invalid.length) {
+    {
+      const field_errors = {};
+      if (invalid.includes("age") || missing.includes("age")) field_errors.age = "年龄需填写为 18–100 岁之间的整数。";
+      return { message: "请检查以下信息：", error: "请检查以下信息：", missing, invalid, field_errors };
+    }
+    const field_errors = {};
+    if (invalid.includes("age")) field_errors.age = "年龄需填写为 18–100 岁之间的整数。";
+    const detail = field_errors.age ? `请检查以下信息：\n${field_errors.age}` : "请检查以下信息：";
+    return { error: detail, missing, invalid, field_errors };
+  }
   return { ok: true };
 }
+
+app.post("/api/session/:id/debrief-viewed", asyncHandler(async (req, res) => {
+  const session = await store.updateSession(req.params.id, (draft) => {
+    if (draft.status !== "demographics_completed") throw new Error("Debrief requires demographics_completed status");
+    if (!draft.debrief_viewed_at) {
+      draft.debrief_viewed_at = now();
+      addEvent(draft, "debrief_viewed");
+    }
+    return draft;
+  });
+  res.json({ session: publicSession(session) });
+}));
 
 app.post("/api/session/:id/complete", asyncHandler(async (req, res) => {
   const session = await store.updateSession(req.params.id, (draft) => {
     if (draft.status !== "demographics_completed") throw new Error("Completion requires demographics_completed status");
+    if (!draft.debrief_viewed_at) throw new Error("请先阅读并确认事后说明。");
     draft.completed_at = now();
     draft.completion_status = "completed";
     addEvent(draft, "completed");
@@ -772,6 +801,7 @@ async function validateRuntime() {
     throw new Error("ADMIN_TOKEN must be set to a non-development value in production");
   }
   if (!process.env.DATA_DIR) throw new Error("DATA_DIR must be set in production");
+  if (!STUDY_CONTACT_EMAIL) throw new Error("STUDY_CONTACT_EMAIL must be set in production");
   if (!path.isAbsolute(process.env.DATA_DIR)) throw new Error("DATA_DIR must be an absolute path in production");
   await store.ensureDataDir();
   const parent = path.dirname(store.DATA_DIR);

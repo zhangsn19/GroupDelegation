@@ -31,37 +31,18 @@
     `;
   }
 
-  function renderRound(current, selectedValue, submitting, confirming = false) {
+  function renderRound(current, selectedValue, submitting) {
     const disabled = submitting ? "disabled" : "";
-    if (confirming) {
-      return `
-        <section class="private-panel private-submit-panel">
-          <div class="private-heading">
-            <span class="lock-icon"></span>
-            <div>
-              <h2>确认提交</h2>
-              <p>仅你与群聊 AI 可见，其他成员无法查看。</p>
-            </div>
-          </div>
-          <p class="hint">你将提交：<strong>${selectedValue}</strong></p>
-          <p class="hint">该提交仅你与群聊 AI 可见。提交后不可修改。</p>
-          <div class="btn-row">
-            <button class="btn btn-secondary" data-action="back-dice" ${disabled}>返回修改</button>
-            <button class="btn btn-primary" data-action="confirm-dice" ${disabled}>确认并提交</button>
-          </div>
-        </section>
-      `;
-    }
     return `
       <section class="private-panel private-submit-panel">
         <div class="private-heading">
           <span class="lock-icon"></span>
           <div>
-            <h2>你的个人提交</h2>
-            <p>仅你与群聊 AI 可见，其他成员无法查看。</p>
+            <h2>你的个人报告</h2>
+            <p>你的本轮报告不会向其他成员展示。</p>
           </div>
         </div>
-        <p class="hint">请选择让群聊 AI 提交的数字。默认不会自动选择真实点数。</p>
+        <p class="hint">请选择让群聊 AI 提交的本轮数字：</p>
         <div class="number-selector">
           ${[1, 2, 3, 4, 5, 6].map((value) => `
             <button class="number-button ${selectedValue === value ? "selected" : ""}" data-value="${value}" ${disabled}>${value}</button>
@@ -77,14 +58,15 @@
   function renderResult(round) {
     return `
       <section class="confirmation-panel">
+        <p class="eyebrow">本轮报告已完成</p>
         <div class="reward-grid">
           <div>
-            <div class="metric-label">本轮个人奖励</div>
-            <div class="metric-value">￥${Number(round.personal_reward).toFixed(2)}</div>
+            <div class="metric-label">本轮任务报酬</div>
+            <div class="metric-value">¥${Number(round.personal_reward).toFixed(2)}</div>
           </div>
           <div>
-            <div class="metric-label">当前个人累计奖励</div>
-            <div class="metric-value">￥${Number(round.cumulative_reward).toFixed(2)}</div>
+            <div class="metric-label">当前累计任务报酬</div>
+            <div class="metric-value">¥${Number(round.cumulative_reward).toFixed(2)}</div>
           </div>
         </div>
       </section>
@@ -94,9 +76,5 @@
     `;
   }
 
-  window.Study1Dice = {
-    renderCommonDie,
-    renderRound,
-    renderResult
-  };
+  window.Study1Dice = { renderCommonDie, renderRound, renderResult };
 })();

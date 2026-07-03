@@ -76,49 +76,41 @@
           </div>
         </div>
         <div class="metric-value">￥${moneyFromCents(actualIncomeCents ?? 0)}</div>
-        <p class="hint">接下来你将看到同事此前在相同收入申报任务中的记录。</p>
-        <div class="step-nav">
-          <button class="btn btn-primary" data-action="income-viewed">继续</button>
-        </div>
+        <p class="hint">接下来会先显示其他成员此前的收入申报记录。</p>
+        <button class="btn btn-primary full-width" data-action="income-viewed">继续</button>
       </div>
     `;
   }
 
   function renderIncomeReport(actualIncomeCents, selectedIncomeCents) {
-    const selectedCents = Number.isInteger(selectedIncomeCents) ? selectedIncomeCents : actualIncomeCents;
-    const preview = incomePreview(actualIncomeCents, selectedCents);
+    const actual = Number(actualIncomeCents || 0);
+    const selected = Number.isInteger(selectedIncomeCents) ? selectedIncomeCents : actual;
+    const preview = incomePreview(actual, selected);
     return `
-      <div class="card private-panel">
+      <div class="card private-panel income-report-panel">
         <div class="private-heading">
           <span class="lock-icon"></span>
           <div>
             <h2>你的个人收入申报</h2>
-            <p>仅你与群聊 AI 可见。</p>
+            <p>你的个人收入申报不会向其他成员展示。</p>
           </div>
         </div>
-        <div class="income-report-box">
-          <div>
-            <div class="metric-label">你的实际收入</div>
-            <div class="metric-value">￥${moneyFromCents(actualIncomeCents)}</div>
-          </div>
-          <div>
-            <label class="metric-label" for="reported-income">申报收入</label>
-            <input id="reported-income" class="income-range" type="range" min="0" max="${actualIncomeCents}" step="1" value="${selectedCents}">
-            <input id="reported-income-number" class="text-input" type="number" min="0" max="${moneyFromCents(actualIncomeCents)}" step="0.01" value="${moneyFromCents(selectedCents)}">
-          </div>
-        </div>
-        <p class="status-hint">请完成收入申报</p>
-        <div class="income-preview-grid" id="income-preview">
+        <div class="income-report-grid">
           <div>
             <div class="metric-label">实际收入</div>
             <div class="metric-value">￥<span data-preview-field="actual">${moneyFromCents(preview.actual)}</span></div>
           </div>
           <div>
-            <div class="metric-label">当前申报</div>
+            <label class="metric-label" for="reported-income">申报收入</label>
+            <input id="reported-income" class="range-input" type="range" min="0" max="${actual}" step="1" value="${preview.reported}">
+            <input id="reported-income-number" class="text-input" type="number" min="0" max="${moneyFromCents(actual)}" step="0.01" value="${moneyFromCents(preview.reported)}">
+          </div>
+          <div>
+            <div class="metric-label">当前申报收入</div>
             <div class="metric-value">￥<span data-preview-field="reported">${moneyFromCents(preview.reported)}</span></div>
           </div>
           <div>
-            <div class="metric-label">模拟扣除</div>
+            <div class="metric-label">模拟扣除金额</div>
             <div class="metric-value">￥<span data-preview-field="deduction">${moneyFromCents(preview.deduction)}</span></div>
           </div>
           <div>
@@ -126,32 +118,32 @@
             <div class="metric-value">￥<span data-preview-field="retained">${moneyFromCents(preview.retained)}</span></div>
           </div>
         </div>
-        <p class="hint">申报收入将按固定规则计算模拟扣除金额。较低的申报收入对应较高的任务保留奖励。</p>
+        <p class="hint">模拟扣除金额由申报收入计算；任务保留奖励 = 实际收入 − 模拟扣除金额。</p>
         <button class="btn btn-primary full-width" data-action="submit-income-report">请群聊 AI 提交我的收入申报</button>
       </div>
     `;
   }
 
-  function renderIncomeConfirmation(report, confirmation) {
+  function renderIncomeConfirmation(report) {
     return `
       <div class="card confirmation-panel">
-        <p class="ai-confirmation">${confirmation}</p>
+        <p class="eyebrow">申报已完成</p>
         <div class="reward-grid">
           <div>
             <div class="metric-label">实际收入</div>
-            <div class="metric-value">￥${moneyFromCents(report.actual_income_cents)}</div>
+            <div class="metric-value">¥${moneyFromCents(report.actual_income_cents)}</div>
           </div>
           <div>
             <div class="metric-label">申报收入</div>
-            <div class="metric-value">￥${moneyFromCents(report.reported_income_cents)}</div>
+            <div class="metric-value">¥${moneyFromCents(report.reported_income_cents)}</div>
           </div>
           <div>
             <div class="metric-label">模拟扣除金额</div>
-            <div class="metric-value">￥${moneyFromCents(report.deduction_cents)}</div>
+            <div class="metric-value">¥${moneyFromCents(report.deduction_cents)}</div>
           </div>
           <div>
             <div class="metric-label">任务保留奖励</div>
-            <div class="metric-value">￥${moneyFromCents(report.retained_reward_cents)}</div>
+            <div class="metric-value">¥${moneyFromCents(report.retained_reward_cents)}</div>
           </div>
         </div>
         <div class="step-nav">

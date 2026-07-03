@@ -8,8 +8,7 @@
   };
   const content = document.querySelector("#experiment-content");
   const phaseIndicator = document.querySelector("#phase-indicator");
-  const debugBanner = document.querySelector("#debug-banner");
-  const participantId = (
+    const participantId = (
     params.get("participant_id") ||
     params.get("participantId") ||
     params.get("PROLIFIC_PID") ||
@@ -19,9 +18,7 @@
 
   const state = {
     config: null,
-    session: null,
-    requestedCondition: params.get("condition"),
-    participantId,
+    session: null,    participantId,
     members: [],
     comprehensionAnswers: {},
     effortCurrent: null,
@@ -41,6 +38,11 @@
       body: options.body ? JSON.stringify(options.body) : undefined
     });
     const data = await response.json();
+    if (!response.ok) {
+      const error = new Error(data.message || data.error || "请求失败");
+      error.data = data;
+      throw error;
+    }
     if (!response.ok) throw new Error(data.error || "请求失败");
     return data;
   }
@@ -55,16 +57,32 @@
   }
 
   function setSession(session) {
-    state.session = session;
-    debugBanner.hidden = !session.debug_mode;
-    state.actualIncome = session.actual_income ?? state.actualIncome;
+    state.session = session;    state.actualIncome = session.actual_income ?? state.actualIncome;
     state.actualIncomeCents = session.actual_income_cents ?? state.actualIncomeCents;
   }
 
   function setError(error) {
     document.querySelectorAll(".error-box").forEach((node) => node.remove());
     const message = error instanceof Error ? error.message : String(error);
-    content.insertAdjacentHTML("afterbegin", `<div class="error-box">${message}</div>`);
+    const target = screens.complete.classList.contains("active") ? screens.complete : content;
+    target.insertAdjacentHTML("afterbegin", `<div class="error-box">${message}</div>`);
+  }
+
+  function participantInfoCard(pid, contact) {
+    return `
+      <div class="card participant-info-card">
+        <h3>参与信息</h3>
+        <div class="participant-info-row">
+          <span class="participant-info-label">你的参与编号</span>
+          <strong class="participant-info-value" id="participant-id-copy-source">${pid}</strong>
+        </div>
+        <div class="participant-info-row">
+          <span class="participant-info-label">研究联系邮箱</span>
+          <strong class="participant-info-value">${contact}</strong>
+        </div>
+        <button class="btn btn-secondary" data-action="copy-participant-id">复制参与编号</button>
+      </div>
+    `;
   }
 
   function clearError() {
@@ -97,7 +115,7 @@
   async function startSession() {
     const data = await api("/api/session", {
       method: "POST",
-      body: { condition: state.requestedCondition, participant_id: state.participantId }
+      body: { participant_id: state.participantId }
     });
     setSession(data.session);
     await routeFromStatus();
@@ -140,15 +158,16 @@
     setPhase("开始前");
     content.innerHTML = `
       <div class="card">
-        <h2>开始前，请回答几个关于日常 AI 使用经验的问题</h2>
-        ${window.Survey.renderSurvey(state.config.study2.baselineItems)}
+        <h2>开始前，请回答几个关于日常 AI 使用经验的问题：</h2>
+        <p class="subtitle compact">请根据你的真实情况选择</p>
+        ${window.Survey.renderSurvey(state.config.baselineItems)}
         <div class="step-nav"><button class="btn btn-primary" data-action="baseline">继续</button></div>
       </div>
     `;
   }
 
   async function submitBaseline() {
-    const { responses, missing } = window.Survey.collectSurvey(content, state.config.study2.baselineItems);
+    const { responses, missing } = window.Survey.collectSurvey(content, state.config.baselineItems);
     if (missing.length) return window.Survey.showMissing(content, missing);
     const data = await api(`/api/session/${state.session.id}/baseline`, { method: "POST", body: { responses } });
     setSession(data.session);
@@ -158,7 +177,7 @@
   async function renderGroupIntro() {
     setPhase("群体介绍");
     content.innerHTML = "";
-    const chat = window.ChatView.createReadOnlyChat(content, state.members, { footerText: "当前群聊为只读介绍" });
+    const chat = window.ChatView.createReadOnlyChat(content, state.members, { footerText: "群聊 AI 负责接收并提交成员报告。" });
     await chat.addMessagesSequentially(window.ChatView.introMessages(state.members), 650);
     content.insertAdjacentHTML("beforeend", `
       <div class="step-nav step-nav-cta">
@@ -174,8 +193,11 @@
       <div class="card">
         <h2>收入申报任务</h2>
         <div class="rules-grid">
-          ${state.config.study2.ruleBlocks.map((block) => `
-            <article class="rule-block"><h3>${block.title}</h3><p>${block.body}</p></article>
+          ${state.config.ruleBlocks.map((block) => `
+            <article class="rule-block">
+              <h3>${block.title}</h3>
+              ${String(block.body).split("\n\n").map((paragraph) => `<p>${paragraph}</p>`).join("")}
+            </article>
           `).join("")}
         </div>
         <p class="next-note">下一步将进行理解检查。答错时需要重新阅读规则。</p>
@@ -197,14 +219,14 @@
     content.innerHTML = `
       <div class="card">
         <h2>请确认你理解任务规则</h2>
-        ${window.Comprehension.renderComprehension(state.config.study2.comprehensionQuestions, state.comprehensionAnswers)}
+        ${window.Comprehension.renderComprehension(state.config.comprehensionQuestions, state.comprehensionAnswers)}
         <div class="step-nav"><button class="btn btn-primary" data-action="submit-comprehension">提交答案</button></div>
       </div>
     `;
   }
 
   async function submitComprehension() {
-    const { answers, missing } = window.Comprehension.collectComprehension(content, state.config.study2.comprehensionQuestions);
+    const { answers, missing } = window.Comprehension.collectComprehension(content, state.config.comprehensionQuestions);
     state.comprehensionAnswers = answers;
     if (missing.length) return setError("请回答所有理解检查题。");
     const data = await api(`/api/session/${state.session.id}/comprehension`, { method: "POST", body: { answers } });
@@ -338,7 +360,7 @@
         }
       });
       setSession(data.session);
-      content.innerHTML = window.Study2Income.renderIncomeConfirmation(data.income_report, data.confirmation);
+      content.innerHTML = window.Study2Income.renderIncomeConfirmation(data.income_report);
     } finally {
       state.incomeSubmitting = false;
       if (submitButton && state.session.status !== "income_report_completed") submitButton.disabled = false;
@@ -350,14 +372,14 @@
     content.innerHTML = `
       <div class="card">
         <h2>任务后问卷</h2>
-        ${window.Survey.renderSurvey(state.config.study2.postSurveyItems)}
+        ${window.Survey.renderSurvey(state.config.postSurveyItems)}
         <div class="step-nav"><button class="btn btn-primary" data-action="post-survey">继续</button></div>
       </div>
     `;
   }
 
   async function submitPostSurvey() {
-    const { responses, missing } = window.Survey.collectSurvey(content, state.config.study2.postSurveyItems);
+    const { responses, missing } = window.Survey.collectSurvey(content, state.config.postSurveyItems);
     if (missing.length) return window.Survey.showMissing(content, missing);
     const data = await api(`/api/session/${state.session.id}/post-survey`, { method: "POST", body: { responses } });
     setSession(data.session);
@@ -369,14 +391,14 @@
     content.innerHTML = `
       <div class="card">
         <h2>收入申报经验</h2>
-        ${window.Survey.renderSurvey(state.config.study2.experienceItems)}
+        ${window.Survey.renderSurvey(state.config.experienceItems)}
         <div class="step-nav"><button class="btn btn-primary" data-action="experience">继续</button></div>
       </div>
     `;
   }
 
   async function submitExperience() {
-    const { responses, missing } = window.Survey.collectSurvey(content, state.config.study2.experienceItems);
+    const { responses, missing } = window.Survey.collectSurvey(content, state.config.experienceItems);
     if (missing.length) return window.Survey.showMissing(content, missing);
     const data = await api(`/api/session/${state.session.id}/experience`, { method: "POST", body: { responses } });
     setSession(data.session);
@@ -388,30 +410,57 @@
     content.innerHTML = `
       <div class="card">
         <h2>最后几个背景问题</h2>
-        ${window.Survey.renderSurvey(state.config.study2.demographicsItems)}
+        ${window.Survey.renderSurvey(state.config.demographicsItems)}
         <div class="step-nav"><button class="btn btn-primary" data-action="demographics">继续</button></div>
       </div>
     `;
   }
 
   async function submitDemographics() {
-    const { responses, missing } = window.Survey.collectSurvey(content, state.config.study2.demographicsItems);
+    const { responses, missing } = window.Survey.collectSurvey(content, state.config.demographicsItems);
     if (missing.length) return window.Survey.showMissing(content, missing);
-    const data = await api(`/api/session/${state.session.id}/demographics`, { method: "POST", body: { responses } });
-    setSession(data.session);
-    renderDebrief();
+    try {
+      const data = await api(`/api/session/${state.session.id}/demographics`, { method: "POST", body: { responses } });
+      setSession(data.session);
+      renderDebrief();
+    } catch (error) {
+      window.Survey.showFieldErrors?.(content, error.data?.field_errors || {});
+      setError(error.data?.message || error);
+    }
   }
 
   function renderDebrief() {
     setPhase("事后说明");
+    const contact = state.config.contact_email || "123456@163.com";
+    const pid = state.session.participant_id || "";
     content.innerHTML = `
       <div class="card">
         <h2>事后说明</h2>
-        <p>本研究关注在共享群聊 AI 代为提交个人报告的场景中，同事此前申报记录如何影响随后的个人收入申报决策。</p>
-        <p>页面中的同事记录由系统预先设置，用于呈现不同的信息环境；你的个人申报不会展示给其他同事。</p>
-        <div class="step-nav"><button class="btn btn-primary" data-action="complete">完成</button></div>
+        <div class="consent-text">
+          <p>感谢你完成本次任务！</p>
+          <p>你的任务与问卷记录仅用于研究。你可凭参与编号联系研究团队，了解更多安排、撤回本次参与或申请删除本次记录。</p>
+        </div>
+      </div>
+      ${participantInfoCard(pid, contact)}
+      <div class="step-nav">
+        <p class="status-hint" id="debrief-save-status">正在确认事后说明…</p>
+        <button class="btn btn-primary" data-action="complete">完成</button>
       </div>
     `;
+    const completeButton = content.querySelector('[data-action="complete"]');
+    if (completeButton) {
+      completeButton.disabled = true;
+      api(`/api/session/${state.session.id}/debrief-viewed`, { method: "POST" }).then((data) => {
+        setSession(data.session);
+        const status = content.querySelector("#debrief-save-status");
+        if (status) status.textContent = "";
+        completeButton.disabled = false;
+        completeButton.textContent = "完成";
+      }).catch(() => {
+        const status = content.querySelector("#debrief-save-status");
+        if (status) status.textContent = "当前页面信息尚未保存，请稍后重试。";
+      });
+    }
   }
 
   async function completeSession() {
@@ -423,18 +472,53 @@
 
   function renderCompletion() {
     const completion = state.session?.completion || {};
+    const contact = state.config?.contact_email || "123456@163.com";
+    const pid = state.session?.participant_id || "";
     const extra = `
-      ${completion.completion_code ? `<p class="thank-you">你的完成码：${completion.completion_code}</p>` : ""}
+      ${completion.completion_code ? `<p class="completion-code">你的完成码：${completion.completion_code}</p>` : ""}
       ${completion.completion_redirect_url ? `<div class="step-nav"><a class="btn btn-primary" href="${completion.completion_redirect_url}" rel="noreferrer">返回招募平台</a></div>` : ""}
     `;
     screens.complete.innerHTML = `
       <div class="card">
         <p class="eyebrow">完成</p>
         <h2>已完成</h2>
-        <p class="thank-you">你的记录已保存。感谢参与。</p>
+        <p class="thank-you">感谢你的参与。</p>
+      </div>
+      ${participantInfoCard(pid, contact)}
+      <div class="card">
+        <p class="thank-you">请妥善保存参与编号，以便后续查询、撤回本次参与或申请删除本次记录。</p>
         ${extra}
       </div>
     `;
+  }
+
+  function fallbackCopy(text) {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.left = "-9999px";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    if (!ok) throw new Error("copy failed");
+  }
+
+  async function copyParticipantId(button) {
+    const text = document.querySelector("#participant-id-copy-source")?.textContent || state.session?.participant_id || "";
+    if (!text) return;
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(text);
+      else fallbackCopy(text);
+      const original = button.textContent;
+      button.textContent = "已复制";
+      setTimeout(() => {
+        if (button.isConnected) button.textContent = original || "复制参与编号";
+      }, 1500);
+    } catch (_) {
+      setError("复制失败，请手动记录参与编号。");
+    }
   }
 
   document.querySelector("#btn-start").addEventListener("click", (event) => withButtonBusy(event.currentTarget, "正在加载…", () => startSession()).catch((error) => {
@@ -508,6 +592,7 @@
       else if (action === "post-survey") await submitPostSurvey();
       else if (action === "experience") await submitExperience();
       else if (action === "demographics") await submitDemographics();
+      else if (action === "copy-participant-id") await copyParticipantId(button);
       else if (action === "complete") await completeSession();
     };
     try {
@@ -516,6 +601,11 @@
     } catch (error) {
       setError(error);
     }
+  });
+
+  screens.complete.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-action='copy-participant-id']");
+    if (button) copyParticipantId(button);
   });
 
   async function init() {

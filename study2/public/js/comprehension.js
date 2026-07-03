@@ -28,11 +28,8 @@
     const missing = [];
     for (const question of questions) {
       const checked = root.querySelector(`[name="${question.id}"]:checked`);
-      if (!checked) {
-        missing.push(question.id);
-      } else {
-        answers[question.id] = checked.value;
-      }
+      if (!checked) missing.push(question.id);
+      else answers[question.id] = checked.value;
     }
     return { answers, missing };
   }

@@ -22,6 +22,8 @@ services:
         sync: false
       - key: COMPLETION_REDIRECT_URL
         sync: false
+      - key: STUDY_CONTACT_EMAIL
+        sync: false
     disk:
       name: study1-data
       mountPath: /var/data

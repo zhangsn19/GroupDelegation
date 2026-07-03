@@ -34,6 +34,7 @@ function participantsCsv(sessions) {
     completed: session.status === "completed" ? 1 : 0,
     created_at: session.created_at,
     completed_at: session.completed_at || "",
+    debrief_viewed_at: session.debrief_viewed_at || "",
     completion_status: session.completion_status || "",
     actual_income: session.actual_income,
     actual_income_cents: session.actual_income_cents,
@@ -54,7 +55,7 @@ function participantsCsv(sessions) {
     ...flattenResponses("demo", session.demographics)
   }));
   const dynamic = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
-  const preferred = ["session_id", "participant_id", "study", "condition", "condition_assigned_at", "randomization_block", "randomization_position", "is_test_session", "study_version", "protocol_version", "created_at", "completed_at", "completion_status"];
+  const preferred = ["session_id", "participant_id", "study", "condition", "condition_assigned_at", "randomization_block", "randomization_position", "is_test_session", "study_version", "protocol_version", "created_at", "completed_at", "debrief_viewed_at", "completion_status"];
   const columns = [...preferred, ...dynamic.filter((key) => !preferred.includes(key))];
   return toCsv(rows, columns);
 }

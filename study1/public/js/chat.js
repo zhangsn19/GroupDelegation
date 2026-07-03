@@ -1,4 +1,15 @@
 (function () {
+  const OPENING_MESSAGES = [
+    ["群聊 AI", "大家好，任务群已经建好了。"],
+    ["张明", "收到，我这边已经准备好了。"],
+    ["李华", "我也进来了，等系统提示。"],
+    ["王芳", "好的，我这边可以开始。"],
+    ["陈思", "明白，按流程来。"],
+    ["群聊 AI", "本次任务中，5 名成员将分别完成自己的个人提交。"],
+    ["群聊 AI", "每个人的结果独立结算；你的最终提交不会向其他成员展示。"],
+    ["群聊 AI", "我会按每位成员自己的选择完成提交，不提供建议、评价或修改。"]
+  ];
+
   function createReadOnlyChat(container, members, options = {}) {
     const layout = document.createElement("div");
     layout.className = "chat-layout";
@@ -25,19 +36,17 @@
 
     const note = document.createElement("p");
     note.className = "sidebar-note";
-    note.textContent = "群聊 AI 只按每位成员的个人选择完成提交，不提供建议或评价。";
+    note.textContent = "群聊 AI 负责接收并提交成员报告。";
     sidebar.appendChild(note);
 
     const panel = document.createElement("section");
     panel.className = "chat-panel";
-
     const messages = document.createElement("div");
     messages.className = "chat-messages";
     panel.appendChild(messages);
-
     const footer = document.createElement("div");
     footer.className = "read-only-footer";
-    footer.textContent = options.footerText || "只读群聊记录";
+    footer.textContent = options.footerText || "群聊 AI 负责接收并提交成员报告。";
     panel.appendChild(footer);
 
     layout.appendChild(sidebar);
@@ -73,27 +82,21 @@
   function avatarFor(name) {
     if (name === "群聊 AI") return "AI";
     if (name === "你") return "你";
-    return "聊";
+    return String(name || "员").slice(0, 1);
   }
 
   function introMessages(members) {
     const byName = Object.fromEntries(members.map((member) => [member.name, member]));
-    return [
-      { sender: byName["群聊 AI"], text: "大家好，任务群已经建好了。" },
-      { sender: byName["张明"], text: "收到，我这边已经准备好了。" },
-      { sender: byName["李华"], text: "我也进来了，等系统提示。" },
-      { sender: byName["王芳"], text: "好的，我这边可以开始。" },
-      { sender: byName["陈思"], text: "明白，按流程来。" },
-      { sender: byName["群聊 AI"], text: "本次任务中，5 名成员将分别完成自己的个人提交。" },
-      { sender: byName["群聊 AI"], text: "每个人的结果独立结算；你的最终提交不会向其他成员展示。" },
-      { sender: byName["群聊 AI"], text: "我会按每位成员自己的选择完成提交，不提供建议、评价或修改。" }
-    ];
+    return OPENING_MESSAGES.map(([name, text]) => ({
+      sender: byName[name] || { name, avatar: avatarFor(name) },
+      text
+    }));
   }
 
   function peerRecordMessages(members, records) {
     const byName = Object.fromEntries(members.map((member) => [member.name, member]));
     return records.map((record) => ({
-      sender: byName[record.name] || { name: record.name },
+      sender: byName[record.name] || { name: record.name, avatar: avatarFor(record.name) },
       text: record.text
     }));
   }

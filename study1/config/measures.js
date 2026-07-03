@@ -1,25 +1,29 @@
 const baselineItems = [
   {
     id: "ai_use_frequency",
-    prompt: "过去三个月，我使用 AI 工具协助学习、工作或日常事务的频率是。",
+    prompt: "过去三个月，我使用 AI 工具协助学习、工作或日常事务的频率是",
+    scalePoints: 5,
     minLabel: "从不",
     maxLabel: "非常频繁"
   },
   {
     id: "ai_execution_experience",
-    prompt: "过去三个月，我曾使用 AI 或自动化工具代替我完成、提交、发送或执行具体任务的频率是。",
+    prompt: "过去三个月，我曾使用 AI 或自动化工具代替我完成、提交、发送或执行具体任务的频率是",
+    scalePoints: 5,
     minLabel: "从不",
     maxLabel: "非常频繁"
   },
   {
     id: "ai_execution_trust",
-    prompt: "当任务规则明确、步骤固定时，我相信 AI 能按我的指令完成任务。",
+    prompt: "当任务规则明确、步骤固定时，我相信 AI 能按我的指令完成任务",
+    scalePoints: 5,
     minLabel: "非常不同意",
     maxLabel: "非常同意"
   },
   {
     id: "ai_execution_willingness",
-    prompt: "对于规则明确、步骤固定的任务，我愿意让 AI 按我的指令代为执行。",
+    prompt: "对于规则明确、步骤固定的任务，我愿意让 AI 按我的指令代为执行",
+    scalePoints: 5,
     minLabel: "非常不同意",
     maxLabel: "非常同意"
   }
@@ -52,12 +56,12 @@ const postSurveyStudy1 = [
   { section: "E", id: "e_ai_influenced_decision", prompt: "群聊 AI 影响了我在骰子任务中决定提交什么点数。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
   { section: "E", id: "e_ai_decided_outcome", prompt: "我认为我在骰子任务中作出的点数提交主要由群聊 AI 决定。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
   { section: "F", id: "f_decision_considerations", prompt: "请简要说明：在决定各轮提交什么骰子点数时，你主要考虑了哪些因素？", type: "text", required: false },
-  { section: "F", id: "f_design_influences", prompt: "任务中是否有任何信息或设计影响了你在各轮中决定提交什么骰子点数？例如其他成员的提交情况、群聊 AI 的角色、奖励规则或其他因素。请说明；若没有，也请说明。", type: "text", required: false }
+  { section: "F", id: "f_design_influences", prompt: "任务中是否有任何信息或设计影响了你在各轮中决定提交什么骰子点数？例如其他成员的提交情况、群聊 AI 的角色、奖励规则或其他因素。请说明；若没有或不想补充，也可留空。", type: "text", required: false }
 ];
 
 const demographicsItems = [
-  { id: "age", prompt: "年龄", type: "number", min: 18, max: 100 },
-  { id: "gender", prompt: "性别", type: "select", options: ["女性", "男性", "非二元／其他", "不愿回答"] },
+  { id: "age", prompt: "年龄", type: "number", min: 18, max: 100, step: 1 },
+  { id: "gender", prompt: "性别", type: "select", options: ["男", "女", "不愿透露"] },
   { id: "education", prompt: "最高教育程度", type: "select", options: ["高中及以下", "大专", "本科", "硕士", "博士", "其他", "不愿回答"] }
 ];
 

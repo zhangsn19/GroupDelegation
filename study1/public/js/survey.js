@@ -2,7 +2,7 @@
   const SECTION_TITLES = {
     A: "任务理解与信息回忆",
     B: "你对同事实际做法的判断",
-    C: "你对同事认为“应当/可接受”的判断",
+    C: "你对同事认为“应该/可接受”的判断",
     D: "回顾自己的感受",
     E: "回顾你的决定与群聊 AI 的角色",
     F: "补充说明（可选）"
@@ -14,7 +14,8 @@
   };
 
   function likertButtons(item, value) {
-    return Array.from({ length: 7 }, (_, index) => {
+    const points = item.scalePoints || 7;
+    return Array.from({ length: points }, (_, index) => {
       const score = index + 1;
       const checked = String(value || "") === String(score) ? "checked" : "";
       return `
@@ -40,10 +41,7 @@
   }
 
   function promptText(item) {
-    const prompt = item.id === "f_design_influences"
-      ? item.prompt.replace("请说明；若没有，也请说明。", "请说明；若没有或不想补充，也可留空。")
-      : item.prompt;
-    return `${prompt}${item.required === false ? "（可选）" : ""}`;
+    return `${item.prompt}${item.required === false ? "（可选）" : ""}`;
   }
 
   function renderSurvey(items, values = {}) {
@@ -67,7 +65,7 @@
               ${header}
               <label class="question-card survey-card" data-question-id="${item.id}">
                 <span class="question-text">${promptText(item)}</span>
-                <input class="text-input" type="number" min="${item.min || ""}" max="${item.max || ""}" name="${item.id}" value="${values[item.id] || ""}">
+                <input class="text-input" type="number" min="${item.min || ""}" max="${item.max || ""}" step="${item.step || 1}" name="${item.id}" value="${values[item.id] || ""}">
               </label>
             `;
           }
@@ -83,12 +81,13 @@
               </label>
             `;
           }
+          const points = item.scalePoints || 7;
           return `
             ${header}
             <fieldset class="question-card survey-card" data-question-id="${item.id}">
               <legend class="question-text">${promptText(item)}</legend>
-              <div class="likert-scale">${likertButtons(item, values[item.id])}</div>
-              <div class="scale-labels"><span>1 = ${item.minLabel}</span><span>7 = ${item.maxLabel}</span></div>
+              <div class="likert-scale likert-scale--${points}" data-scale-points="${points}">${likertButtons(item, values[item.id])}</div>
+              <div class="scale-labels"><span>1 = ${item.minLabel}</span><span>${points} = ${item.maxLabel}</span></div>
             </fieldset>
           `;
         }).join("")}
@@ -118,6 +117,7 @@
   function clearMissing(root) {
     root.querySelectorAll(".survey-error-summary, .field-error").forEach((node) => node.remove());
     root.querySelectorAll(".survey-card.is-missing").forEach((node) => node.classList.remove("is-missing"));
+    root.querySelectorAll(".survey-card.has-field-error").forEach((node) => node.classList.remove("has-field-error"));
   }
 
   function showMissing(root, missing) {
@@ -137,7 +137,39 @@
     focusTarget?.focus({ preventScroll: true });
   }
 
+  function showFieldErrors(root, fieldErrors = {}) {
+    clearMissing(root);
+    const entries = Object.entries(fieldErrors).filter(([, message]) => message);
+    if (!entries.length) return;
+    const list = root.querySelector(".survey-list");
+    list?.insertAdjacentHTML("beforebegin", `<div class="survey-error-summary">请检查以下信息：</div>`);
+    entries.forEach(([id, message]) => {
+      const card = root.querySelector(`[data-question-id="${id}"]`);
+      if (!card) return;
+      card.classList.add("has-field-error");
+      card.insertAdjacentHTML("beforeend", `<div class="field-error">${message}</div>`);
+    });
+    const first = root.querySelector(`[data-question-id="${entries[0][0]}"]`);
+    first?.scrollIntoView({ block: "center", behavior: "smooth" });
+    first?.querySelector("input, select, textarea, button")?.focus({ preventScroll: true });
+  }
+
+  function maybeClearFieldError(event) {
+    const card = event.target.closest?.(".survey-card.has-field-error");
+    if (!card) return;
+    if (event.target.name === "age") {
+      const numeric = Number(event.target.value);
+      if (!Number.isInteger(numeric) || numeric < 18 || numeric > 100) return;
+    }
+    card.classList.remove("has-field-error");
+    card.querySelectorAll(".field-error").forEach((node) => node.remove());
+    if (!document.querySelector(".survey-card.has-field-error")) {
+      document.querySelectorAll(".survey-error-summary").forEach((node) => node.remove());
+    }
+  }
+
   document.addEventListener("input", (event) => {
+    maybeClearFieldError(event);
     const card = event.target.closest?.(".survey-card.is-missing");
     if (!card) return;
     card.classList.remove("is-missing");
@@ -145,6 +177,7 @@
   });
 
   document.addEventListener("change", (event) => {
+    maybeClearFieldError(event);
     const card = event.target.closest?.(".survey-card.is-missing");
     if (!card) return;
     card.classList.remove("is-missing");
@@ -154,6 +187,7 @@
   window.Survey = {
     renderSurvey,
     collectSurvey,
-    showMissing
+    showMissing,
+    showFieldErrors
   };
 })();

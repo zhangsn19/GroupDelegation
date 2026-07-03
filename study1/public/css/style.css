@@ -755,6 +755,17 @@ fieldset.question-card {
   box-shadow: 0 0 0 3px rgba(220, 38, 38, .08);
 }
 
+.survey-card.has-field-error {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, .12);
+}
+
+.survey-card.has-field-error .text-input,
+.survey-card.has-field-error .text-area {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, .12);
+}
+
 .field-error {
   color: var(--danger);
   font-size: .85rem;
@@ -776,22 +787,38 @@ fieldset.question-card {
   color: var(--primary);
 }
 
-.debug-hint {
-  background: #fef3c7;
-  border: 1px solid #fcd34d;
-  border-radius: 8px;
-  padding: .6rem .85rem;
-  font-size: .85rem;
+.participant-info-card {
+  display: grid;
+  gap: .85rem;
 }
 
-.debug-banner {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  max-width: 960px;
-  margin: .75rem auto 0;
+.participant-info-card h3 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.participant-info-row {
+  display: grid;
+  gap: .25rem;
+  padding-bottom: .75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.participant-info-label {
+  color: var(--muted);
+  font-size: .9rem;
+}
+
+.participant-info-value,
+.completion-code {
+  color: var(--text);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.completion-code {
   text-align: center;
-  font-weight: 700;
+  margin: 1rem 0 0;
 }
 
 .admin-page {
@@ -860,5 +887,23 @@ fieldset.question-card {
 
   .btn-row .btn {
     flex: 1;
+  }
+}
+
+
+/* Fixed-width 5-point pre-survey layout */
+.likert-scale--5 {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: .5rem;
+}
+
+.likert-scale--5 .likert-option {
+  min-width: 0;
+}
+
+@media (max-width: 620px) {
+  .likert-scale--5 {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }

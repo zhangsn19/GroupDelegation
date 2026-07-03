@@ -3,54 +3,55 @@ const { baselineItems, demographicsItems } = require("./measures");
 const ruleBlocks = [
   {
     title: "你的群体",
-    body: "你与四位同事组成模拟同事群体，并使用同一个共享群聊 AI。"
+    body: "你将与四位同事组成模拟同事群体，并通过同一个共享群聊 AI 完成个人收入申报。"
   },
   {
-    title: "群聊 AI 的角色",
-    body: "每位成员独立决定自己的申报内容。群聊 AI 只按该成员的选择完成提交，不提供建议、评价或修改。"
+    title: "完成任务与个人申报",
+    body: "你将先完成 4 轮奇偶数分类任务。系统会根据你的任务表现计算你的实际收入。\n\n任务要求成员申报自己在任务中实际获得的收入。其他成员完成申报后，你将在个人面板中填写自己的申报收入，并由群聊 AI 提交。"
   },
   {
-    title: "收入与私密性",
-    body: "你的实际收入由努力任务表现决定。后续收入申报仅你与群聊 AI 可见，其他成员无法查看。"
+    title: "私密性与群聊 AI",
+    body: "你的个人收入申报不会向其他成员展示；每位成员的任务结果分别结算。\n\n群聊 AI 负责接收并提交每位成员的个人申报。每位成员自行决定自己的申报金额。"
   },
   {
-    title: "收入申报任务",
-    body: "你将完成 4 轮奇偶数分类任务获得实际收入，随后选择要申报的收入金额。模拟扣除金额 = 申报收入 × 0.5。任务保留奖励 = 实际收入 − 模拟扣除金额。在其他条件相同的情况下，申报收入越低，任务保留奖励越高。"
+    title: "任务报酬如何计算",
+    body: "实际收入是任务计算的基数，不等同于最终计入被试费的任务报酬。\n\n模拟扣除金额 = 申报收入 × 0.5\n\n任务保留奖励 = 实际收入 − 模拟扣除金额\n\n最终被试费由基础参与报酬和任务保留奖励构成。\n\n例如：若实际收入为 ¥2.00，申报收入为 ¥1.00，\n则模拟扣除金额为 ¥0.50，任务保留奖励为 ¥1.50。\n\n在其他条件相同的情况下，申报收入越低，任务保留奖励越高。"
   }
 ];
 
 const comprehensionQuestions = [
   {
+    id: "reported_object",
+    prompt: "本任务要求成员申报什么？",
+    correctValue: "actual_income",
+    review: "请重新确认：本任务要求成员申报自己在任务中实际获得的收入。",
+    options: [
+      { value: "actual_income", label: "自己在任务中实际获得的收入" },
+      { value: "desired_income", label: "自己希望获得的收入" },
+      { value: "peer_income", label: "其他成员的收入" }
+    ]
+  },
+  {
     id: "private_submission",
-    prompt: "其他成员能否看到你的最终收入申报？",
+    prompt: "其他成员能否查看你的个人收入申报？",
     correctValue: "no",
-    review: "请重新确认：你的最终收入申报仅你与群聊 AI 可见。",
+    review: "请重新确认：你的个人收入申报不会向其他成员展示。",
     options: [
-      { value: "yes", label: "能，所有同事都可以看到" },
-      { value: "no", label: "不能，只有我和群聊 AI 可以看到" },
-      { value: "after", label: "任务结束后同事可以看到" }
+      { value: "yes", label: "可以" },
+      { value: "no", label: "不可以" },
+      { value: "after", label: "任务结束后可以" }
     ]
   },
   {
-    id: "independent_rewards",
-    prompt: "其他成员申报什么，是否会改变你的个人奖励？",
-    correctValue: "no_change",
-    review: "请重新确认：每个人的奖励独立计算，其他成员的申报不会改变你的个人奖励。",
+    id: "reward_direction",
+    prompt: "若你的实际收入为 ¥2.00，申报收入为 ¥1.00，\n模拟扣除金额和任务保留奖励分别是多少？\n\n提示：先用申报收入 × 0.5 计算模拟扣除金额，\n再用实际收入 − 模拟扣除金额计算任务保留奖励。",
+    correctValue: "deduction_050_retained_150",
+    review: "请重新确认：模拟扣除金额为 ¥0.50；任务保留奖励为 ¥1.50。",
     options: [
-      { value: "increase", label: "会提高我的个人奖励" },
-      { value: "decrease", label: "会降低我的个人奖励" },
-      { value: "no_change", label: "不会改变" }
-    ]
-  },
-  {
-    id: "ai_role",
-    prompt: "群聊 AI 在本任务中的角色是什么？",
-    correctValue: "executes",
-    review: "请重新确认：群聊 AI 只按你的选择执行收入申报，不替你决定。",
-    options: [
-      { value: "executes", label: "按我的选择执行提交，不替我决定" },
-      { value: "decides", label: "根据收入情况替我决定申报金额" },
-      { value: "advises", label: "判断怎样申报更合适并给我建议" }
+      { value: "deduction_050_retained_150", label: "模拟扣除金额为 ¥0.50；任务保留奖励为 ¥1.50。" },
+      { value: "deduction_100_retained_100", label: "模拟扣除金额为 ¥1.00；任务保留奖励为 ¥1.00。" },
+      { value: "deduction_050_retained_050", label: "模拟扣除金额为 ¥0.50；任务保留奖励为 ¥0.50。" },
+      { value: "deduction_150_retained_050", label: "模拟扣除金额为 ¥1.50；任务保留奖励为 ¥0.50。" }
     ]
   }
 ];
@@ -86,7 +87,7 @@ const postSurveyItems = [
   { section: "E", id: "e_ai_influenced_decision", prompt: "群聊 AI 影响了我最终决定申报多少收入。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
   { section: "E", id: "e_ai_decided_outcome", prompt: "我认为最终申报的收入主要由群聊 AI 决定。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
   { section: "F", id: "f_decision_considerations", prompt: "请简要说明：在决定最终申报多少收入时，你主要考虑了哪些因素？", type: "text", required: false },
-  { section: "F", id: "f_design_influences", prompt: "任务中是否有任何信息或设计影响了你的决定？例如其他成员的申报情况、群聊 AI 的角色、奖励规则或其他因素。请说明；若没有，也请说明。", type: "text", required: false }
+  { section: "F", id: "f_design_influences", prompt: "任务中是否有任何信息或设计影响了你的决定？例如其他成员的申报情况、群聊 AI 的角色、奖励规则或其他因素。请说明；若没有或不想补充，也可留空。", type: "text", required: false }
 ];
 
 const experienceItems = [
@@ -107,7 +108,7 @@ const effortTask = {
 
 module.exports = {
   id: "study2",
-  title: "团队报告与决策研究",
+  title: "实验二：收入申报任务",
   taskName: "收入申报任务",
   baselineItems,
   demographicsItems,

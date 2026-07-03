@@ -1,4 +1,4 @@
-const VERSION = "0.2.0-study1-fixed-round-peer";
+const VERSION = "study1-v1.1.0";
 
 const STUDIES = ["study1", "study2"];
 const CONDITIONS = ["hidden", "honest", "dishonest"];
@@ -17,12 +17,12 @@ const STATUS_ORDER = [
 ];
 
 const MEMBERS = [
-  { id: "participant", name: "你", role: "真实参与者", avatar: "你" },
+  { id: "participant", name: "你", role: "任务成员", avatar: "你" },
   { id: "zhang_ming", name: "张明", role: "同事", avatar: "张" },
   { id: "li_hua", name: "李华", role: "同事", avatar: "李" },
   { id: "wang_fang", name: "王芳", role: "同事", avatar: "王" },
   { id: "chen_si", name: "陈思", role: "同事", avatar: "陈" },
-  { id: "group_ai", name: "群聊 AI", role: "共享提交助手", avatar: "AI" }
+  { id: "group_ai", name: "群聊 AI", role: "群聊助手", avatar: "AI" }
 ];
 
 module.exports = {

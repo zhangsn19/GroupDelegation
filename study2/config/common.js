@@ -1,4 +1,4 @@
-const VERSION = "0.1.0-study2-pilot";
+const VERSION = "study2-v1.1.0";
 
 const STUDIES = ["study2"];
 const CONDITIONS = ["hidden", "honest", "dishonest"];
@@ -21,12 +21,12 @@ const STATUS_ORDER = [
 ];
 
 const MEMBERS = [
-  { id: "participant", name: "你", role: "真实参与者", avatar: "👤" },
-  { id: "zhang_ming", name: "张明", role: "同事", avatar: "🧑" },
-  { id: "li_hua", name: "李华", role: "同事", avatar: "👩" },
-  { id: "wang_fang", name: "王芳", role: "同事", avatar: "🧒" },
-  { id: "chen_si", name: "陈思", role: "同事", avatar: "🧑‍💼" },
-  { id: "group_ai", name: "群聊 AI", role: "共享提交助手", avatar: "🤖" }
+  { id: "participant", name: "你", role: "任务成员", avatar: "你" },
+  { id: "zhang_ming", name: "张明", role: "同事", avatar: "张" },
+  { id: "li_hua", name: "李华", role: "同事", avatar: "李" },
+  { id: "wang_fang", name: "王芳", role: "同事", avatar: "王" },
+  { id: "chen_si", name: "陈思", role: "同事", avatar: "陈" },
+  { id: "group_ai", name: "群聊 AI", role: "群聊助手", avatar: "AI" }
 ];
 
 module.exports = {
