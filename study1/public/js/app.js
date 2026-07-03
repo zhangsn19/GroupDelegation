@@ -287,7 +287,10 @@
   async function submitDice() {
     if (!state.diceSelected || state.diceSubmitting) return;
     state.diceSubmitting = true;
-    await renderDice(false);
+    const privateZone = content.querySelector(".dice-private-zone");
+    privateZone?.querySelectorAll(".number-button").forEach((button) => {
+      button.disabled = true;
+    });
     try {
       const data = await api(`/api/session/${state.session.id}/dice/round`, {
         method: "POST",
@@ -307,6 +310,11 @@
       task.scrollIntoView({ block: "nearest", behavior: "smooth" });
     } finally {
       state.diceSubmitting = false;
+      if (content.contains(privateZone)) {
+        privateZone?.querySelectorAll(".number-button").forEach((button) => {
+          button.disabled = false;
+        });
+      }
     }
   }
 
