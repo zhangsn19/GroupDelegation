@@ -471,10 +471,25 @@
     if (!button) return;
     const action = button.dataset.action;
     if (button.dataset.busy === "true") return;
+    if (action === "copy-participant-id") {
+      try {
+        await copyParticipantId(button);
+      } catch (error) {
+        setError(error);
+      }
+      return;
+    }
     const run = async () => {
       if (button.dataset.value) {
         state.diceSelected = Number(button.dataset.value);
-        await renderDice(false);
+        const panel = button.closest(".dice-private-zone");
+        panel?.querySelectorAll(".number-button").forEach((numberButton) => {
+          const isSelected = Number(numberButton.dataset.value) === state.diceSelected;
+          numberButton.classList.toggle("selected", isSelected);
+          numberButton.setAttribute("aria-pressed", isSelected ? "true" : "false");
+        });
+        const submitButton = panel?.querySelector('[data-action="submit-dice"]');
+        if (submitButton) submitButton.disabled = false;
       } else if (action === "baseline") {
         await submitBaseline();
       } else if (action === "show-rules") {
@@ -496,8 +511,6 @@
         await submitPostSurvey();
       } else if (action === "demographics") {
         await submitDemographics();
-      } else if (action === "copy-participant-id") {
-        await copyParticipantId(button);
       } else if (action === "complete") {
         await completeSession();
       }

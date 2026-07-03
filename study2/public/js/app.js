@@ -8,6 +8,7 @@
   };
   const content = document.querySelector("#experiment-content");
   const phaseIndicator = document.querySelector("#phase-indicator");
+  const INCOME_REPORT_STEP_CENTS = 10;
     const participantId = (
     params.get("participant_id") ||
     params.get("participantId") ||
@@ -299,7 +300,10 @@
 
   function renderActualIncome() {
     setPhase("实际收入");
-    content.innerHTML = window.Study2Income.renderActualIncome(state.session.actual_income_cents);
+    content.innerHTML = window.Study2Income.renderActualIncome(
+      state.session.actual_income_cents,
+      state.session.effort_rounds || []
+    );
   }
 
   async function submitIncomeViewed() {
@@ -562,7 +566,8 @@
 
   function clampCents(value) {
     if (!Number.isFinite(value)) return 0;
-    return Math.max(0, Math.min(state.actualIncomeCents, Math.round(value)));
+    const rounded = Math.round(value / INCOME_REPORT_STEP_CENTS) * INCOME_REPORT_STEP_CENTS;
+    return Math.max(0, Math.min(state.actualIncomeCents, rounded));
   }
 
   content.addEventListener("click", async (event) => {
@@ -570,6 +575,14 @@
     if (!button) return;
     if (button.dataset.busy === "true") return;
     const action = button.dataset.action;
+    if (action === "copy-participant-id") {
+      try {
+        await copyParticipantId(button);
+      } catch (error) {
+        setError(error);
+      }
+      return;
+    }
     const run = async () => {
       if (button.dataset.answerIndex !== undefined) {
         state.effortAnswers[button.dataset.answerIndex] = button.dataset.answerValue;
@@ -592,7 +605,6 @@
       else if (action === "post-survey") await submitPostSurvey();
       else if (action === "experience") await submitExperience();
       else if (action === "demographics") await submitDemographics();
-      else if (action === "copy-participant-id") await copyParticipantId(button);
       else if (action === "complete") await completeSession();
     };
     try {

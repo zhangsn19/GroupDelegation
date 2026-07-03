@@ -45,6 +45,7 @@
   }
 
   function renderEffortResult(round) {
+    const roundActualIncomeCents = round.round_actual_income_cents ?? round.income_cents;
     return `
       <div class="card">
         <h2>本轮完成</h2>
@@ -54,8 +55,16 @@
             <div class="metric-value">${round.correct_count} / ${round.numbers.length}</div>
           </div>
           <div>
-            <div class="metric-label">本轮收入</div>
-            <div class="metric-value">￥${money(round.income)}</div>
+            <div class="metric-label">基础收入</div>
+            <div class="metric-value">¥${moneyFromCents(round.base_income_cents)}</div>
+          </div>
+          <div>
+            <div class="metric-label">速度奖励</div>
+            <div class="metric-value">¥${moneyFromCents(round.speed_bonus_cents)}</div>
+          </div>
+          <div>
+            <div class="metric-label">本轮实际收入</div>
+            <div class="metric-value">¥${moneyFromCents(roundActualIncomeCents)}</div>
           </div>
         </div>
         <div class="step-nav">
@@ -65,19 +74,18 @@
     `;
   }
 
-  function renderActualIncome(actualIncomeCents) {
+  function renderActualIncome(actualIncomeCents, effortRounds = []) {
+    const rows = effortRounds.map((round) => `
+      <li>第 ${round.round_index} 轮：¥${moneyFromCents(round.round_actual_income_cents ?? round.income_cents)}</li>
+    `).join("");
     return `
       <div class="card private-panel">
-        <div class="private-heading">
-          <span class="lock-icon"></span>
-          <div>
-            <h2>你的实际收入</h2>
-            <p>该金额仅你可见。</p>
-          </div>
-        </div>
-        <div class="metric-value">￥${moneyFromCents(actualIncomeCents ?? 0)}</div>
-        <p class="hint">接下来会先显示其他成员此前的收入申报记录。</p>
-        <button class="btn btn-primary full-width" data-action="income-viewed">继续</button>
+        <h2>努力任务已完成</h2>
+        <div class="metric-label">你的实际收入</div>
+        <div class="metric-value">¥${moneyFromCents(actualIncomeCents ?? 0)}</div>
+        <p class="hint">你的实际收入由 4 轮任务的本轮实际收入累计得出。</p>
+        <ul class="income-round-list">${rows}</ul>
+        <button class="btn btn-primary full-width" data-action="income-viewed">查看同事此前的收入申报</button>
       </div>
     `;
   }
@@ -102,8 +110,8 @@
           </div>
           <div>
             <label class="metric-label" for="reported-income">申报收入</label>
-            <input id="reported-income" class="range-input" type="range" min="0" max="${actual}" step="1" value="${preview.reported}">
-            <input id="reported-income-number" class="text-input" type="number" min="0" max="${moneyFromCents(actual)}" step="0.01" value="${moneyFromCents(preview.reported)}">
+            <input id="reported-income" class="range-input" type="range" min="0" max="${actual}" step="10" value="${preview.reported}">
+            <input id="reported-income-number" class="text-input" type="number" min="0" max="${moneyFromCents(actual)}" step="0.10" value="${moneyFromCents(preview.reported)}">
           </div>
           <div>
             <div class="metric-label">当前申报收入</div>

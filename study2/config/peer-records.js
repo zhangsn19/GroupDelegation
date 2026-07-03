@@ -1,8 +1,8 @@
 const PEER_INCOME_TEMPLATE = [
-  { name: "张明", actualIncomeCents: 110, honestReportedCents: 110, dishonestReportedCents: 55 },
-  { name: "李华", actualIncomeCents: 95, honestReportedCents: 95, dishonestReportedCents: 50 },
-  { name: "王芳", actualIncomeCents: 125, honestReportedCents: 125, dishonestReportedCents: 60 },
-  { name: "陈思", actualIncomeCents: 105, honestReportedCents: 105, dishonestReportedCents: 45 }
+  { name: "张明", actualIncomeCents: 1100, honestReportedCents: 1100, dishonestReportedCents: 550 },
+  { name: "李华", actualIncomeCents: 950, honestReportedCents: 950, dishonestReportedCents: 500 },
+  { name: "王芳", actualIncomeCents: 1250, honestReportedCents: 1250, dishonestReportedCents: 600 },
+  { name: "陈思", actualIncomeCents: 1050, honestReportedCents: 1050, dishonestReportedCents: 450 }
 ];
 
 function moneyFromCents(cents) {

@@ -120,6 +120,11 @@ async function runEffortToPeerRecords(server, config, condition, participantId) 
       started_at: "2000-01-01T00:00:00.000Z"
     });
     assert(Number.isInteger(submitted.round.income_cents), "effort income must be integer cents");
+    assert(submitted.round.base_income_cents === study2.effortTask.numbersPerRound * study2.effortTask.incomePerCorrectCents, "base income cents mismatch");
+    assert(submitted.round.speed_bonus_cents >= 0 && submitted.round.speed_bonus_cents <= study2.effortTask.speedBonusMaxCents, "speed bonus out of range");
+    assert(submitted.round.speed_bonus_cents % study2.effortTask.reportStepCents === 0, "speed bonus must follow report step");
+    assert(submitted.round.round_actual_income_cents === submitted.round.base_income_cents + submitted.round.speed_bonus_cents, "round actual income mismatch");
+    assert(submitted.round.income_cents === submitted.round.round_actual_income_cents, "legacy income alias mismatch");
     current = submitted.current;
     if (!current.completed) current = (await request(server, "POST", `/api/session/${id}/effort/start`)).current;
   }
@@ -138,8 +143,11 @@ async function runEffortToPeerRecords(server, config, condition, participantId) 
 
 async function completeAfterIncomeReport(server, config, id, actualIncomeCents) {
   await request(server, "POST", `/api/session/${id}/income-report`, { reported_income_cents: actualIncomeCents + 1 }, 409);
+  await request(server, "POST", `/api/session/${id}/income-report`, { reported_income_cents: actualIncomeCents - 1 }, 409);
   const report = await request(server, "POST", `/api/session/${id}/income-report`, { reported_income_cents: actualIncomeCents });
   assert(report.income_report.reported_income_cents === actualIncomeCents, "income report did not save reported cents");
+  assert(report.income_report.deduction_cents === Math.round(actualIncomeCents * 0.5), "deduction formula mismatch");
+  assert(report.income_report.retained_reward_cents === actualIncomeCents - report.income_report.deduction_cents, "retained reward formula mismatch");
   assert(report.income_report.selection_started_at, "income report selection start missing");
   await request(server, "POST", `/api/session/${id}/income-report`, { reported_income_cents: actualIncomeCents }, 409);
   await request(server, "POST", `/api/session/${id}/post-survey`, { responses: makeResponses(config.postSurveyItems) });
@@ -167,6 +175,10 @@ async function completeAfterIncomeReport(server, config, id, actualIncomeCents) 
   assert(completed.session.completion?.completion_code === "SMOKE-STUDY2-COMPLETE", "completion code missing");
   const csv = await request(server, "GET", "/api/admin/export/participants.csv?include_test=true", undefined, 200, { "x-admin-token": "dev-admin-token" });
   assert(csv.includes("debrief_viewed_at"), "participants CSV missing debrief_viewed_at");
+  const effortCsv = await request(server, "GET", "/api/admin/export/study2_effort_rounds.csv?include_test=true", undefined, 200, { "x-admin-token": "dev-admin-token" });
+  for (const column of ["participant_id", "round_index", "correct_count", "base_income", "speed_bonus", "round_actual_income"]) {
+    assert(effortCsv.split("\n")[0].includes(column), `effort CSV missing ${column}`);
+  }
   return completed.session;
 }
 
@@ -245,6 +257,9 @@ function staticChecks() {
   assert(!incomeJs.includes("仅你与群聊 AI 可见。"), "old income report privacy copy must be removed");
   assert(incomeJs.includes("你的个人收入申报不会向其他成员展示。"), "new income report privacy copy missing");
   assert(incomeJs.includes("模拟扣除金额由申报收入计算；任务保留奖励 = 实际收入 − 模拟扣除金额。"), "income report final hint missing");
+  assert(incomeJs.includes("基础收入") && incomeJs.includes("速度奖励") && incomeJs.includes("本轮实际收入"), "effort result income breakdown missing");
+  assert(incomeJs.includes("努力任务已完成") && incomeJs.includes("你的实际收入由 4 轮任务的本轮实际收入累计得出。") && incomeJs.includes("查看同事此前的收入申报"), "actual income summary page missing");
+  assert(incomeJs.includes('step="10"') && incomeJs.includes('step="0.10"'), "income report step must be ¥0.10");
   assert(!incomeJs.includes("申报收入将按固定规则计算需支付部分") && !incomeJs.includes("较低的申报收入对应较高的个人保留奖励"), "old income report hint must be removed");
   const actualSection = incomeJs.slice(incomeJs.indexOf("function renderActualIncome"), incomeJs.indexOf("function renderIncomeReport"));
   const reportSection = incomeJs.slice(incomeJs.indexOf("function renderIncomeReport"), incomeJs.indexOf("function renderIncomeConfirmation"));
@@ -253,6 +268,7 @@ function staticChecks() {
   assert(reportSection.includes("submit-income-report"), "income report page must contain submit-income-report");
   for (const label of ["实际收入", "当前申报收入", "模拟扣除金额", "任务保留奖励"]) assert(reportSection.includes(label), `income report page missing ${label}`);
   assert(appJs.includes("peer-records-viewed") && appJs.includes("renderIncomeReport"), "income report must be rendered after peer records viewed");
+  assert(appJs.includes("INCOME_REPORT_STEP_CENTS = 10") && appJs.includes("Math.round(value / INCOME_REPORT_STEP_CENTS)"), "frontend income report step clamp missing");
   assert((appJs.match(/debrief-viewed/g) || []).length === 1, "frontend should call debrief-viewed only once");
   assert(appJs.includes("复制参与编号") && appJs.includes("已复制"), "copy participant id UI missing");
   assert(appJs.includes("参与信息") && appJs.includes("研究联系邮箱") && appJs.includes("123456@163.com"), "participant info card missing");
@@ -275,13 +291,17 @@ function staticChecks() {
   for (const text of ["你的群体", "完成任务与个人申报", "私密性与群聊 AI", "任务报酬如何计算"]) assert(studyConfig.includes(text), `Study 2 rule block missing ${text}`);
   assert(studyConfig.includes("实际收入是任务计算的基数，不等同于最终计入被试费的任务报酬。"), "Study 2 reward base explanation missing");
   assert(studyConfig.includes("模拟扣除金额 = 申报收入 × 0.5") && studyConfig.includes("任务保留奖励 = 实际收入 − 模拟扣除金额"), "Study 2 formulas missing");
-  assert(studyConfig.includes("例如：若实际收入为 ¥2.00，申报收入为 ¥1.00") && studyConfig.includes("则模拟扣除金额为 ¥0.50，任务保留奖励为 ¥1.50。"), "Study 2 example missing");
+  assert(studyConfig.includes("每答对 1 题可获得 ¥0.80 的基础收入") && studyConfig.includes("速度奖励最高为 ¥1.00") && studyConfig.includes("本轮实际收入 = 基础收入 + 速度奖励"), "effort income transparency copy missing");
+  assert(studyConfig.includes("例如：若实际收入为 ¥20.00，申报收入为 ¥10.00") && studyConfig.includes("则模拟扣除金额为 ¥5.00，任务保留奖励为 ¥15.00。"), "Study 2 scaled example missing");
   assert(studyConfig.includes("在其他条件相同的情况下，申报收入越低，任务保留奖励越高。"), "Study 2 reward direction sentence missing");
-  assert(studyConfig.includes("提示：先用申报收入 × 0.5 计算模拟扣除金额") && studyConfig.includes("模拟扣除金额为 ¥0.50；任务保留奖励为 ¥1.50。"), "Study 2 comprehension calculation item missing");
+  assert(studyConfig.includes("提示：先用申报收入 × 0.5 计算模拟扣除金额") && studyConfig.includes("模拟扣除金额为 ¥5.00；任务保留奖励为 ¥15.00。"), "Study 2 comprehension calculation item missing");
+  assert(studyConfig.includes("incomePerCorrectCents: 80") && studyConfig.includes("speedBonusMaxCents: 100") && studyConfig.includes("reportStepCents: 10"), "scaled effort income params missing");
+  assert(!allText.includes("¥0.08") && !allText.includes("¥0.10、申报最小单位 ¥0.01") && !allText.includes("若实际收入为 ¥2.00，申报收入为 ¥1.00"), "old unscaled Study 2 money text returned");
   assert(!allText.includes("申报收入将按固定规则计算需支付部分") && !allText.includes("较低的申报收入对应较高的个人保留奖励") && !allText.includes("仅你与群聊 AI 可见"), "removed Study 2 copy returned");
   assert(surveyJs.includes("showFieldErrors"), "survey field error renderer missing");
   assert(!surveyJs.includes(".replace("), "F2 frontend replace logic must be removed");
   assert(peerConfig.includes("PEER_INCOME_TEMPLATE"), "peer income template missing");
+  assert(peerConfig.includes("actualIncomeCents: 1100") && peerConfig.includes("dishonestReportedCents: 550"), "peer income template must be scaled by 10");
   assert(studyConfig.includes("timeLimitSeconds") && studyConfig.includes("deductionRate"), "effort params missing");
   assert(!/[?]\/(?:h2|p|span)>|寮€|鐠囬攱/.test(allText), "obvious mojibake or broken HTML marker found");
 }

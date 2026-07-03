@@ -75,6 +75,12 @@ function effortRoundsCsv(sessions) {
         correct_count: round.correct_count,
         duration_ms: round.duration_ms,
         timed_out: round.timed_out ? 1 : 0,
+        base_income_cents: round.base_income_cents,
+        base_income: round.base_income,
+        speed_bonus_cents: round.speed_bonus_cents,
+        speed_bonus: round.speed_bonus,
+        round_actual_income_cents: round.round_actual_income_cents ?? round.income_cents,
+        round_actual_income: round.round_actual_income ?? round.income,
         income_cents: round.income_cents,
         income: round.income,
         started_at: round.started_at,
@@ -83,7 +89,7 @@ function effortRoundsCsv(sessions) {
       });
     }
   }
-  return toCsv(rows, ["session_id", "participant_id", "condition", "round", "round_index", "started_at", "deadline_at", "submitted_at", "timed_out", "correct_count", "income_cents", "numbers_json", "answers_json", "duration_ms", "income"]);
+  return toCsv(rows, ["session_id", "participant_id", "condition", "round", "round_index", "started_at", "deadline_at", "submitted_at", "timed_out", "correct_count", "base_income", "speed_bonus", "round_actual_income", "base_income_cents", "speed_bonus_cents", "round_actual_income_cents", "income_cents", "numbers_json", "answers_json", "duration_ms", "income"]);
 }
 
 function incomeReportsCsv(sessions) {

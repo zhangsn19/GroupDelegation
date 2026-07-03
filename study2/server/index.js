@@ -94,6 +94,16 @@ function publicSession(session) {
     protocol_version: session.protocol_version || PROTOCOL_VERSION,
     status: session.status,
     effort_round_count: session.effort_rounds?.length || 0,
+    effort_rounds: (session.effort_rounds || []).map((round) => ({
+      round_index: round.round_index,
+      correct_count: round.correct_count,
+      base_income_cents: round.base_income_cents ?? null,
+      base_income: round.base_income ?? null,
+      speed_bonus_cents: round.speed_bonus_cents ?? null,
+      speed_bonus: round.speed_bonus ?? null,
+      round_actual_income_cents: round.round_actual_income_cents ?? round.income_cents ?? null,
+      round_actual_income: round.round_actual_income ?? round.income ?? null
+    })),
     actual_income: session.actual_income ?? null,
     actual_income_cents: session.actual_income_cents ?? null,
     completed_at: session.completed_at || null,
@@ -258,17 +268,27 @@ function makeEffortMaterials() {
     correct_count: null,
     duration_ms: null,
     timed_out: false,
+    base_income_cents: null,
+    base_income: null,
+    speed_bonus_cents: null,
+    speed_bonus: null,
+    round_actual_income_cents: null,
+    round_actual_income: null,
     income_cents: null,
     income: null
   }));
 }
 
-function calculateRoundIncomeCents(correctCount, durationMs) {
-  const base = correctCount * study2.effortTask.incomePerCorrectCents;
+function calculateRoundIncome(correctCount, durationMs) {
+  const baseIncomeCents = correctCount * study2.effortTask.incomePerCorrectCents;
   const timeLimitMs = study2.effortTask.timeLimitSeconds * 1000;
   const remainingRatio = Math.max(0, Math.min(1, (timeLimitMs - durationMs) / timeLimitMs));
-  const speedBonus = correctCount > 0 ? Math.round(remainingRatio * study2.effortTask.speedBonusMaxCents) : 0;
-  return base + speedBonus;
+  const stepCents = Math.max(1, study2.effortTask.reportStepCents || 1);
+  const speedBonusCents = correctCount > 0
+    ? Math.round((remainingRatio * study2.effortTask.speedBonusMaxCents) / stepCents) * stepCents
+    : 0;
+  const roundActualIncomeCents = baseIncomeCents + speedBonusCents;
+  return { baseIncomeCents, speedBonusCents, roundActualIncomeCents };
 }
 
 function prepareCurrentEffortRound(session) {
@@ -539,7 +559,9 @@ app.post("/api/session/:id/effort/round", asyncHandler(async (req, res) => {
         if (answers[String(index)] === correct) correctCount += 1;
       });
     }
-    const incomeCents = timedOut ? 0 : calculateRoundIncomeCents(correctCount, durationMs);
+    const incomeParts = timedOut
+      ? { baseIncomeCents: 0, speedBonusCents: 0, roundActualIncomeCents: 0 }
+      : calculateRoundIncome(correctCount, durationMs);
     const round = {
       round_index: expectedRound,
       numbers: material.numbers,
@@ -547,8 +569,14 @@ app.post("/api/session/:id/effort/round", asyncHandler(async (req, res) => {
       correct_count: correctCount,
       duration_ms: durationMs,
       timed_out: timedOut,
-      income_cents: incomeCents,
-      income: centsToMoney(incomeCents),
+      base_income_cents: incomeParts.baseIncomeCents,
+      base_income: centsToMoney(incomeParts.baseIncomeCents),
+      speed_bonus_cents: incomeParts.speedBonusCents,
+      speed_bonus: centsToMoney(incomeParts.speedBonusCents),
+      round_actual_income_cents: incomeParts.roundActualIncomeCents,
+      round_actual_income: centsToMoney(incomeParts.roundActualIncomeCents),
+      income_cents: incomeParts.roundActualIncomeCents,
+      income: centsToMoney(incomeParts.roundActualIncomeCents),
       started_at: material.started_at,
       deadline_at: material.deadline_at,
       submitted_at: submittedAt
@@ -557,13 +585,31 @@ app.post("/api/session/:id/effort/round", asyncHandler(async (req, res) => {
     material.correct_count = correctCount;
     material.duration_ms = durationMs;
     material.timed_out = timedOut;
-    material.income_cents = incomeCents;
-    material.income = centsToMoney(incomeCents);
+    material.base_income_cents = round.base_income_cents;
+    material.base_income = round.base_income;
+    material.speed_bonus_cents = round.speed_bonus_cents;
+    material.speed_bonus = round.speed_bonus;
+    material.round_actual_income_cents = round.round_actual_income_cents;
+    material.round_actual_income = round.round_actual_income;
+    material.income_cents = round.round_actual_income_cents;
+    material.income = round.round_actual_income;
     material.submitted_at = submittedAt;
     draft.effort_rounds.push(round);
-    addEvent(draft, "effort_round_submitted", { round_index: expectedRound, correct_count: correctCount, income_cents: incomeCents, income: centsToMoney(incomeCents), timed_out: timedOut });
+    addEvent(draft, "effort_round_submitted", {
+      round_index: expectedRound,
+      correct_count: correctCount,
+      base_income_cents: round.base_income_cents,
+      base_income: round.base_income,
+      speed_bonus_cents: round.speed_bonus_cents,
+      speed_bonus: round.speed_bonus,
+      round_actual_income_cents: round.round_actual_income_cents,
+      round_actual_income: round.round_actual_income,
+      income_cents: round.round_actual_income_cents,
+      income: round.round_actual_income,
+      timed_out: timedOut
+    });
     if (draft.effort_rounds.length === draft.effort_materials.length) {
-      const totalIncomeCents = draft.effort_rounds.reduce((sum, item) => sum + item.income_cents, 0);
+      const totalIncomeCents = draft.effort_rounds.reduce((sum, item) => sum + (item.round_actual_income_cents ?? item.income_cents), 0);
       draft.actual_income_cents = totalIncomeCents;
       draft.actual_income = centsToMoney(totalIncomeCents);
       draft.effort_summary = {
@@ -626,6 +672,7 @@ app.post("/api/session/:id/income-report", asyncHandler(async (req, res) => {
     if (draft.status !== "peer_records_viewed") throw new Error("Income report requires peer_records_viewed status");
     if (draft.income_report) throw new Error("Income report already submitted");
     if (!Number.isInteger(reportedCents) || reportedCents < 0 || reportedCents > draft.actual_income_cents) throw new Error("Reported income out of range");
+    if (reportedCents % study2.effortTask.reportStepCents !== 0) throw new Error("Reported income out of range");
     const startedAt = draft.income_report_selection_started_at;
     if (!startedAt) throw new Error("Income report selection was not started by server");
     const underreportAmountCents = draft.actual_income_cents - reportedCents;

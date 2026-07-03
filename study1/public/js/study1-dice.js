@@ -45,10 +45,10 @@
         <p class="hint">请选择让群聊 AI 提交的本轮数字：</p>
         <div class="number-selector">
           ${[1, 2, 3, 4, 5, 6].map((value) => `
-            <button class="number-button ${selectedValue === value ? "selected" : ""}" data-value="${value}" ${disabled}>${value}</button>
+            <button type="button" class="number-button ${selectedValue === value ? "selected" : ""}" data-value="${value}" aria-pressed="${selectedValue === value ? "true" : "false"}" ${disabled}>${value}</button>
           `).join("")}
         </div>
-        <button class="btn btn-primary full-width" data-action="submit-dice" ${selectedValue ? "" : "disabled"} ${disabled}>
+        <button type="button" class="btn btn-primary full-width" data-action="submit-dice" ${selectedValue ? "" : "disabled"} ${disabled}>
           请群聊 AI 提交我的选择
         </button>
       </section>

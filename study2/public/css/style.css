@@ -757,6 +757,14 @@ fieldset.question-card {
   border-top: 1px solid var(--private-border);
 }
 
+.income-round-list {
+  margin: 1rem 0;
+  padding-left: 1.25rem;
+  color: var(--text);
+  line-height: 1.8;
+  font-weight: 700;
+}
+
 .full-width {
   width: 100%;
 }
