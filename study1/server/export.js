@@ -47,6 +47,8 @@ function participantsCsv(sessions) {
     prolific_id: session.prolific_id || "",
     study: session.study,
     condition: session.condition,
+    assignment_source: session.assignment_source || "block",
+    entry_link_id: session.entry_link_id || "",
     condition_assigned_at: session.condition_assigned_at || "",
     randomization_block: session.randomization_block ?? "",
     randomization_position: session.randomization_position ?? "",
@@ -68,7 +70,7 @@ function participantsCsv(sessions) {
   }));
 
   const dynamicKeys = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
-  const preferred = ["session_id", "participant_id", "study", "condition", "condition_assigned_at", "randomization_block", "randomization_position", "is_test_session", "study_version", "protocol_version", "created_at", "completed_at", "debrief_viewed_at", "completion_status"];
+  const preferred = ["session_id", "participant_id", "study", "condition", "assignment_source", "entry_link_id", "condition_assigned_at", "randomization_block", "randomization_position", "is_test_session", "study_version", "protocol_version", "created_at", "completed_at", "debrief_viewed_at", "completion_status"];
   const keys = [...preferred, ...dynamicKeys.filter((key) => !preferred.includes(key))];
   return toCsv(rows, keys.map((key) => ({ key })));
 }

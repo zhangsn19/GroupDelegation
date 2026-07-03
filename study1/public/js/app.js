@@ -8,6 +8,7 @@
   };
   const content = document.querySelector("#experiment-content");
   const phaseIndicator = document.querySelector("#phase-indicator");
+  const entryCode = (params.get("entry") || "").trim();
   const participantId = (
     params.get("participant_id") ||
     params.get("participantId") ||
@@ -21,6 +22,7 @@
     session: null,
     study: "study1",
     participantId,
+    entryCode,
     members: [],
     comprehensionAnswers: {},
     diceCurrent: null,
@@ -108,7 +110,7 @@
   async function startSession() {
     const data = await api("/api/session", {
       method: "POST",
-      body: { participant_id: state.participantId }
+      body: { participant_id: state.participantId, entry: state.entryCode }
     });
     setSession(data.session);
     await routeFromStatus();

@@ -9,6 +9,7 @@
   const content = document.querySelector("#experiment-content");
   const phaseIndicator = document.querySelector("#phase-indicator");
   const INCOME_REPORT_STEP_CENTS = 10;
+  const entryCode = (params.get("entry") || "").trim();
     const participantId = (
     params.get("participant_id") ||
     params.get("participantId") ||
@@ -20,6 +21,7 @@
   const state = {
     config: null,
     session: null,    participantId,
+    entryCode,
     members: [],
     comprehensionAnswers: {},
     effortCurrent: null,
@@ -116,7 +118,7 @@
   async function startSession() {
     const data = await api("/api/session", {
       method: "POST",
-      body: { participant_id: state.participantId }
+      body: { participant_id: state.participantId, entry: state.entryCode }
     });
     setSession(data.session);
     await routeFromStatus();

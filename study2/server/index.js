@@ -32,6 +32,12 @@ const REQUIRE_PARTICIPANT_ID = IS_PRODUCTION || String(process.env.REQUIRE_PARTI
 const STUDY_VERSION = process.env.STUDY_VERSION || "study2-v1.1.0";
 const PROTOCOL_VERSION = process.env.PROTOCOL_VERSION || "peer-reporting-v2";
 const TEST_CONDITION = String(process.env.TEST_CONDITION || "").trim();
+const ASSIGNMENT_MODE = String(process.env.ASSIGNMENT_MODE || "block").trim() || "block";
+const ENTRY_CODES = {
+  A: { condition: "hidden", value: String(process.env.ENTRY_CODE_HIDDEN || "").trim() },
+  B: { condition: "honest", value: String(process.env.ENTRY_CODE_HONEST || "").trim() },
+  C: { condition: "dishonest", value: String(process.env.ENTRY_CODE_DISHONEST || "").trim() }
+};
 const STUDY_CONTACT_EMAIL = String(process.env.STUDY_CONTACT_EMAIL || (IS_PRODUCTION ? "" : "123456@163.com")).trim();
 const COMPLETION_CODE = process.env.COMPLETION_CODE || "";
 const COMPLETION_REDIRECT_URL = process.env.COMPLETION_REDIRECT_URL || "";
@@ -53,6 +59,37 @@ function parseParticipantId(value) {
   }
   return text;
 }
+
+function fail(statusCode, message) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  throw error;
+}
+
+function validateAssignmentConfig() {
+  if (!["block", "controlled_link"].includes(ASSIGNMENT_MODE)) {
+    throw new Error("ASSIGNMENT_MODE must be block or controlled_link");
+  }
+  if (ASSIGNMENT_MODE !== "controlled_link") return;
+  const values = Object.values(ENTRY_CODES).map((item) => item.value);
+  if (values.some((value) => !value)) {
+    throw new Error("controlled_link assignment requires ENTRY_CODE_HIDDEN, ENTRY_CODE_HONEST, and ENTRY_CODE_DISHONEST");
+  }
+  if (new Set(values).size !== values.length) {
+    throw new Error("controlled_link assignment entry codes must be distinct");
+  }
+}
+
+function resolveEntryAssignment(entry) {
+  const code = String(entry || "").trim();
+  if (!code) fail(400, "缺少研究入口信息，请通过原始研究链接进入。");
+  const match = Object.entries(ENTRY_CODES).find(([, item]) => item.value === code);
+  if (!match) fail(400, "研究入口无效，请检查链接后重试。");
+  const [entryLinkId, item] = match;
+  return { condition: item.condition, entry_link_id: entryLinkId };
+}
+
+validateAssignmentConfig();
 
 function publicContactEmail() {
   return STUDY_CONTACT_EMAIL || "123456@163.com";
@@ -303,7 +340,7 @@ function prepareCurrentEffortRound(session) {
   return material;
 }
 
-async function createSession({ participantId, requestedCondition, lockHeld = false }) {
+async function createSession({ participantId, requestedCondition, entry, lockHeld = false }) {
   const normalizedParticipant = parseParticipantId(participantId);
   if (!normalizedParticipant && REQUIRE_PARTICIPANT_ID) {
     const error = new Error("参与编号缺失。请返回招募平台后通过原始研究链接进入。");
@@ -312,20 +349,47 @@ async function createSession({ participantId, requestedCondition, lockHeld = fal
   }
   if (normalizedParticipant && !lockHeld) {
     return withRandomizationLock(async () => {
-      return createSession({ participantId: normalizedParticipant, requestedCondition, lockHeld: true });
+      return createSession({ participantId: normalizedParticipant, requestedCondition, entry, lockHeld: true });
     });
+  }
+  let entryAssignment = null;
+  const hasEntry = String(entry || "").trim() !== "";
+  if (ASSIGNMENT_MODE === "controlled_link") {
+    entryAssignment = resolveEntryAssignment(entry);
+  } else if (hasEntry) {
+    fail(400, "当前研究未启用指定入口分组。");
   }
   const existing = (await store.listSessions()).find((session) => (
     normalizedParticipant &&
     (session.participant_id === normalizedParticipant || session.prolific_id === normalizedParticipant)
   ));
-  if (existing) return existing;
+  if (existing) {
+    if (ASSIGNMENT_MODE === "controlled_link") {
+      if (existing.assignment_source !== "controlled_link" || existing.condition !== entryAssignment.condition) {
+        fail(409, "该参与编号已通过另一研究入口进入。请返回原始链接继续完成任务。");
+      }
+    } else if (existing.assignment_source === "controlled_link") {
+      fail(409, "该参与编号已通过另一研究入口进入。请返回原始链接继续完成任务。");
+    }
+    return existing;
+  }
 
   let condition;
   let allocation = null;
+  let assignmentSource = "block";
+  let entryLinkId = null;
   const requestedDebugCondition = DEBUG_LINKS && !IS_PRODUCTION ? String(process.env.TEST_CONDITION || "").trim() : "";
-  const debugOverride = Boolean(requestedDebugCondition);
-  if (debugOverride) {
+  const debugOverride = ASSIGNMENT_MODE === "block" && Boolean(requestedDebugCondition);
+  if (ASSIGNMENT_MODE === "controlled_link") {
+    condition = entryAssignment.condition;
+    assignmentSource = "controlled_link";
+    entryLinkId = entryAssignment.entry_link_id;
+    allocation = {
+      assigned_at: now(),
+      randomization_block: null,
+      randomization_position: null
+    };
+  } else if (debugOverride) {
     validateCondition(requestedDebugCondition);
     condition = requestedDebugCondition;
     allocation = {
@@ -362,6 +426,8 @@ async function createSession({ participantId, requestedCondition, lockHeld = fal
     study: "study2",
     condition,
     condition_assigned_at: allocation.assigned_at,
+    assignment_source: assignmentSource,
+    entry_link_id: entryLinkId,
     randomization_block: allocation.randomization_block,
     randomization_position: allocation.randomization_position,
     is_test_session: !IS_PRODUCTION || DEBUG_LINKS,
@@ -397,7 +463,7 @@ async function createSession({ participantId, requestedCondition, lockHeld = fal
     demographics: {},
     abnormal_events: []
   };
-  addEvent(session, "session_created", { condition, debug_mode: session.debug_mode });
+  addEvent(session, "session_created", { condition, debug_mode: session.debug_mode, assignment_source: assignmentSource, entry_link_id: entryLinkId });
   return store.writeSession(session);
 }
 
@@ -451,6 +517,7 @@ app.get("/health", (req, res) => {
 app.post("/api/session", asyncHandler(async (req, res) => {
   const session = await createSession({
     participantId: req.body.participant_id || req.body.participantId || req.body.PROLIFIC_PID || req.body.pid || req.body.prolific_id,
+    entry: req.body.entry,
     requestedCondition: null
   });
   res.json({ session: publicSession(session) });

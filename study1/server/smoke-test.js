@@ -1,4 +1,4 @@
-const fs = require("fs");
+﻿const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const os = require("os");
@@ -70,7 +70,7 @@ function comprehensionAnswers() {
 }
 
 function assertPublicSession(session) {
-  for (const key of ["study", "condition", "condition_label", "condition_name", "is_test_session", "debug_mode", "debug_links_enabled", "randomization_block", "randomization_position"]) {
+  for (const key of ["study", "condition", "condition_label", "condition_name", "is_test_session", "debug_mode", "debug_links_enabled", "randomization_block", "randomization_position", "assignment_source", "entry_link_id"]) {
     assert(!Object.prototype.hasOwnProperty.call(session, key), `public session exposed ${key}`);
   }
   assert(session.study_version === "study1-v1.1.0", "public session study_version mismatch");
@@ -79,7 +79,7 @@ function assertPublicSession(session) {
 
 function assertPublicConfig(config) {
   assert(config.contact_email === "123456@163.com", "config contact_email must be 123456@163.com");
-  for (const key of ["version", "study_version", "protocol_version", "pilotNotice", "condition", "randomization", "debug", "study1", "study2"]) {
+  for (const key of ["version", "study_version", "protocol_version", "pilotNotice", "condition", "randomization", "debug", "study1", "study2", "assignment_source", "entry_link_id"]) {
     assert(!Object.prototype.hasOwnProperty.call(config, key), `config exposed ${key}`);
   }
   assert(Array.isArray(config.baselineItems), "config baselineItems missing");
@@ -232,6 +232,141 @@ function testBlockAndConcurrency() {
   assert(result.status === 0, result.stderr || "block/concurrency child failed");
 }
 
+function testControlledLinkAssignment() {
+  const root = path.join(os.tmpdir(), `group-deception-study1-controlled-${process.pid}-${Date.now()}`);
+  const dataDir = path.join(root, "sessions");
+  const code = `
+    process.env.NODE_ENV = "development";
+    process.env.DEBUG_LINKS = "true";
+    process.env.ASSIGNMENT_MODE = "controlled_link";
+    process.env.ENTRY_CODE_HIDDEN = "s1-entry-a-" + Date.now();
+    process.env.ENTRY_CODE_HONEST = "s1-entry-b-" + Date.now();
+    process.env.ENTRY_CODE_DISHONEST = "s1-entry-c-" + Date.now();
+    process.env.TEST_CONDITION = "dishonest";
+    process.env.STUDY_CONTACT_EMAIL = "123456@163.com";
+    process.env.DATA_DIR = ${JSON.stringify(dataDir)};
+    const fs = require("fs");
+    const path = require("path");
+    const http = require("http");
+    const app = require(${JSON.stringify(path.join(__dirname, "index.js"))});
+    const store = require(${JSON.stringify(path.join(__dirname, "store.js"))});
+    const entries = {
+      hidden: process.env.ENTRY_CODE_HIDDEN,
+      honest: process.env.ENTRY_CODE_HONEST,
+      dishonest: process.env.ENTRY_CODE_DISHONEST
+    };
+    function assert(condition, message) { if (!condition) throw new Error(message); }
+    function req(server, body, expectedStatus = 200, requestPath = "/api/session") {
+      const payload = body === undefined ? null : JSON.stringify(body);
+      return new Promise((resolve, reject) => {
+        const r = http.request({ method: requestPath === "/api/config" ? "GET" : "POST", hostname: "127.0.0.1", port: server.address().port, path: requestPath, headers: payload ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } : {} }, (res) => {
+          let raw = "";
+          res.on("data", (chunk) => raw += chunk);
+          res.on("end", () => {
+            const parsed = raw ? JSON.parse(raw) : {};
+            if (res.statusCode !== expectedStatus) reject(new Error("expected " + expectedStatus + ", got " + res.statusCode + ": " + raw));
+            else resolve(parsed);
+          });
+        });
+        r.on("error", reject);
+        if (payload) r.write(payload);
+        r.end();
+      });
+    }
+    function assertPublicClean(value) {
+      const forbiddenKeys = new Set(["condition", "assignment_source", "entry_link_id"]);
+      const visit = (node) => {
+        if (!node || typeof node !== "object") return;
+        for (const [key, child] of Object.entries(node)) {
+          assert(!forbiddenKeys.has(key), "public response leaked key " + key);
+          visit(child);
+        }
+      };
+      visit(value);
+      const text = JSON.stringify(value);
+      for (const forbidden of [process.env.ENTRY_CODE_HIDDEN, process.env.ENTRY_CODE_HONEST, process.env.ENTRY_CODE_DISHONEST]) {
+        assert(!text.includes(forbidden), "public response leaked entry secret");
+      }
+    }
+    (async () => {
+      const server = app.listen(0);
+      try {
+        assertPublicClean(await req(server, undefined, 200, "/api/config"));
+        await req(server, { participant_id: "missing-entry-s1" }, 400);
+        await req(server, { participant_id: "bad-entry-s1", entry: "wrong-entry" }, 400);
+        const before = await store.listSessions();
+        assert(before.length === 0, "missing/invalid entry created sessions");
+        for (const condition of ["hidden","honest","dishonest"]) {
+          const created = await req(server, { participant_id: "controlled-s1-" + condition, entry: entries[condition] });
+          assertPublicClean(created.session);
+          const raw = await store.readSession(created.session.id);
+          assert(raw.condition === condition, "controlled condition mismatch");
+          assert(raw.assignment_source === "controlled_link", "assignment_source mismatch");
+          assert(["A","B","C"].includes(raw.entry_link_id), "entry_link_id missing");
+          assert(raw.randomization_block === null && raw.randomization_position === null, "controlled link must not have block position");
+          assert(JSON.stringify(raw).includes(entries[condition]) === false, "raw entry code leaked to session");
+        }
+        const same1 = await req(server, { participant_id: "same-controlled-s1", entry: entries.hidden });
+        const same2 = await req(server, { participant_id: "same-controlled-s1", entry: entries.hidden });
+        assert(same1.session.id === same2.session.id, "same entry did not resume same session");
+        await req(server, { participant_id: "same-controlled-s1", entry: entries.honest }, 409);
+        const sessions = await store.listSessions();
+        assert(sessions.filter((session) => session.participant_id === "same-controlled-s1").length === 1, "different entry created duplicate session");
+        const statePath = path.join(path.dirname(process.env.DATA_DIR), "randomization-state.json");
+        assert(!fs.existsSync(statePath), "controlled link created randomization state");
+        console.log("Study 1 controlled_link assignment checks passed");
+      } finally {
+        server.close();
+      }
+    })().catch((error) => { console.error(error); process.exit(1); });
+  `;
+  const result = spawnSync(process.execPath, ["-e", code], { encoding: "utf8" });
+  if (result.stdout) process.stdout.write(result.stdout);
+  assert(result.status === 0, result.stderr || "controlled_link child failed");
+}
+
+function testBlockModeRejectsEntry() {
+  const root = path.join(os.tmpdir(), `group-deception-study1-block-entry-${process.pid}-${Date.now()}`);
+  const dataDir = path.join(root, "sessions");
+  const code = `
+    process.env.NODE_ENV = "development";
+    process.env.DEBUG_LINKS = "false";
+    process.env.ASSIGNMENT_MODE = "block";
+    process.env.STUDY_CONTACT_EMAIL = "123456@163.com";
+    process.env.DATA_DIR = ${JSON.stringify(dataDir)};
+    const http = require("http");
+    const app = require(${JSON.stringify(path.join(__dirname, "index.js"))});
+    const store = require(${JSON.stringify(path.join(__dirname, "store.js"))});
+    function assert(condition, message) { if (!condition) throw new Error(message); }
+    function req(server) {
+      const payload = JSON.stringify({ participant_id: "block-entry-s1", entry: "unused-entry" });
+      return new Promise((resolve, reject) => {
+        const r = http.request({ method: "POST", hostname: "127.0.0.1", port: server.address().port, path: "/api/session", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } }, (res) => {
+          let raw = "";
+          res.on("data", (chunk) => raw += chunk);
+          res.on("end", () => res.statusCode === 400 ? resolve(JSON.parse(raw)) : reject(new Error(raw)));
+        });
+        r.on("error", reject);
+        r.write(payload);
+        r.end();
+      });
+    }
+    (async () => {
+      const server = app.listen(0);
+      try {
+        await req(server);
+        assert((await store.listSessions()).length === 0, "block mode entry created a session");
+        console.log("Study 1 block mode rejects entry checks passed");
+      } finally {
+        server.close();
+      }
+    })().catch((error) => { console.error(error); process.exit(1); });
+  `;
+  const result = spawnSync(process.execPath, ["-e", code], { encoding: "utf8" });
+  if (result.stdout) process.stdout.write(result.stdout);
+  assert(result.status === 0, result.stderr || "block entry child failed");
+}
+
 function staticChecks() {
   const root = path.join(__dirname, "..");
   const appJs = fs.readFileSync(path.join(root, "public/js/app.js"), "utf8");
@@ -245,6 +380,7 @@ function staticChecks() {
   const allText = [appJs, diceJs, indexHtml, styleCss, surveyJs, serverJs, measureConfig, studyConfig].join("\n");
   assert(!appJs.includes("params.get(\"condition\")"), "frontend must not read URL condition");
   assert(!appJs.includes("params.get(\"study\")"), "frontend must not read URL study");
+  assert(appJs.includes('params.get("entry")') && appJs.includes("entry: state.entryCode"), "frontend must send entry without interpreting condition");
   assert((appJs.match(/debrief-viewed/g) || []).length === 1, "frontend should call debrief-viewed only once");
   assert(appJs.includes("正在确认事后说明…"), "debrief pending copy missing");
   assert(appJs.includes("复制参与编号") && appJs.includes("已复制"), "copy participant id UI missing");
@@ -273,6 +409,7 @@ function staticChecks() {
   assert(!surveyJs.includes(".replace("), "F2 frontend replace logic must be removed");
   assert(serverJs.includes("contact_email: publicContactEmail()"), "config contact email missing");
   assert(!serverJs.includes("debug_links_enabled"), "server source should not expose debug_links_enabled");
+  assert(serverJs.includes('ASSIGNMENT_MODE') && serverJs.includes('controlled_link') && serverJs.includes('ENTRY_CODE_HIDDEN'), "controlled_link assignment source missing");
   assert(!/[?]\/(?:h2|p|span)>|寮€|鐠囬攱/.test(allText), "obvious mojibake or broken HTML marker found");
   for (const file of listFiles(root, ".js")) {
     if (file.includes(`${path.sep}node_modules${path.sep}`)) continue;
@@ -294,6 +431,8 @@ function listFiles(dir, extension, result = []) {
 async function main() {
   staticChecks();
   testBlockAndConcurrency();
+  testControlledLinkAssignment();
+  testBlockModeRejectsEntry();
   const server = app.listen(0);
   try {
     const config = await request(server, "GET", "/api/config");
@@ -322,3 +461,4 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
+
