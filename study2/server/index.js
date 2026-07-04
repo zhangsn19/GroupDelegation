@@ -4,7 +4,6 @@ const path = require("path");
 const crypto = require("crypto");
 const { VERSION, CONDITIONS, STATUS_ORDER, MEMBERS } = require("../config/common");
 const study2 = require("../config/study2-income");
-const { buildIncomePeerRecords } = require("../config/peer-records");
 const store = require("./store");
 const exporters = require("./export");
 
@@ -44,6 +43,16 @@ const PARTICIPANT_ID_PATTERN = /^GD-S2-[A-Z0-9]{6}$/;
 const STUDY_CONTACT_EMAIL = String(process.env.STUDY_CONTACT_EMAIL || (IS_PRODUCTION ? "" : "123456@163.com")).trim();
 const COMPLETION_CODE = process.env.COMPLETION_CODE || "";
 const COMPLETION_REDIRECT_URL = process.env.COMPLETION_REDIRECT_URL || "";
+const STIMULUS_VERSION = "randomized-stimuli-v1";
+const STUDY2_MAX_TOTAL_INCOME_CENTS = 2960;
+const STUDY2_PEER_PROFILE_OFFSETS = {
+  P1: [-250, -100, 100, 250],
+  P2: [-200, -150, 150, 200],
+  P3: [-240, -60, 60, 240],
+  P4: [-180, -120, 120, 180],
+  P5: [-220, -80, 80, 220],
+  P6: [-160, -140, 140, 160]
+};
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
@@ -312,6 +321,127 @@ function shuffle(values) {
   return copy;
 }
 
+function createStimulusSeed() {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+function createSeededRandom(seed, namespace = "") {
+  let counter = 0;
+  return () => {
+    const hash = crypto
+      .createHash("sha256")
+      .update(`${seed}:${namespace}:${counter}`)
+      .digest();
+    counter += 1;
+    return hash.readUInt32BE(0) / 0x100000000;
+  };
+}
+
+function seededShuffle(values, random) {
+  const copy = [...values];
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(random() * (index + 1));
+    [copy[index], copy[swap]] = [copy[swap], copy[index]];
+  }
+  return copy;
+}
+
+function peerNames() {
+  return MEMBERS.filter((member) => !["participant", "group_ai"].includes(member.id)).map((member) => member.name);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function createStudy2StimulusPlan(seed) {
+  const profileIds = Object.keys(STUDY2_PEER_PROFILE_OFFSETS);
+  const profileIndex = Math.floor(createSeededRandom(seed, "study2-profile")() * profileIds.length);
+  return {
+    peerDisplayOrder: seededShuffle(peerNames(), createSeededRandom(seed, "study2-peer-display-order")),
+    peerProfileId: profileIds[profileIndex]
+  };
+}
+
+function study2HiddenText() {
+  return "\u5df2\u5b8c\u6210\u6b64\u524d\u6536\u5165\u7533\u62a5\u3002\u5f53\u524d\u4fe1\u606f\u8bbe\u7f6e\u4e0b\uff0c\u5b9e\u9645\u6536\u5165\u548c\u7533\u62a5\u5185\u5bb9\u4e0d\u53ef\u89c1\u3002";
+}
+
+function study2VisibleText(actualIncomeCents, reportedIncomeCents) {
+  return `\u5b9e\u9645\u6536\u5165 \u00a5${formatMoney(actualIncomeCents)}\uff1b\u5df2\u7533\u62a5\u6536\u5165 \u00a5${formatMoney(reportedIncomeCents)}\u3002`;
+}
+
+function buildStudy2PeerIncomeRecords(session) {
+  const profileId = session.study2_peer_profile_id || "P1";
+  const offsets = STUDY2_PEER_PROFILE_OFFSETS[profileId] || STUDY2_PEER_PROFILE_OFFSETS.P1;
+  const baseCents = clamp(Number(session.actual_income_cents || 0), 500, 2710);
+  const shuffledActuals = seededShuffle(
+    offsets.map((offset) => clamp(baseCents + offset, 250, STUDY2_MAX_TOTAL_INCOME_CENTS)),
+    createSeededRandom(session.stimulus_seed || session.id, "study2-peer-income-name-mapping")
+  );
+  const names = peerNames();
+  const displayOrder = session.study2_peer_display_order || names;
+  const byName = new Map(names.map((name, index) => {
+    const actualIncomeCents = shuffledActuals[index];
+    const reportedIncomeCents = session.condition === "dishonest"
+      ? Math.max(0, Math.round(actualIncomeCents * 0.5))
+      : actualIncomeCents;
+    return [name, {
+      peer_name: name,
+      name,
+      actual_income_cents: actualIncomeCents,
+      actual_income: centsToMoney(actualIncomeCents),
+      actualIncome: centsToMoney(actualIncomeCents),
+      reported_income_cents: reportedIncomeCents,
+      reported_income: centsToMoney(reportedIncomeCents),
+      reportedIncome: centsToMoney(reportedIncomeCents),
+      visibility: session.condition === "hidden" ? "hidden" : "visible"
+    }];
+  }));
+  return displayOrder.map((name, index) => {
+    const record = byName.get(name);
+    return {
+      ...record,
+      display_position: index + 1,
+      text: session.condition === "hidden"
+        ? study2HiddenText()
+        : study2VisibleText(record.actual_income_cents, record.reported_income_cents)
+    };
+  });
+}
+
+function ensureStudy2PeerIncomeRecords(session) {
+  if (Array.isArray(session.study2_peer_income_records) && session.study2_peer_income_records.length) {
+    session.peer_income_records = session.study2_peer_income_records;
+    return;
+  }
+  if (Array.isArray(session.peer_income_records) && session.peer_income_records.length) {
+    session.study2_peer_income_records = session.peer_income_records;
+    return;
+  }
+  if (session.actual_income_cents === null || session.actual_income_cents === undefined) return;
+  const records = buildStudy2PeerIncomeRecords(session);
+  session.study2_peer_profile_base_cents = clamp(Number(session.actual_income_cents || 0), 500, 2710);
+  session.study2_peer_income_records = records;
+  session.peer_income_records = records;
+}
+
+function publicPeerIncomeRecords(session) {
+  const records = session.study2_peer_income_records || session.peer_income_records || [];
+  if (session.condition !== "hidden") return records;
+  return records.map((record) => ({
+    name: record.name || record.peer_name,
+    peer_name: record.peer_name || record.name,
+    actual_income_cents: null,
+    actualIncome: null,
+    reported_income_cents: null,
+    reportedIncome: null,
+    visibility: "hidden",
+    display_position: record.display_position,
+    text: study2HiddenText()
+  }));
+}
+
 async function readRandomizationState() {
   try {
     return JSON.parse(await fs.promises.readFile(randomizationStatePath(), "utf8"));
@@ -363,10 +493,11 @@ async function assignBlockCondition({ participantId, study }) {
   });
 }
 
-function makeEffortMaterials() {
+function makeEffortMaterials(seed) {
+  const random = createSeededRandom(seed, "study2-effort-materials");
   return Array.from({ length: study2.effortTask.rounds }, (_, roundIndex) => ({
     round_index: roundIndex + 1,
-    numbers: Array.from({ length: study2.effortTask.numbersPerRound }, () => crypto.randomInt(10, 100)),
+    numbers: Array.from({ length: study2.effortTask.numbersPerRound }, () => 10 + Math.floor(random() * 90)),
     started_at: null,
     submitted_at: null,
     deadline_at: null,
@@ -488,11 +619,15 @@ async function createSession({ participantId, requestedCondition, entry, lockHel
 
   const id = `s2_${crypto.randomUUID().replace(/-/g, "").slice(0, 18)}`;
   const createdAt = now();
+  const stimulusSeed = createStimulusSeed();
+  const study2StimulusPlan = createStudy2StimulusPlan(stimulusSeed);
   const session = {
     id,
     version: VERSION,
     study_version: STUDY_VERSION,
     protocol_version: PROTOCOL_VERSION,
+    stimulus_version: STIMULUS_VERSION,
+    stimulus_seed: stimulusSeed,
     study: "study2",
     condition,
     condition_assigned_at: allocation.assigned_at,
@@ -518,13 +653,17 @@ async function createSession({ participantId, requestedCondition, entry, lockHel
     event_log: [],
     baseline: {},
     comprehension_attempts: [],
-    effort_materials: makeEffortMaterials(),
+    study2_peer_display_order: study2StimulusPlan.peerDisplayOrder,
+    study2_peer_profile_id: study2StimulusPlan.peerProfileId,
+    study2_peer_profile_base_cents: null,
+    study2_peer_income_records: [],
+    effort_materials: makeEffortMaterials(stimulusSeed),
     effort_rounds: [],
     effort_summary: null,
     actual_income_cents: null,
     actual_income: null,
     income_viewed_at: null,
-    peer_income_records: buildIncomePeerRecords(condition),
+    peer_income_records: [],
     peer_records_view: null,
     income_report_selection_started_at: null,
     income_report: null,
@@ -755,6 +894,7 @@ app.post("/api/session/:id/effort/round", asyncHandler(async (req, res) => {
         total_income_cents: totalIncomeCents,
         total_income: draft.actual_income
       };
+      ensureStudy2PeerIncomeRecords(draft);
       transition(draft, "effort_completed");
     }
     draft._lastRound = round;
@@ -769,6 +909,7 @@ app.post("/api/session/:id/effort/round", asyncHandler(async (req, res) => {
 app.post("/api/session/:id/income-viewed", asyncHandler(async (req, res) => {
   const session = await store.updateSession(req.params.id, (draft) => {
     if (draft.status !== "effort_completed") throw new Error("Income view requires effort_completed status");
+    ensureStudy2PeerIncomeRecords(draft);
     draft.income_viewed_at = now();
     transition(draft, "income_viewed");
     return draft;
@@ -779,7 +920,7 @@ app.post("/api/session/:id/income-viewed", asyncHandler(async (req, res) => {
 app.get("/api/session/:id/peer-records", asyncHandler(async (req, res) => {
   const session = await store.readSession(req.params.id);
   if (statusIndex(session.status) < statusIndex("income_viewed")) return res.status(409).json({ error: "Peer records require income_viewed status" });
-  res.json({ displayed_at: now(), records: session.peer_income_records });
+  res.json({ displayed_at: now(), records: publicPeerIncomeRecords(session) });
 }));
 
 app.post("/api/session/:id/peer-records-viewed", asyncHandler(async (req, res) => {
@@ -1001,5 +1142,10 @@ if (require.main === module) {
     process.exit(1);
   });
 }
+
+app._internal = {
+  createStudy2StimulusPlan,
+  buildStudy2PeerIncomeRecords
+};
 
 module.exports = app;

@@ -38,6 +38,8 @@ function participantsCsv(sessions) {
     completed_at: session.completed_at || "",
     debrief_viewed_at: session.debrief_viewed_at || "",
     completion_status: session.completion_status || "",
+    stimulus_version: session.stimulus_version || "",
+    peer_profile_id: session.study2_peer_profile_id || "",
     actual_income: session.actual_income,
     actual_income_cents: session.actual_income_cents,
     reported_income_cents: session.income_report?.reported_income_cents,
@@ -57,7 +59,7 @@ function participantsCsv(sessions) {
     ...flattenResponses("demo", session.demographics)
   }));
   const dynamic = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
-  const preferred = ["session_id", "participant_id", "study", "condition", "assignment_source", "entry_link_id", "condition_assigned_at", "randomization_block", "randomization_position", "is_test_session", "study_version", "protocol_version", "created_at", "completed_at", "debrief_viewed_at", "completion_status"];
+  const preferred = ["session_id", "participant_id", "study", "condition", "assignment_source", "entry_link_id", "condition_assigned_at", "randomization_block", "randomization_position", "is_test_session", "study_version", "protocol_version", "stimulus_version", "peer_profile_id", "created_at", "completed_at", "debrief_viewed_at", "completion_status"];
   const columns = [...preferred, ...dynamic.filter((key) => !preferred.includes(key))];
   return toCsv(rows, columns);
 }
@@ -115,9 +117,25 @@ function incomeReportsCsv(sessions) {
       income_report_selection_started_at: session.income_report.selection_started_at || session.income_report_selection_started_at,
       decision_duration_ms: session.income_report.decision_duration_ms,
       submitted_at: session.income_report.submitted_at,
-      peer_records_json: JSON.stringify(session.peer_income_records || [])
+      stimulus_version: session.stimulus_version || "",
+      stimulus_seed: session.stimulus_seed || "",
+      peer_profile_id: session.study2_peer_profile_id || "",
+      peer_display_order_json: JSON.stringify(session.study2_peer_display_order || []),
+      peer_actual_income_records_json: JSON.stringify((session.study2_peer_income_records || session.peer_income_records || []).map((record) => ({
+        peer_name: record.peer_name || record.name,
+        actual_income_cents: record.actual_income_cents,
+        actual_income: record.actual_income,
+        display_position: record.display_position
+      }))),
+      peer_reported_income_records_json: JSON.stringify((session.study2_peer_income_records || session.peer_income_records || []).map((record) => ({
+        peer_name: record.peer_name || record.name,
+        reported_income_cents: record.reported_income_cents,
+        reported_income: record.reported_income,
+        display_position: record.display_position
+      }))),
+      peer_records_json: JSON.stringify(session.study2_peer_income_records || session.peer_income_records || [])
     }));
-  return toCsv(rows, ["session_id", "participant_id", "condition", "actual_income_cents", "reported_income_cents", "underreport_amount_cents", "underreport_rate", "income_report_selection_started_at", "decision_duration_ms", "actual_income", "reported_income", "deduction_cents", "deduction", "retained_reward_cents", "retained_reward", "underreport_amount", "submitted_at", "peer_records_json"]);
+  return toCsv(rows, ["session_id", "participant_id", "condition", "actual_income_cents", "reported_income_cents", "underreport_amount_cents", "underreport_rate", "income_report_selection_started_at", "decision_duration_ms", "actual_income", "reported_income", "deduction_cents", "deduction", "retained_reward_cents", "retained_reward", "underreport_amount", "submitted_at", "stimulus_version", "stimulus_seed", "peer_profile_id", "peer_display_order_json", "peer_actual_income_records_json", "peer_reported_income_records_json", "peer_records_json"]);
 }
 
 function summary(sessions) {

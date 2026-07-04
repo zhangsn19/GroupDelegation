@@ -100,6 +100,9 @@ function study1DiceRoundsCsv(sessions) {
         submitted_at: round.submitted_at,
         decision_duration_ms: round.decision_duration_ms,
         submission_source: round.submission_source,
+        stimulus_version: session.stimulus_version || "",
+        stimulus_seed: session.stimulus_seed || "",
+        peer_display_order_json: JSON.stringify(round.peer_display_order || session.study1_peer_display_order || []),
         peer_records_json: JSON.stringify(peerRecords)
       });
     }
@@ -124,6 +127,9 @@ function study1DiceRoundsCsv(sessions) {
     { key: "submitted_at" },
     { key: "decision_duration_ms" },
     { key: "submission_source" },
+    { key: "stimulus_version" },
+    { key: "stimulus_seed" },
+    { key: "peer_display_order_json" },
     { key: "peer_records_json" }
   ]);
 }

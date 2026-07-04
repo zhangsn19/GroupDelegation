@@ -4,7 +4,6 @@ const path = require("path");
 const crypto = require("crypto");
 const { VERSION, STUDIES, CONDITIONS, STATUS_ORDER, MEMBERS } = require("../config/common");
 const study1 = require("../config/study1-dice");
-const { buildPeerRecordSequence } = require("../config/peer-records");
 const store = require("./store");
 const exporters = require("./export");
 
@@ -43,6 +42,15 @@ const PARTICIPANT_ID_PATTERN = /^GD-S1-[A-Z0-9]{6}$/;
 const STUDY_CONTACT_EMAIL = String(process.env.STUDY_CONTACT_EMAIL || (IS_PRODUCTION ? "" : "123456@163.com")).trim();
 const COMPLETION_CODE = process.env.COMPLETION_CODE || "";
 const COMPLETION_REDIRECT_URL = process.env.COMPLETION_REDIRECT_URL || "";
+const STIMULUS_VERSION = "randomized-stimuli-v1";
+const STUDY1_DICE_MULTISET = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5];
+const STUDY1_DISHONEST_REPORTS = {
+  1: [3, 4, 5, 6],
+  2: [4, 5, 5, 6],
+  3: [5, 5, 6, 6],
+  4: [5, 5, 6, 6],
+  5: [6, 6, 6, 6]
+};
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
@@ -290,6 +298,115 @@ function shuffle(values) {
   return copy;
 }
 
+function createStimulusSeed() {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+function createSeededRandom(seed, namespace = "") {
+  let counter = 0;
+  return () => {
+    const hash = crypto
+      .createHash("sha256")
+      .update(`${seed}:${namespace}:${counter}`)
+      .digest();
+    counter += 1;
+    return hash.readUInt32BE(0) / 0x100000000;
+  };
+}
+
+function seededShuffle(values, random) {
+  const copy = [...values];
+  for (let index = copy.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(random() * (index + 1));
+    [copy[index], copy[swap]] = [copy[swap], copy[index]];
+  }
+  return copy;
+}
+
+function peerNames() {
+  return MEMBERS.filter((member) => !["participant", "group_ai"].includes(member.id)).map((member) => member.name);
+}
+
+function study1HiddenText(name) {
+  return `${name}\u5df2\u5411\u7fa4\u804a AI \u5b8c\u6210\u63d0\u4ea4\uff0c\u5177\u4f53\u5185\u5bb9\u5bf9\u4f60\u4e0d\u53ef\u89c1\u3002`;
+}
+
+function study1VisibleText(name, value) {
+  return `${name}\u5df2\u5411\u7fa4\u804a AI \u63d0\u4ea4\uff1a${value}`;
+}
+
+function createStudy1Stimuli(condition, seed) {
+  const diceSequence = seededShuffle(STUDY1_DICE_MULTISET, createSeededRandom(seed, "study1-dice"));
+  const peerDisplayOrder = seededShuffle(peerNames(), createSeededRandom(seed, "study1-peer-order"));
+  const assignmentRandom = createSeededRandom(seed, "study1-dishonest-assignment");
+  const peerRecordsByRound = diceSequence.map((trueValue, roundIndex) => {
+    const roundNumber = roundIndex + 1;
+    const dishonestReports = seededShuffle(STUDY1_DISHONEST_REPORTS[trueValue], assignmentRandom);
+    const peerRecords = peerDisplayOrder.map((name, index) => {
+      const underlyingValue = condition === "dishonest" ? dishonestReports[index] : trueValue;
+      if (condition === "hidden") {
+        return {
+          round_index: roundNumber,
+          name,
+          trueValue,
+          reportedValue: null,
+          underlying_reported_value: underlyingValue,
+          visibility: "hidden",
+          text: study1HiddenText(name)
+        };
+      }
+      const reportedValue = condition === "honest" ? trueValue : dishonestReports[index];
+      return {
+        round_index: roundNumber,
+        name,
+        trueValue,
+        reportedValue,
+        underlying_reported_value: reportedValue,
+        visibility: "visible",
+        text: study1VisibleText(name, reportedValue)
+      };
+    });
+    return {
+      round_index: roundNumber,
+      true_die_value: trueValue,
+      peer_display_order: peerDisplayOrder,
+      peer_records: peerRecords
+    };
+  });
+  return { diceSequence, peerDisplayOrder, peerRecordsByRound };
+}
+
+function sessionDiceSequence(session) {
+  return session.study1_die_sequence || session.dice_sequence || [];
+}
+
+function sessionPeerRecordsByRound(session) {
+  if (session.study1_peer_records_by_round) return session.study1_peer_records_by_round;
+  return (session.peer_records_sequence || []).map((peerRecords, index) => ({
+    round_index: index + 1,
+    true_die_value: sessionDiceSequence(session)[index],
+    peer_display_order: peerRecords.map((record) => record.name),
+    peer_records: peerRecords
+  }));
+}
+
+function publicStudy1PeerRecords(session, peerRecords = []) {
+  if (session.condition !== "hidden") return peerRecords;
+  return peerRecords.map(({ underlying_reported_value, ...record }) => ({
+    ...record,
+    reportedValue: null,
+    visibility: "hidden"
+  }));
+}
+
+function publicDiceRound(session, round) {
+  if (!round) return round;
+  return {
+    ...round,
+    peer_records: publicStudy1PeerRecords(session, round.peer_records)
+  };
+}
+
 async function readRandomizationState() {
   try {
     return JSON.parse(await fs.promises.readFile(randomizationStatePath(), "utf8"));
@@ -422,12 +539,20 @@ async function createSession({ study, participantId, requestedCondition, entry, 
 
   const id = `s_${crypto.randomUUID().replace(/-/g, "").slice(0, 18)}`;
   const createdAt = now();
-  const diceSequence = study === "study1" ? [...study1.fixedDiceSequence] : [];
+  const stimulusSeed = createStimulusSeed();
+  const study1Stimuli = study === "study1" ? createStudy1Stimuli(condition, stimulusSeed) : {
+    diceSequence: [],
+    peerDisplayOrder: [],
+    peerRecordsByRound: []
+  };
+  const diceSequence = study1Stimuli.diceSequence;
   const session = {
     id,
     version: VERSION,
     study_version: STUDY_VERSION,
     protocol_version: PROTOCOL_VERSION,
+    stimulus_version: STIMULUS_VERSION,
+    stimulus_seed: stimulusSeed,
     study,
     condition,
     condition_assigned_at: allocation.assigned_at,
@@ -453,7 +578,10 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     event_log: [],
     baseline: {},
     comprehension_attempts: [],
-    peer_records_sequence: study === "study1" ? buildPeerRecordSequence(condition, diceSequence) : [],
+    study1_die_sequence: diceSequence,
+    study1_peer_display_order: study1Stimuli.peerDisplayOrder,
+    study1_peer_records_by_round: study1Stimuli.peerRecordsByRound,
+    peer_records_sequence: study1Stimuli.peerRecordsByRound.map((round) => round.peer_records),
     dice_sequence: diceSequence,
     dice_round_state: {},
     dice_rounds: [],
@@ -467,7 +595,8 @@ async function createSession({ study, participantId, requestedCondition, entry, 
 
 function prepareCurrentDiceRound(session) {
   const index = session.dice_rounds.length;
-  if (index >= session.dice_sequence.length) return null;
+  const diceSequence = sessionDiceSequence(session);
+  if (index >= diceSequence.length) return null;
   const roundIndex = index + 1;
   session.dice_round_state ||= {};
   const key = String(roundIndex);
@@ -493,15 +622,18 @@ function markCurrentDiceRoundPresented(session) {
 
 function currentDicePayload(session) {
   const index = session.dice_rounds.length;
-  if (index >= session.dice_sequence.length) return { completed: true };
+  const diceSequence = sessionDiceSequence(session);
+  const recordsByRound = sessionPeerRecordsByRound(session);
+  if (index >= diceSequence.length) return { completed: true };
   const roundIndex = index + 1;
   const state = session.dice_round_state?.[String(roundIndex)];
+  const roundStimulus = recordsByRound[index] || {};
   return {
     completed: false,
     round_index: roundIndex,
-    total_rounds: session.dice_sequence.length,
-    true_die_value: session.dice_sequence[index],
-    peer_records: session.peer_records_sequence?.[index] || [],
+    total_rounds: diceSequence.length,
+    true_die_value: diceSequence[index],
+    peer_records: publicStudy1PeerRecords(session, roundStimulus.peer_records || []),
     selection_started_at: state?.selection_started_at || null
   };
 }
@@ -720,7 +852,9 @@ app.post("/api/session/:id/dice/round", asyncHandler(async (req, res) => {
     if (draft.status !== "task_in_progress") throw new Error("Dice round requires task_in_progress status");
     const expectedRound = draft.dice_rounds.length + 1;
     if (roundIndex !== expectedRound) throw new Error(`Expected round ${expectedRound}, received ${roundIndex}`);
-    const trueValue = draft.dice_sequence[expectedRound - 1];
+    const diceSequence = sessionDiceSequence(draft);
+    const recordsByRound = sessionPeerRecordsByRound(draft);
+    const trueValue = diceSequence[expectedRound - 1];
     const roundState = draft.dice_round_state?.[String(expectedRound)];
     if (!roundState?.selection_started_at) throw new Error("Dice round was not presented by server");
     const priorReward = draft.dice_rounds.reduce((sum, round) => sum + Number(round.personal_reward), 0);
@@ -730,7 +864,8 @@ app.post("/api/session/:id/dice/round", asyncHandler(async (req, res) => {
     const round = {
       round_index: expectedRound,
       true_die_value: trueValue,
-      peer_records: draft.peer_records_sequence?.[expectedRound - 1] || [],
+      peer_display_order: recordsByRound[expectedRound - 1]?.peer_display_order || [],
+      peer_records: recordsByRound[expectedRound - 1]?.peer_records || [],
       reported_value: reported,
       upward_misreport: reported > trueValue,
       misreport_magnitude: reported - trueValue,
@@ -743,7 +878,7 @@ app.post("/api/session/:id/dice/round", asyncHandler(async (req, res) => {
     };
     draft.dice_rounds.push(round);
     addEvent(draft, "dice_round_submitted", { round_index: expectedRound });
-    if (draft.dice_rounds.length === draft.dice_sequence.length) {
+    if (draft.dice_rounds.length === diceSequence.length) {
       transition(draft, "task_completed");
     }
     draft._lastRound = round;
@@ -756,7 +891,7 @@ app.post("/api/session/:id/dice/round", asyncHandler(async (req, res) => {
   await store.writeSession(session);
   res.json({
     session: publicSession(session),
-    duplicate,    round: lastRound,
+    duplicate,    round: publicDiceRound(session, lastRound),
     current: currentDicePayload(session)
   });
 }));
@@ -877,5 +1012,9 @@ if (require.main === module) {
     process.exit(1);
   });
 }
+
+app._internal = {
+  createStudy1Stimuli
+};
 
 module.exports = app;

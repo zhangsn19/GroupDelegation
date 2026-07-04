@@ -147,7 +147,56 @@ async function runEffortToPeerRecords(server, config, condition, participantId) 
   const stored = await store.readSession(id);
   assert(stored.income_report_selection_started_at, "income report timing must start after peer records viewed");
   assert(stored.peer_records_view.duration_ms === null, "browser-provided peer duration must not be saved");
+  assertStudy2PeerStimuliPersisted(stored, condition, records.records);
   return { id, records, actualIncomeCents: stored.actual_income_cents };
+}
+
+function assertStudy2PeerStimuliPersisted(session, condition, publicRecords) {
+  const reread = JSON.parse(fs.readFileSync(path.join(store.DATA_DIR, `${session.id}.json`), "utf8"));
+  assert(session.stimulus_version === "randomized-stimuli-v1", "Study 2 stimulus_version missing");
+  assert(/^[0-9a-f]{32}$/.test(session.stimulus_seed), "Study 2 stimulus_seed missing");
+  assert(/^P[1-6]$/.test(session.study2_peer_profile_id), "Study 2 peer profile id invalid");
+  assert(session.study2_peer_display_order.length === 4, "Study 2 peer display order length mismatch");
+  assert(session.study2_peer_profile_base_cents >= 500 && session.study2_peer_profile_base_cents <= 2710, "Study 2 profile base out of range");
+  assert(JSON.stringify(session.study2_peer_profile_id) === JSON.stringify(reread.study2_peer_profile_id), "Study 2 profile id changed after reread");
+  assert(JSON.stringify(session.study2_peer_display_order) === JSON.stringify(reread.study2_peer_display_order), "Study 2 peer order changed after reread");
+  assert(JSON.stringify(session.study2_peer_income_records) === JSON.stringify(reread.study2_peer_income_records), "Study 2 peer records changed after reread");
+  assert(session.study2_peer_income_records.length === 4, "Study 2 peer income records length mismatch");
+  for (const record of session.study2_peer_income_records) {
+    assert(record.actual_income_cents >= 250 && record.actual_income_cents <= 2960, "Study 2 peer actual income out of range");
+    if (condition === "honest") assert(record.reported_income_cents === record.actual_income_cents, "Study 2 honest peer report mismatch");
+    if (condition === "dishonest") {
+      assert(record.reported_income_cents < record.actual_income_cents, "Study 2 dishonest report must be below actual");
+      assert(record.reported_income_cents === Math.round(record.actual_income_cents * 0.5), "Study 2 dishonest report formula mismatch");
+    }
+  }
+  if (condition === "hidden") {
+    assert(session.study2_peer_income_records.every((record) => record.actual_income_cents !== null && record.reported_income_cents !== null), "Study 2 hidden raw records missing values");
+    assert(publicRecords.every((record) => record.actual_income_cents === null && record.reported_income_cents === null), "Study 2 hidden public records leaked values");
+  }
+}
+
+function testStudy2DeterministicSeeds() {
+  const planA = app._internal.createStudy2StimulusPlan("deterministic-seed-a");
+  const planAAgain = app._internal.createStudy2StimulusPlan("deterministic-seed-a");
+  const planB = app._internal.createStudy2StimulusPlan("deterministic-seed-b");
+  assert(JSON.stringify(planA) === JSON.stringify(planAAgain), "Study 2 same seed should reproduce plan");
+  assert(
+    planA.peerProfileId !== planB.peerProfileId ||
+      JSON.stringify(planA.peerDisplayOrder) !== JSON.stringify(planB.peerDisplayOrder),
+    "Study 2 different deterministic seeds should produce different profile/order"
+  );
+  const sessionA = {
+    id: "deterministic-a",
+    stimulus_seed: "deterministic-seed-a",
+    condition: "dishonest",
+    actual_income_cents: 2430,
+    study2_peer_profile_id: planA.peerProfileId,
+    study2_peer_display_order: planA.peerDisplayOrder
+  };
+  const recordsA = app._internal.buildStudy2PeerIncomeRecords(sessionA);
+  const recordsAAgain = app._internal.buildStudy2PeerIncomeRecords(sessionA);
+  assert(JSON.stringify(recordsA) === JSON.stringify(recordsAAgain), "Study 2 same seed should reproduce peer records");
 }
 
 async function completeAfterIncomeReport(server, config, id, actualIncomeCents) {
@@ -187,9 +236,15 @@ async function completeAfterIncomeReport(server, config, id, actualIncomeCents) 
   assert(completed.session.completion?.completion_code === "SMOKE-STUDY2-COMPLETE", "completion code missing");
   const csv = await request(server, "GET", "/api/admin/export/participants.csv?include_test=true", undefined, 200, { "x-admin-token": "dev-admin-token" });
   assert(csv.includes("debrief_viewed_at"), "participants CSV missing debrief_viewed_at");
+  assert(csv.split("\n")[0].includes("peer_profile_id"), "participants CSV missing peer_profile_id");
+  assert(csv.split("\n")[0].includes("stimulus_version"), "participants CSV missing stimulus_version");
   const effortCsv = await request(server, "GET", "/api/admin/export/study2_effort_rounds.csv?include_test=true", undefined, 200, { "x-admin-token": "dev-admin-token" });
   for (const column of ["participant_id", "round_index", "correct_count", "base_income", "speed_bonus", "round_actual_income"]) {
     assert(effortCsv.split("\n")[0].includes(column), `effort CSV missing ${column}`);
+  }
+  const incomeCsv = await request(server, "GET", "/api/admin/export/study2_income_reports.csv?include_test=true", undefined, 200, { "x-admin-token": "dev-admin-token" });
+  for (const column of ["stimulus_version", "stimulus_seed", "peer_profile_id", "peer_display_order_json", "peer_actual_income_records_json", "peer_reported_income_records_json"]) {
+    assert(incomeCsv.split("\n")[0].includes(column), `income report CSV missing ${column}`);
   }
   return completed.session;
 }
@@ -576,6 +631,7 @@ function listFiles(dir, extension, result = []) {
 
 async function main() {
   staticChecks();
+  testStudy2DeterministicSeeds();
   testBlockAndConcurrency();
   testControlledLinkAssignment();
   testParticipantAllowlistPolicy();

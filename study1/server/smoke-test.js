@@ -123,10 +123,60 @@ function assertPeerRound(condition, current) {
     if (condition === "hidden") {
       assert(record.visibility === "hidden", "hidden peer record visibility mismatch");
       assert(record.reportedValue === null, "hidden peer reported value must be null");
+      assert(!Object.prototype.hasOwnProperty.call(record, "underlying_reported_value"), "hidden public peer record leaked underlying value");
     }
     if (condition === "honest") assert(record.reportedValue === current.true_die_value, "honest peer report must equal true die");
     if (condition === "dishonest") assert(record.reportedValue > current.true_die_value, "dishonest peer report must be greater than true die");
   }
+}
+
+async function assertStudy1StimuliPersisted(id, condition) {
+  const first = await store.readSession(id);
+  const second = await store.readSession(id);
+  assert(first.stimulus_version === "randomized-stimuli-v1", "Study 1 stimulus_version missing");
+  assert(/^[0-9a-f]{32}$/.test(first.stimulus_seed), "Study 1 stimulus_seed missing");
+  assert(JSON.stringify(first.study1_die_sequence) === JSON.stringify(second.study1_die_sequence), "Study 1 die sequence changed after reread");
+  assert(JSON.stringify(first.study1_peer_display_order) === JSON.stringify(second.study1_peer_display_order), "Study 1 peer order changed after reread");
+  assert(JSON.stringify(first.study1_peer_records_by_round) === JSON.stringify(second.study1_peer_records_by_round), "Study 1 peer records changed after reread");
+  assert(first.study1_die_sequence.length === 10, "Study 1 die sequence length mismatch");
+  for (const value of [1, 2, 3, 4, 5]) {
+    assert(first.study1_die_sequence.filter((item) => item === value).length === 2, `Study 1 die value ${value} count mismatch`);
+  }
+  assert(!first.study1_die_sequence.includes(6), "Study 1 die sequence must not include 6");
+  assert(first.study1_peer_display_order.length === 4, "Study 1 peer display order length mismatch");
+  assert(first.study1_peer_records_by_round.length === 10, "Study 1 peer records by round length mismatch");
+  const dishonestSets = {
+    1: [3, 4, 5, 6],
+    2: [4, 5, 5, 6],
+    3: [5, 5, 6, 6],
+    4: [5, 5, 6, 6],
+    5: [6, 6, 6, 6]
+  };
+  for (const round of first.study1_peer_records_by_round) {
+    assert(JSON.stringify(round.peer_display_order) === JSON.stringify(first.study1_peer_display_order), "Study 1 peer order not stable across rounds");
+    assert(round.true_die_value === first.study1_die_sequence[round.round_index - 1], "Study 1 round true value mismatch");
+    if (condition === "honest") {
+      round.peer_records.forEach((record) => assert(record.reportedValue === round.true_die_value, "Study 1 honest report mismatch"));
+    }
+    if (condition === "dishonest") {
+      round.peer_records.forEach((record) => assert(record.reportedValue > round.true_die_value, "Study 1 dishonest report must exceed true value"));
+      const values = round.peer_records.map((record) => record.reportedValue).sort((a, b) => a - b);
+      assert(JSON.stringify(values) === JSON.stringify(dishonestSets[round.true_die_value]), "Study 1 dishonest report set mismatch");
+    }
+  }
+}
+
+function testStudy1DeterministicSeeds() {
+  const a = app._internal.createStudy1Stimuli("dishonest", "deterministic-seed-a");
+  const aAgain = app._internal.createStudy1Stimuli("dishonest", "deterministic-seed-a");
+  const b = app._internal.createStudy1Stimuli("dishonest", "deterministic-seed-b");
+  assert(JSON.stringify(a) === JSON.stringify(aAgain), "Study 1 same seed should reproduce stimuli");
+  assert(
+    JSON.stringify(a.diceSequence) !== JSON.stringify(b.diceSequence) ||
+      JSON.stringify(a.peerDisplayOrder) !== JSON.stringify(b.peerDisplayOrder) ||
+      JSON.stringify(a.peerRecordsByRound) !== JSON.stringify(b.peerRecordsByRound),
+    "Study 1 different deterministic seeds should produce different legal stimuli"
+  );
 }
 
 async function runDiceTask(server, id, current, condition) {
@@ -184,6 +234,10 @@ async function completeAfterTask(server, config, id) {
   assert(completed.session.completion?.completion_code === "SMOKE-STUDY1-COMPLETE", "completion code missing");
   const csv = await request(server, "GET", "/api/admin/export/participants.csv?include_test=true", undefined, 200, { "x-admin-token": "dev-admin-token" });
   assert(csv.includes("debrief_viewed_at"), "participants CSV missing debrief_viewed_at");
+  const diceCsv = await request(server, "GET", "/api/admin/export/study1_dice_rounds.csv?include_test=true", undefined, 200, { "x-admin-token": "dev-admin-token" });
+  for (const column of ["stimulus_version", "stimulus_seed", "peer_display_order_json", "peer_records_json"]) {
+    assert(diceCsv.split("\n")[0].includes(column), `Study 1 dice CSV missing ${column}`);
+  }
   return completed.session;
 }
 
@@ -529,6 +583,7 @@ function listFiles(dir, extension, result = []) {
 
 async function main() {
   staticChecks();
+  testStudy1DeterministicSeeds();
   testBlockAndConcurrency();
   testControlledLinkAssignment();
   testParticipantAllowlistPolicy();
@@ -544,6 +599,7 @@ async function main() {
     await testMissingSessionHandling(server);
     for (const condition of ["hidden", "honest", "dishonest"]) {
       const ready = await createReadySession(server, config, condition, `flow-s1-${condition}-${Date.now()}`);
+      await assertStudy1StimuliPersisted(ready.id, condition);
       await runDiceTask(server, ready.id, ready.current, condition);
     }
     const primary = await createReadySession(server, config, "dishonest", `complete-s1-${Date.now()}`);
