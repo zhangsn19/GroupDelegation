@@ -1,22 +1,76 @@
-﻿const fs = require("fs");
+const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const os = require("os");
+const vm = require("vm");
 const { spawnSync } = require("child_process");
 
-process.env.NODE_ENV = "development";
-process.env.DEBUG_LINKS = "true";
-process.env.STUDY_CONTACT_EMAIL = "123456@163.com";
-process.env.COMPLETION_CODE = "SMOKE-STUDY2-COMPLETE";
-process.env.COMPLETION_REDIRECT_URL = "https://example.com/study2-complete";
-
-if (!process.env.DATA_DIR) {
-  const root = path.join(os.tmpdir(), `group-deception-study2-smoke-${process.pid}-${Date.now()}`);
-  fs.rmSync(root, { recursive: true, force: true });
-  process.env.DATA_DIR = path.join(root, "sessions");
-} else {
-  fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
+function makeBaseTestEnv(overrides = {}) {
+  const env = { ...process.env };
+  for (const key of [
+    "DATA_DIR",
+    "ASSIGNMENT_MODE",
+    "PARTICIPANT_ID_POLICY",
+    "REQUIRE_PARTICIPANT_ID",
+    "PARTICIPANT_ID_ALLOWLIST_FILE",
+    "ENTRY_CODE_HIDDEN",
+    "ENTRY_CODE_HONEST",
+    "ENTRY_CODE_DISHONEST",
+    "TEST_CONDITION",
+    "ADMIN_TOKEN",
+    "DEBUG_LINKS",
+    "STUDY_CONTACT_EMAIL"
+  ]) {
+    delete env[key];
+  }
+  Object.assign(env, {
+    NODE_ENV: "development",
+    DEBUG_LINKS: "true",
+    ASSIGNMENT_MODE: "block",
+    PARTICIPANT_ID_POLICY: "open",
+    REQUIRE_PARTICIPANT_ID: "false",
+    PARTICIPANT_ID_ALLOWLIST_FILE: "",
+    ENTRY_CODE_HIDDEN: "",
+    ENTRY_CODE_HONEST: "",
+    ENTRY_CODE_DISHONEST: "",
+    TEST_CONDITION: "",
+    ADMIN_TOKEN: "dev-admin-token",
+    STUDY_CONTACT_EMAIL: "123456@163.com",
+    COMPLETION_CODE: "SMOKE-STUDY2-COMPLETE",
+    COMPLETION_REDIRECT_URL: "https://example.com/study2-complete"
+  });
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined || value === null) delete env[key];
+    else env[key] = String(value);
+  }
+  return env;
 }
+
+function applyTestEnv(env) {
+  for (const key of [
+    "DATA_DIR",
+    "ASSIGNMENT_MODE",
+    "PARTICIPANT_ID_POLICY",
+    "REQUIRE_PARTICIPANT_ID",
+    "PARTICIPANT_ID_ALLOWLIST_FILE",
+    "ENTRY_CODE_HIDDEN",
+    "ENTRY_CODE_HONEST",
+    "ENTRY_CODE_DISHONEST",
+    "TEST_CONDITION",
+    "ADMIN_TOKEN",
+    "DEBUG_LINKS",
+    "STUDY_CONTACT_EMAIL",
+    "COMPLETION_CODE",
+    "COMPLETION_REDIRECT_URL"
+  ]) {
+    delete process.env[key];
+  }
+  Object.assign(process.env, env);
+}
+
+const smokeRoot = path.join(os.tmpdir(), `group-deception-study2-smoke-${process.pid}-${Date.now()}`);
+fs.rmSync(smokeRoot, { recursive: true, force: true });
+applyTestEnv(makeBaseTestEnv({ DATA_DIR: path.join(smokeRoot, "sessions") }));
 
 const app = require("./index");
 const store = require("./store");
@@ -24,6 +78,52 @@ const study2 = require("../config/study2-income");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function testProductionConfigPollutionRegression() {
+  const keys = [
+    "ASSIGNMENT_MODE",
+    "PARTICIPANT_ID_POLICY",
+    "REQUIRE_PARTICIPANT_ID",
+    "PARTICIPANT_ID_ALLOWLIST_FILE",
+    "ENTRY_CODE_HIDDEN",
+    "ENTRY_CODE_HONEST",
+    "ENTRY_CODE_DISHONEST",
+    "TEST_CONDITION",
+    "ADMIN_TOKEN",
+    "DEBUG_LINKS",
+    "STUDY_CONTACT_EMAIL"
+  ];
+  const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, {
+    ASSIGNMENT_MODE: "controlled_link",
+    PARTICIPANT_ID_POLICY: "allowlist",
+    REQUIRE_PARTICIPANT_ID: "true",
+    PARTICIPANT_ID_ALLOWLIST_FILE: "fake-production-allowlist.json",
+    ENTRY_CODE_HIDDEN: "fake-production-hidden-entry",
+    ENTRY_CODE_HONEST: "fake-production-honest-entry",
+    ENTRY_CODE_DISHONEST: "fake-production-dishonest-entry",
+    TEST_CONDITION: "dishonest",
+    ADMIN_TOKEN: "fake-production-admin-token",
+    DEBUG_LINKS: "false",
+    STUDY_CONTACT_EMAIL: "production@example.invalid"
+  });
+  try {
+    const env = makeBaseTestEnv({ DATA_DIR: path.join(os.tmpdir(), "study2-pollution-regression") });
+    assert(env.ASSIGNMENT_MODE === "block", "base test env did not force block assignment");
+    assert(env.PARTICIPANT_ID_POLICY === "open", "base test env did not force open participant policy");
+    assert(env.REQUIRE_PARTICIPANT_ID === "false", "base test env did not disable required participant id");
+    assert(env.ADMIN_TOKEN === "dev-admin-token", "base test env did not force dev admin token");
+    assert(env.DEBUG_LINKS === "true", "base test env did not force debug links");
+    assert(!env.PARTICIPANT_ID_ALLOWLIST_FILE, "base test env inherited allowlist file");
+    assert(!env.ENTRY_CODE_HIDDEN && !env.ENTRY_CODE_HONEST && !env.ENTRY_CODE_DISHONEST, "base test env inherited entry codes");
+    assert(!env.TEST_CONDITION, "base test env inherited TEST_CONDITION");
+  } finally {
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  }
 }
 
 function request(server, method, requestPath, body, expectedStatus = 200, headers = {}) {
@@ -40,6 +140,11 @@ function request(server, method, requestPath, body, expectedStatus = 200, header
       let raw = "";
       res.on("data", (chunk) => { raw += chunk; });
       res.on("end", () => {
+        const expectJson = !requestPath.includes(".csv");
+        if (expectJson && !res.headers["content-type"]?.includes("application/json")) {
+          reject(new Error(`${method} ${requestPath} expected JSON, got ${res.headers["content-type"] || ""}: ${raw.slice(0, 200)}`));
+          return;
+        }
         const parsed = raw && res.headers["content-type"]?.includes("json") ? JSON.parse(raw) : raw;
         if (res.statusCode !== expectedStatus) {
           reject(new Error(`${method} ${requestPath} expected ${expectedStatus}, got ${res.statusCode}: ${raw}`));
@@ -47,6 +152,27 @@ function request(server, method, requestPath, body, expectedStatus = 200, header
           resolve(parsed);
         }
       });
+    });
+    req.on("error", reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+function requestRaw(server, method, requestPath, body, headers = {}) {
+  const payload = body === undefined ? null : JSON.stringify(body);
+  const { port } = server.address();
+  return new Promise((resolve, reject) => {
+    const req = http.request({
+      method,
+      hostname: "127.0.0.1",
+      port,
+      path: requestPath,
+      headers: payload ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload), ...headers } : headers
+    }, (res) => {
+      let raw = "";
+      res.on("data", (chunk) => { raw += chunk; });
+      res.on("end", () => resolve({ statusCode: res.statusCode, contentType: res.headers["content-type"] || "", body: raw }));
     });
     req.on("error", reject);
     if (payload) req.write(payload);
@@ -102,6 +228,23 @@ async function testMissingSessionHandling(server) {
   }
 }
 
+async function testApiNeverReturnsHtml(server) {
+  for (const probe of [
+    ["POST", "/api/not-a-real-endpoint", {}],
+    ["GET", "/api/not-a-real-endpoint", undefined],
+    ["GET", "/api/session/bad%3Cid%3E", undefined],
+    ["POST", "/not-a-real-mutation", {}]
+  ]) {
+    const result = await requestRaw(server, probe[0], probe[1], probe[2]);
+    assert(result.contentType.includes("application/json"), `${probe[0]} ${probe[1]} did not return JSON`);
+    assert(!result.body.includes("<!doctype") && !result.body.includes("<html"), `${probe[0]} ${probe[1]} returned HTML`);
+    const text = result.body.toLowerCase();
+    for (const leak of ["entry_code", "assignment_source", "entry_link_id", "admin_token", "ngrok", "sessions", "data\\\\", "data/"]) {
+      assert(!text.includes(leak), `${probe[0]} ${probe[1]} leaked ${leak}`);
+    }
+  }
+}
+
 async function createReadySession(server, config, condition, participantId) {
   process.env.TEST_CONDITION = condition;
   const created = await request(server, "POST", "/api/session", { participant_id: participantId });
@@ -122,12 +265,19 @@ async function runEffortToPeerRecords(server, config, condition, participantId) 
     current.numbers.forEach((number, index) => {
       answers[String(index)] = number % 2 === 0 ? "even" : "odd";
     });
-    const submitted = await request(server, "POST", `/api/session/${id}/effort/round`, {
+    const body = {
       round_index: round,
       answers,
       duration_ms: 0,
       started_at: "2000-01-01T00:00:00.000Z"
-    });
+    };
+    const submitted = await request(server, "POST", `/api/session/${id}/effort/round`, body);
+    const duplicate = await request(server, "POST", `/api/session/${id}/effort/round`, body);
+    const storedAfterDuplicate = await store.readSession(id);
+    assert(duplicate.duplicate === true, "duplicate effort round should return duplicate=true");
+    assert(duplicate.round.round_index === submitted.round.round_index, "duplicate effort round did not return saved round");
+    assert(storedAfterDuplicate.effort_rounds.length === round, "duplicate effort round changed saved round count");
+    assert(storedAfterDuplicate.effort_rounds.reduce((sum, item) => sum + (item.round_actual_income_cents ?? item.income_cents), 0) === storedAfterDuplicate.effort_rounds.slice(0, round).reduce((sum, item) => sum + (item.round_actual_income_cents ?? item.income_cents), 0), "duplicate effort round changed accumulated income");
     assert(Number.isInteger(submitted.round.income_cents), "effort income must be integer cents");
     assert(submitted.round.base_income_cents === study2.effortTask.numbersPerRound * study2.effortTask.incomePerCorrectCents, "base income cents mismatch");
     assert(submitted.round.speed_bonus_cents >= 0 && submitted.round.speed_bonus_cents <= study2.effortTask.speedBonusMaxCents, "speed bonus out of range");
@@ -197,6 +347,63 @@ function testStudy2DeterministicSeeds() {
   const recordsA = app._internal.buildStudy2PeerIncomeRecords(sessionA);
   const recordsAAgain = app._internal.buildStudy2PeerIncomeRecords(sessionA);
   assert(JSON.stringify(recordsA) === JSON.stringify(recordsAAgain), "Study 2 same seed should reproduce peer records");
+}
+
+function testDataDirLoadedBeforeStore() {
+  const root = path.join(os.tmpdir(), `group-deception-study2-env-${process.pid}-${Date.now()}`);
+  const dataDir = path.join(root, "custom-sessions");
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, ".env"), `DATA_DIR=${dataDir}\nDEBUG_LINKS=false\nSTUDY_CONTACT_EMAIL=123456@163.com\n`, "utf8");
+  const defaultDir = path.join(__dirname, "..", "data", "sessions");
+  const code = `
+    delete process.env.DATA_DIR;
+    process.env.NODE_ENV = "development";
+    process.env.DEBUG_LINKS = "false";
+    process.env.ASSIGNMENT_MODE = "block";
+    process.env.PARTICIPANT_ID_POLICY = "open";
+    process.env.REQUIRE_PARTICIPANT_ID = "false";
+    delete process.env.PARTICIPANT_ID_ALLOWLIST_FILE;
+    delete process.env.ENTRY_CODE_HIDDEN;
+    delete process.env.ENTRY_CODE_HONEST;
+    delete process.env.ENTRY_CODE_DISHONEST;
+    delete process.env.TEST_CONDITION;
+    const fs = require("fs");
+    const path = require("path");
+    const http = require("http");
+    const app = require(${JSON.stringify(path.join(__dirname, "index.js"))});
+    const store = require(${JSON.stringify(path.join(__dirname, "store.js"))});
+    function assert(condition, message) { if (!condition) throw new Error(message); }
+    function req(server) {
+      const payload = JSON.stringify({ participant_id: "env-s2-" + Date.now() });
+      return new Promise((resolve, reject) => {
+        const r = http.request({ method: "POST", hostname: "127.0.0.1", port: server.address().port, path: "/api/session", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } }, (res) => {
+          let raw = "";
+          res.on("data", (chunk) => raw += chunk);
+          res.on("end", () => res.statusCode === 200 ? resolve(JSON.parse(raw)) : reject(new Error(raw)));
+        });
+        r.on("error", reject);
+        r.write(payload);
+        r.end();
+      });
+    }
+    (async () => {
+      const server = app.listen(0);
+      try {
+        assert(store.DATA_DIR === ${JSON.stringify(dataDir)}, "store DATA_DIR did not use .env before module load");
+        const created = await req(server);
+        const expected = path.join(${JSON.stringify(dataDir)}, created.session.id + ".json");
+        const defaultFile = path.join(${JSON.stringify(defaultDir)}, created.session.id + ".json");
+        assert(fs.existsSync(expected), "session was not written to .env DATA_DIR");
+        assert(!fs.existsSync(defaultFile), "session was written to package default data/sessions");
+        console.log("Study 2 DATA_DIR load order check passed");
+      } finally {
+        server.close();
+      }
+    })().catch((error) => { console.error(error); process.exit(1); });
+  `;
+  const result = spawnSync(process.execPath, ["-e", code], { cwd: root, encoding: "utf8", env: makeBaseTestEnv({ DATA_DIR: undefined }) });
+  if (result.stdout) process.stdout.write(result.stdout);
+  assert(result.status === 0, result.stderr || "Study 2 DATA_DIR child failed");
 }
 
 async function completeAfterIncomeReport(server, config, id, actualIncomeCents) {
@@ -307,7 +514,7 @@ function testBlockAndConcurrency() {
       }
     })().catch((error) => { console.error(error); process.exit(1); });
   `;
-  const result = spawnSync(process.execPath, ["-e", code], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, ["-e", code], { encoding: "utf8", env: makeBaseTestEnv({ DATA_DIR: dataDir, DEBUG_LINKS: "false" }) });
   if (result.stdout) process.stdout.write(result.stdout);
   assert(result.status === 0, result.stderr || "block/concurrency child failed");
 }
@@ -400,7 +607,18 @@ function testControlledLinkAssignment() {
       }
     })().catch((error) => { console.error(error); process.exit(1); });
   `;
-  const result = spawnSync(process.execPath, ["-e", code], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, ["-e", code], {
+    encoding: "utf8",
+    env: makeBaseTestEnv({
+      DATA_DIR: dataDir,
+      ASSIGNMENT_MODE: "controlled_link",
+      PARTICIPANT_ID_POLICY: "open",
+      REQUIRE_PARTICIPANT_ID: "false",
+      ENTRY_CODE_HIDDEN: "s2-entry-a-test",
+      ENTRY_CODE_HONEST: "s2-entry-b-test",
+      ENTRY_CODE_DISHONEST: "s2-entry-c-test"
+    })
+  });
   if (result.stdout) process.stdout.write(result.stdout);
   assert(result.status === 0, result.stderr || "controlled_link child failed");
 }
@@ -412,7 +630,15 @@ function testParticipantAllowlistPolicy() {
     process.env.PARTICIPANT_ID_POLICY = "allowlist";
     process.env.PARTICIPANT_ID_ALLOWLIST_FILE = "missing.json";
     require(${JSON.stringify(path.join(__dirname, "index.js"))});
-  `], { encoding: "utf8" });
+  `], {
+    encoding: "utf8",
+    env: makeBaseTestEnv({
+      DATA_DIR: path.join(os.tmpdir(), `study2-invalid-allowlist-${process.pid}-${Date.now()}`),
+      ASSIGNMENT_MODE: "block",
+      PARTICIPANT_ID_POLICY: "allowlist",
+      PARTICIPANT_ID_ALLOWLIST_FILE: "missing.json"
+    })
+  });
   assert(invalidMode.status !== 0, "allowlist with block assignment should fail startup");
 
   const missingFile = spawnSync(process.execPath, ["-e", `
@@ -424,7 +650,18 @@ function testParticipantAllowlistPolicy() {
     process.env.PARTICIPANT_ID_POLICY = "allowlist";
     process.env.PARTICIPANT_ID_ALLOWLIST_FILE = "missing.json";
     require(${JSON.stringify(path.join(__dirname, "index.js"))});
-  `], { encoding: "utf8" });
+  `], {
+    encoding: "utf8",
+    env: makeBaseTestEnv({
+      DATA_DIR: path.join(os.tmpdir(), `study2-missing-allowlist-${process.pid}-${Date.now()}`),
+      ASSIGNMENT_MODE: "controlled_link",
+      PARTICIPANT_ID_POLICY: "allowlist",
+      ENTRY_CODE_HIDDEN: "s2-allow-a",
+      ENTRY_CODE_HONEST: "s2-allow-b",
+      ENTRY_CODE_DISHONEST: "s2-allow-c",
+      PARTICIPANT_ID_ALLOWLIST_FILE: "missing.json"
+    })
+  });
   assert(missingFile.status !== 0, "allowlist with missing file should fail startup");
 
   const root = path.join(os.tmpdir(), `group-deception-study2-allowlist-${process.pid}-${Date.now()}`);
@@ -490,7 +727,18 @@ function testParticipantAllowlistPolicy() {
       }
     })().catch((error) => { console.error(error); process.exit(1); });
   `;
-  const result = spawnSync(process.execPath, ["-e", code], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, ["-e", code], {
+    encoding: "utf8",
+    env: makeBaseTestEnv({
+      DATA_DIR: dataDir,
+      ASSIGNMENT_MODE: "controlled_link",
+      PARTICIPANT_ID_POLICY: "allowlist",
+      ENTRY_CODE_HIDDEN: "s2-allow-a-test",
+      ENTRY_CODE_HONEST: "s2-allow-b-test",
+      ENTRY_CODE_DISHONEST: "s2-allow-c-test",
+      PARTICIPANT_ID_ALLOWLIST_FILE: allowlistPath
+    })
+  });
   if (result.stdout) process.stdout.write(result.stdout);
   assert(result.status === 0, result.stderr || "participant allowlist child failed");
 }
@@ -532,9 +780,50 @@ function testBlockModeRejectsEntry() {
       }
     })().catch((error) => { console.error(error); process.exit(1); });
   `;
-  const result = spawnSync(process.execPath, ["-e", code], { encoding: "utf8" });
+  const result = spawnSync(process.execPath, ["-e", code], { encoding: "utf8", env: makeBaseTestEnv({ DATA_DIR: dataDir, DEBUG_LINKS: "false" }) });
   if (result.stdout) process.stdout.write(result.stdout);
   assert(result.status === 0, result.stderr || "block entry child failed");
+}
+
+function testFrontendSafeErrorMapping() {
+  const root = path.join(__dirname, "..");
+  const appJs = fs.readFileSync(path.join(root, "public/js/app.js"), "utf8");
+  const classList = { add() {}, remove() {}, contains() { return false; } };
+  const element = {
+    classList,
+    dataset: {},
+    textContent: "",
+    innerHTML: "",
+    value: "",
+    addEventListener() {},
+    querySelector() { return null; },
+    querySelectorAll() { return []; },
+    insertAdjacentHTML() {},
+    remove() {}
+  };
+  const context = {
+    console,
+    URLSearchParams,
+    window: {
+      __STUDY_SMOKE_TEST__: true,
+      location: { search: "" }
+    },
+    document: {
+      querySelector() { return element; },
+      querySelectorAll() { return []; }
+    }
+  };
+  context.window.window = context.window;
+  context.window.document = context.document;
+  vm.createContext(context);
+  vm.runInContext(appJs, context, { filename: "public/js/app.js" });
+  const hooks = context.window.__study2TestHooks;
+  assert(hooks, "Study 2 frontend test hooks missing");
+  const generic = hooks.SAVE_ERROR_MESSAGE;
+  assert(hooks.toParticipantMessage({ error: "Effort round requires effort_in_progress status" }) === generic, "Study 2 lifecycle error leaked to participant");
+  assert(!hooks.toParticipantMessage({ error: "Effort round requires effort_in_progress status" }).includes("Effort round"), "Study 2 English lifecycle error leaked");
+  const safe = "当前参与记录无法恢复。请联系研究团队获取新的参与链接后重新开始。";
+  assert(hooks.toParticipantMessage({ error: safe }) === safe, "Study 2 safe missing-session message was not preserved");
 }
 
 function staticChecks() {
@@ -550,7 +839,7 @@ function staticChecks() {
   const allText = [incomeJs, appJs, indexHtml, styleCss, surveyJs, peerConfig, studyConfig, measureConfig].join("\n");
   for (const file of listFiles(root, ".js")) {
     if (file.includes(`${path.sep}node_modules${path.sep}`)) continue;
-    const check = spawnSync(process.execPath, ["--check", file], { encoding: "utf8" });
+    const check = spawnSync(process.execPath, ["--check", file], { encoding: "utf8", env: makeBaseTestEnv({ DATA_DIR: path.join(os.tmpdir(), `study2-check-${process.pid}`) }) });
     assert(check.status === 0, `node --check failed for ${file}: ${check.stderr}`);
   }
   assert(incomeJs.includes("function renderIncomeReport"), "renderIncomeReport must be defined");
@@ -580,6 +869,10 @@ function staticChecks() {
   assert(!appJs.includes("INCOME_REPORT_STEP_CENTS") && !appJs.includes("clampCents") && !appJs.includes("reported-income-number"), "frontend income report slider sync/clamp must be removed");
   assert(appJs.includes("reported_income: input.value.trim()"), "frontend must submit typed income string");
   assert(appJs.includes("INCOME_REPORT_ERROR") && appJs.includes("\\u8bf7\\u8f93\\u5165\\u4e0d\\u5c0f\\u4e8e 0"), "frontend income validation error missing");
+  assert(!appJs.includes("response.json()"), "participant frontend must not call response.json() directly");
+  assert(appJs.includes("parseJsonResponse") && appJs.includes("Non-JSON API response") && appJs.includes("bodyPreview: text.slice(0, 200)"), "frontend JSON response guard missing");
+  assert(appJs.includes("toParticipantMessage") && appJs.includes("SAFE_SERVER_MESSAGES") && appJs.includes("__STUDY_SMOKE_TEST__"), "frontend safe error mapping missing");
+  assert(!appJs.includes("new Error(data.message || data.error"), "frontend must not surface arbitrary backend messages");
   assert((appJs.match(/debrief-viewed/g) || []).length === 1, "frontend should call debrief-viewed only once");
   assert(appJs.includes("复制参与编号") && appJs.includes("已复制"), "copy participant id UI missing");
   assert(appJs.includes("参与信息") && appJs.includes("研究联系邮箱") && appJs.includes("123456@163.com"), "participant info card missing");
@@ -630,8 +923,11 @@ function listFiles(dir, extension, result = []) {
 }
 
 async function main() {
+  testProductionConfigPollutionRegression();
   staticChecks();
+  testDataDirLoadedBeforeStore();
   testStudy2DeterministicSeeds();
+  testFrontendSafeErrorMapping();
   testBlockAndConcurrency();
   testControlledLinkAssignment();
   testParticipantAllowlistPolicy();
@@ -645,6 +941,7 @@ async function main() {
     assert(health.protocol_version === "peer-reporting-v2", "health protocol_version mismatch");
     assertPublicConfig(config);
     await testMissingSessionHandling(server);
+    await testApiNeverReturnsHtml(server);
     await testAcceptedIncomeAmounts(server, config);
     const dishonest = await runEffortToPeerRecords(server, config, "dishonest", `flow-s2-dishonest-${Date.now()}`);
     dishonest.records.records.forEach((record) => assert(record.reported_income_cents < record.actual_income_cents, "dishonest peer must underreport"));

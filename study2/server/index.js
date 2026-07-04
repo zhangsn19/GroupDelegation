@@ -4,10 +4,7 @@ const path = require("path");
 const crypto = require("crypto");
 const { VERSION, CONDITIONS, STATUS_ORDER, MEMBERS } = require("../config/common");
 const study2 = require("../config/study2-income");
-const store = require("./store");
 const exporters = require("./export");
-
-const app = express();
 
 function loadDotEnv() {
   const envPath = path.join(process.cwd(), ".env");
@@ -22,6 +19,9 @@ function loadDotEnv() {
 }
 
 loadDotEnv();
+
+const store = require("./store");
+const app = express();
 
 const PORT = Number(process.env.PORT || 3001);
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "dev-admin-token";
@@ -819,6 +819,12 @@ app.post("/api/session/:id/effort/round", asyncHandler(async (req, res) => {
   const roundIndex = Number(req.body.round_index);
   const answers = req.body.answers || {};
   const session = await store.updateSession(req.params.id, (draft) => {
+    const existingRound = (draft.effort_rounds || []).find((round) => Number(round.round_index) === roundIndex);
+    if (existingRound) {
+      draft._lastRound = existingRound;
+      draft._duplicateRound = true;
+      return draft;
+    }
     if (draft.status !== "effort_in_progress") throw new Error("Effort round requires effort_in_progress status");
     const expectedRound = draft.effort_rounds.length + 1;
     if (roundIndex !== expectedRound) throw new Error(`Expected effort round ${expectedRound}, received ${roundIndex}`);
@@ -901,9 +907,11 @@ app.post("/api/session/:id/effort/round", asyncHandler(async (req, res) => {
     return draft;
   });
   const lastRound = session._lastRound;
+  const duplicate = Boolean(session._duplicateRound);
   delete session._lastRound;
+  delete session._duplicateRound;
   await store.writeSession(session);
-  res.json({ session: publicSession(session), round: lastRound, current: currentEffortPayload(session) });
+  res.json({ session: publicSession(session), duplicate, round: lastRound, current: currentEffortPayload(session) });
 }));
 
 app.post("/api/session/:id/income-viewed", asyncHandler(async (req, res) => {
@@ -1104,6 +1112,15 @@ app.get("/api/admin/export/study2_effort_rounds.csv", requireAdmin, asyncHandler
 app.get("/api/admin/export/study2_income_reports.csv", requireAdmin, asyncHandler(async (req, res) => {
   res.type("text/csv").send(exporters.incomeReportsCsv(filterSessions(await store.listSessions(), req.query)));
 }));
+
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: "API endpoint not found" });
+});
+
+app.use((req, res, next) => {
+  if (req.method !== "GET") return res.status(404).json({ error: "Endpoint not found" });
+  next();
+});
 
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "..", "public", "index.html"));

@@ -4,7 +4,6 @@ const path = require("path");
 const crypto = require("crypto");
 const { VERSION, STUDIES, CONDITIONS, STATUS_ORDER, MEMBERS } = require("../config/common");
 const study1 = require("../config/study1-dice");
-const store = require("./store");
 const exporters = require("./export");
 
 function loadDotEnv() {
@@ -21,6 +20,7 @@ function loadDotEnv() {
 
 loadDotEnv();
 
+const store = require("./store");
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "dev-admin-token";
@@ -44,14 +44,6 @@ const COMPLETION_CODE = process.env.COMPLETION_CODE || "";
 const COMPLETION_REDIRECT_URL = process.env.COMPLETION_REDIRECT_URL || "";
 const STIMULUS_VERSION = "randomized-stimuli-v1";
 const STUDY1_DICE_MULTISET = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5];
-const STUDY1_DISHONEST_REPORTS = {
-  1: [3, 4, 5, 6],
-  2: [4, 5, 5, 6],
-  3: [5, 5, 6, 6],
-  4: [5, 5, 6, 6],
-  5: [6, 6, 6, 6]
-};
-
 app.use(express.json({ limit: "1mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
 
@@ -335,13 +327,19 @@ function study1VisibleText(name, value) {
   return `${name}\u5df2\u5411\u7fa4\u804a AI \u63d0\u4ea4\uff1a${value}`;
 }
 
+function randomDishonestReport(trueValue, random) {
+  const min = trueValue + 1;
+  const optionCount = 7 - min;
+  return min + Math.floor(random() * optionCount);
+}
+
 function createStudy1Stimuli(condition, seed) {
   const diceSequence = seededShuffle(STUDY1_DICE_MULTISET, createSeededRandom(seed, "study1-dice"));
   const peerDisplayOrder = seededShuffle(peerNames(), createSeededRandom(seed, "study1-peer-order"));
   const assignmentRandom = createSeededRandom(seed, "study1-dishonest-assignment");
   const peerRecordsByRound = diceSequence.map((trueValue, roundIndex) => {
     const roundNumber = roundIndex + 1;
-    const dishonestReports = seededShuffle(STUDY1_DISHONEST_REPORTS[trueValue], assignmentRandom);
+    const dishonestReports = peerDisplayOrder.map(() => randomDishonestReport(trueValue, assignmentRandom));
     const peerRecords = peerDisplayOrder.map((name, index) => {
       const underlyingValue = condition === "dishonest" ? dishonestReports[index] : trueValue;
       if (condition === "hidden") {
@@ -392,10 +390,10 @@ function sessionPeerRecordsByRound(session) {
 
 function publicStudy1PeerRecords(session, peerRecords = []) {
   if (session.condition !== "hidden") return peerRecords;
-  return peerRecords.map(({ underlying_reported_value, ...record }) => ({
-    ...record,
-    reportedValue: null,
-    visibility: "hidden"
+  return peerRecords.map((record) => ({
+    name: record.name,
+    visibility: "hidden",
+    text: record.text
   }));
 }
 
@@ -972,6 +970,15 @@ app.get("/api/admin/export/study2_effort_rounds.csv", requireAdmin, (req, res) =
 
 app.get("/api/admin/export/study2_income_reports.csv", requireAdmin, (req, res) => {
   res.type("text/csv").send(exporters.emptyCsv(["session_id", "condition", "actual_income", "reported_income", "underreport_amount", "underreport_ratio", "decision_duration_ms"]));
+});
+
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: "API endpoint not found" });
+});
+
+app.use((req, res, next) => {
+  if (req.method !== "GET") return res.status(404).json({ error: "Endpoint not found" });
+  next();
 });
 
 app.get("*", (req, res) => {

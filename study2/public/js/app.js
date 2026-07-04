@@ -9,6 +9,16 @@
   const content = document.querySelector("#experiment-content");
   const phaseIndicator = document.querySelector("#phase-indicator");
   const INCOME_REPORT_ERROR = "\u8bf7\u8f93\u5165\u4e0d\u5c0f\u4e8e 0 \u7684\u91d1\u989d\uff0c\u6700\u591a\u4fdd\u7559\u4e24\u4f4d\u5c0f\u6570\u3002";
+  const SAVE_ERROR_MESSAGE = "\u5f53\u524d\u64cd\u4f5c\u6682\u65f6\u672a\u80fd\u4fdd\u5b58\uff0c\u8bf7\u5237\u65b0\u9875\u9762\u540e\u91cd\u8bd5\uff1b\u82e5\u95ee\u9898\u6301\u7eed\uff0c\u8bf7\u8054\u7cfb\u7814\u7a76\u56e2\u961f\u3002";
+  const SAFE_SERVER_MESSAGES = new Set([
+    INCOME_REPORT_ERROR,
+    "\u5f53\u524d\u53c2\u4e0e\u8bb0\u5f55\u65e0\u6cd5\u6062\u590d\u3002\u8bf7\u8054\u7cfb\u7814\u7a76\u56e2\u961f\u83b7\u53d6\u65b0\u7684\u53c2\u4e0e\u94fe\u63a5\u540e\u91cd\u65b0\u5f00\u59cb\u3002",
+    "\u53c2\u4e0e\u7f16\u53f7\u7f3a\u5931\u3002\u8bf7\u8fd4\u56de\u62db\u52df\u5e73\u53f0\u540e\u901a\u8fc7\u539f\u59cb\u7814\u7a76\u94fe\u63a5\u8fdb\u5165\u3002",
+    "\u53c2\u4e0e\u7f16\u53f7\u683c\u5f0f\u65e0\u6548\u3002\u8bf7\u4f7f\u7528\u7814\u7a76\u56e2\u961f\u53d1\u653e\u7684\u539f\u59cb\u94fe\u63a5\u3002",
+    "\u8be5\u53c2\u4e0e\u7f16\u53f7\u4e0d\u662f\u6709\u6548\u7684\u7814\u7a76\u53c2\u4e0e\u7f16\u53f7\u3002\u8bf7\u4f7f\u7528\u7814\u7a76\u56e2\u961f\u53d1\u653e\u7684\u539f\u59cb\u94fe\u63a5\u3002",
+    "\u8be5\u53c2\u4e0e\u7f16\u53f7\u4e0e\u5f53\u524d\u7814\u7a76\u5165\u53e3\u4e0d\u5339\u914d\u3002\u8bf7\u4f7f\u7528\u7814\u7a76\u56e2\u961f\u53d1\u653e\u7684\u539f\u59cb\u94fe\u63a5\u3002",
+    "\u8bf7\u68c0\u67e5\u4ee5\u4e0b\u4fe1\u606f\uff1a"
+  ]);
   const entryCode = (params.get("entry") || "").trim();
     const participantId = (
     params.get("participant_id") ||
@@ -40,14 +50,48 @@
       ...options,
       body: options.body ? JSON.stringify(options.body) : undefined
     });
-    const data = await response.json();
+    const data = await parseJsonResponse(response, path);
     if (!response.ok) {
-      const error = new Error(data.message || data.error || "请求失败");
+      const error = new Error(toParticipantMessage(data));
       error.data = data;
       throw error;
     }
-    if (!response.ok) throw new Error(data.error || "请求失败");
     return data;
+  }
+
+  async function parseJsonResponse(response, endpoint) {
+    const contentType = response.headers.get("content-type") || "";
+    const text = await response.text();
+    if (!contentType.toLowerCase().includes("application/json")) {
+      console.error("Non-JSON API response", {
+        endpoint,
+        status: response.status,
+        contentType,
+        bodyPreview: text.slice(0, 200)
+      });
+      throw new Error(SAVE_ERROR_MESSAGE);
+    }
+    try {
+      return text ? JSON.parse(text) : {};
+    } catch (error) {
+      console.error("Invalid JSON API response", {
+        endpoint,
+        status: response.status,
+        contentType,
+        bodyPreview: text.slice(0, 200)
+      });
+      throw new Error(SAVE_ERROR_MESSAGE);
+    }
+  }
+
+  function toParticipantMessage(data = {}) {
+    const candidate = data.message || data.error || "";
+    return SAFE_SERVER_MESSAGES.has(candidate) ? candidate : SAVE_ERROR_MESSAGE;
+  }
+
+  if (window.__STUDY_SMOKE_TEST__) {
+    window.__study2TestHooks = { toParticipantMessage, SAVE_ERROR_MESSAGE };
+    return;
   }
 
   function showScreen(name) {
@@ -440,7 +484,7 @@
       renderDebrief();
     } catch (error) {
       window.Survey.showFieldErrors?.(content, error.data?.field_errors || {});
-      setError(error.data?.message || error);
+      setError(error);
     }
   }
 
