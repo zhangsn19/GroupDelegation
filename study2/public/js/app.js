@@ -8,7 +8,7 @@
   };
   const content = document.querySelector("#experiment-content");
   const phaseIndicator = document.querySelector("#phase-indicator");
-  const INCOME_REPORT_STEP_CENTS = 10;
+  const INCOME_REPORT_ERROR = "\u8bf7\u8f93\u5165\u4e0d\u5c0f\u4e8e 0 \u7684\u91d1\u989d\uff0c\u6700\u591a\u4fdd\u7559\u4e24\u4f4d\u5c0f\u6570\u3002";
   const entryCode = (params.get("entry") || "").trim();
     const participantId = (
     params.get("participant_id") ||
@@ -142,7 +142,7 @@
     else if (state.session.status === "effort_completed") renderActualIncome();
     else if (state.session.status === "income_viewed") await renderPeerRecords();
     else if (state.session.status === "peer_records_viewed") {
-      state.selectedIncomeCents = state.actualIncomeCents;
+      state.selectedIncomeCents = null;
       renderIncomeReport();
     } else if (state.session.status === "income_report_completed") renderPostSurvey();
     else if (state.session.status === "post_survey_completed") renderExperience();
@@ -340,7 +340,7 @@
     setSession(data.session);
     state.actualIncome = data.actual_income;
     state.actualIncomeCents = data.session.actual_income_cents ?? Math.round(data.actual_income * 100);
-    state.selectedIncomeCents = state.actualIncomeCents;
+    state.selectedIncomeCents = null;
     renderIncomeReport();
   }
 
@@ -355,6 +355,15 @@
   async function submitIncomeReport() {
     if (state.incomeSubmitting) return;
     clearError();
+    const input = content.querySelector("#reported-income");
+    const parsed = parseIncomeInputValue(input?.value);
+    if (!parsed.valid) {
+      state.selectedIncomeCents = null;
+      updateIncomePreview();
+      setError(INCOME_REPORT_ERROR);
+      return;
+    }
+    state.selectedIncomeCents = parsed.cents;
     state.incomeSubmitting = true;
     const submitButton = content.querySelector("[data-action='submit-income-report']");
     if (submitButton) submitButton.disabled = true;
@@ -362,7 +371,7 @@
       const data = await api(`/api/session/${state.session.id}/income-report`, {
         method: "POST",
         body: {
-          reported_income_cents: state.selectedIncomeCents
+          reported_income: input.value.trim()
         }
       });
       setSession(data.session);
@@ -538,22 +547,17 @@
   document.querySelector("#btn-consent-decline").addEventListener("click", () => showScreen("landing"));
 
   content.addEventListener("input", (event) => {
-    if (event.target.id === "reported-income" || event.target.id === "reported-income-number") {
-      if (event.target.id === "reported-income") {
-        state.selectedIncomeCents = clampCents(Number(event.target.value));
-      } else {
-        state.selectedIncomeCents = clampCents(Math.round(Number(event.target.value || 0) * 100));
-      }
-      const range = content.querySelector("#reported-income");
-      const number = content.querySelector("#reported-income-number");
-      if (range) range.value = state.selectedIncomeCents;
-      if (number) number.value = (state.selectedIncomeCents / 100).toFixed(2);
+    if (event.target.id === "reported-income") {
+      const parsed = parseIncomeInputValue(event.target.value);
+      state.selectedIncomeCents = parsed.valid ? parsed.cents : null;
       updateIncomePreview();
     }
   });
 
   function updateIncomePreview() {
     const preview = window.Study2Income.incomePreview(state.actualIncomeCents, state.selectedIncomeCents);
+    const submitButton = content.querySelector("[data-action='submit-income-report']");
+    const valid = Number.isInteger(state.selectedIncomeCents) && state.selectedIncomeCents >= 0;
     const fields = {
       actual: preview.actual,
       reported: preview.reported,
@@ -562,14 +566,24 @@
     };
     Object.entries(fields).forEach(([key, value]) => {
       const node = content.querySelector(`[data-preview-field="${key}"]`);
-      if (node) node.textContent = (Number(value || 0) / 100).toFixed(2);
+      if (!node) return;
+      if (key !== "actual" && !valid) node.textContent = "—";
+      else if (key === "actual") node.textContent = (Number(value || 0) / 100).toFixed(2);
+      else node.textContent = `￥${(Number(value || 0) / 100).toFixed(2)}`;
     });
+    if (submitButton) submitButton.disabled = !valid;
   }
 
-  function clampCents(value) {
-    if (!Number.isFinite(value)) return 0;
-    const rounded = Math.round(value / INCOME_REPORT_STEP_CENTS) * INCOME_REPORT_STEP_CENTS;
-    return Math.max(0, Math.min(state.actualIncomeCents, rounded));
+  function parseIncomeInputValue(value) {
+    const text = String(value ?? "").trim();
+    if (!/^\d+(\.\d{1,2})?$/.test(text)) return { valid: false, cents: null };
+    const [yuan, fraction = ""] = text.split(".");
+    const cents = Number(yuan) * 100 + Number(fraction.padEnd(2, "0"));
+    if (!Number.isSafeInteger(cents) || cents < 0) return { valid: false, cents: null };
+    return {
+      valid: true,
+      cents
+    };
   }
 
   content.addEventListener("click", async (event) => {

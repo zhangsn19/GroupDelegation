@@ -92,6 +92,15 @@ function assertPublicConfig(config) {
   assert(f2.prompt.includes("请说明；若没有或不想补充，也可留空。"), "F2 final text mismatch");
 }
 
+async function testMissingSessionHandling(server) {
+  const missing = await request(server, "GET", "/api/session/legal-missing-study1", undefined, 410);
+  const text = JSON.stringify(missing);
+  assert(missing.error === "当前参与记录无法恢复。请联系研究团队获取新的参与链接后重新开始。", "missing session message mismatch");
+  for (const leak of ["ENOENT", "/tmp", "sessions", "data\\\\", "no such file", ".json"]) {
+    assert(!text.includes(leak), `missing session leaked ${leak}`);
+  }
+}
+
 async function createReadySession(server, config, condition, participantId) {
   process.env.TEST_CONDITION = condition;
   const created = await request(server, "POST", "/api/session", { participant_id: participantId });
@@ -325,6 +334,96 @@ function testControlledLinkAssignment() {
   assert(result.status === 0, result.stderr || "controlled_link child failed");
 }
 
+function testParticipantAllowlistPolicy() {
+  const invalidMode = spawnSync(process.execPath, ["-e", `
+    process.env.NODE_ENV = "development";
+    process.env.ASSIGNMENT_MODE = "block";
+    process.env.PARTICIPANT_ID_POLICY = "allowlist";
+    process.env.PARTICIPANT_ID_ALLOWLIST_FILE = "missing.json";
+    require(${JSON.stringify(path.join(__dirname, "index.js"))});
+  `], { encoding: "utf8" });
+  assert(invalidMode.status !== 0, "allowlist with block assignment should fail startup");
+
+  const missingFile = spawnSync(process.execPath, ["-e", `
+    process.env.NODE_ENV = "development";
+    process.env.ASSIGNMENT_MODE = "controlled_link";
+    process.env.ENTRY_CODE_HIDDEN = "s1-allow-a";
+    process.env.ENTRY_CODE_HONEST = "s1-allow-b";
+    process.env.ENTRY_CODE_DISHONEST = "s1-allow-c";
+    process.env.PARTICIPANT_ID_POLICY = "allowlist";
+    process.env.PARTICIPANT_ID_ALLOWLIST_FILE = "missing.json";
+    require(${JSON.stringify(path.join(__dirname, "index.js"))});
+  `], { encoding: "utf8" });
+  assert(missingFile.status !== 0, "allowlist with missing file should fail startup");
+
+  const root = path.join(os.tmpdir(), `group-deception-study1-allowlist-${process.pid}-${Date.now()}`);
+  const dataDir = path.join(root, "sessions");
+  const allowlistPath = path.join(root, "allowlist.json");
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(allowlistPath, JSON.stringify([
+    { participant_id: "GD-S1-K7M4Q2", entry_link_id: "A" },
+    { participant_id: "GD-S1-P8N6R1", entry_link_id: "B" }
+  ]), "utf8");
+  const code = `
+    process.env.NODE_ENV = "development";
+    process.env.DEBUG_LINKS = "true";
+    process.env.ASSIGNMENT_MODE = "controlled_link";
+    process.env.ENTRY_CODE_HIDDEN = "s1-allow-a-" + Date.now();
+    process.env.ENTRY_CODE_HONEST = "s1-allow-b-" + Date.now();
+    process.env.ENTRY_CODE_DISHONEST = "s1-allow-c-" + Date.now();
+    process.env.PARTICIPANT_ID_POLICY = "allowlist";
+    process.env.PARTICIPANT_ID_ALLOWLIST_FILE = ${JSON.stringify(allowlistPath)};
+    process.env.STUDY_CONTACT_EMAIL = "123456@163.com";
+    process.env.DATA_DIR = ${JSON.stringify(dataDir)};
+    const http = require("http");
+    const app = require(${JSON.stringify(path.join(__dirname, "index.js"))});
+    const store = require(${JSON.stringify(path.join(__dirname, "store.js"))});
+    function assert(condition, message) { if (!condition) throw new Error(message); }
+    function req(server, body, expectedStatus = 200, requestPath = "/api/session") {
+      const payload = body === undefined ? null : JSON.stringify(body);
+      return new Promise((resolve, reject) => {
+        const r = http.request({ method: requestPath === "/api/config" ? "GET" : "POST", hostname: "127.0.0.1", port: server.address().port, path: requestPath, headers: payload ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } : {} }, (res) => {
+          let raw = "";
+          res.on("data", (chunk) => raw += chunk);
+          res.on("end", () => {
+            const parsed = raw ? JSON.parse(raw) : {};
+            if (res.statusCode !== expectedStatus) reject(new Error("expected " + expectedStatus + ", got " + res.statusCode + ": " + raw));
+            else resolve(parsed);
+          });
+        });
+        r.on("error", reject);
+        if (payload) r.write(payload);
+        r.end();
+      });
+    }
+    (async () => {
+      const server = app.listen(0);
+      try {
+        const config = await req(server, undefined, 200, "/api/config");
+        assert(!JSON.stringify(config).includes("allowlist"), "public config leaked allowlist internals");
+        const missing = await req(server, { entry: process.env.ENTRY_CODE_HIDDEN }, 400);
+        const badFormat = await req(server, { participant_id: "bad-format", entry: process.env.ENTRY_CODE_HIDDEN }, 400);
+        const notListed = await req(server, { participant_id: "GD-S1-Z9Y8X7", entry: process.env.ENTRY_CODE_HIDDEN }, 403);
+        const wrongEntry = await req(server, { participant_id: "GD-S1-K7M4Q2", entry: process.env.ENTRY_CODE_HONEST }, 403);
+        assert(missing.error && badFormat.error && notListed.error && wrongEntry.error, "allowlist errors missing messages");
+        const created = await req(server, { participant_id: "GD-S1-K7M4Q2", entry: process.env.ENTRY_CODE_HIDDEN });
+        const resumed = await req(server, { participant_id: "GD-S1-K7M4Q2", entry: process.env.ENTRY_CODE_HIDDEN });
+        assert(created.session.id === resumed.session.id, "allowlisted participant did not resume same session");
+        const sessions = (await store.listSessions()).filter((session) => session.participant_id === "GD-S1-K7M4Q2");
+        assert(sessions.length === 1, "allowlist created duplicate sessions");
+        const raw = await store.readSession(created.session.id);
+        assert(raw.assignment_source === "controlled_link" && raw.entry_link_id === "A", "allowlist entry assignment mismatch");
+        console.log("Study 1 participant allowlist checks passed");
+      } finally {
+        server.close();
+      }
+    })().catch((error) => { console.error(error); process.exit(1); });
+  `;
+  const result = spawnSync(process.execPath, ["-e", code], { encoding: "utf8" });
+  if (result.stdout) process.stdout.write(result.stdout);
+  assert(result.status === 0, result.stderr || "participant allowlist child failed");
+}
+
 function testBlockModeRejectsEntry() {
   const root = path.join(os.tmpdir(), `group-deception-study1-block-entry-${process.pid}-${Date.now()}`);
   const dataDir = path.join(root, "sessions");
@@ -432,6 +531,7 @@ async function main() {
   staticChecks();
   testBlockAndConcurrency();
   testControlledLinkAssignment();
+  testParticipantAllowlistPolicy();
   testBlockModeRejectsEntry();
   const server = app.listen(0);
   try {
@@ -441,6 +541,7 @@ async function main() {
     assert(health.study_version === "study1-v1.1.0", "health study_version mismatch");
     assert(health.protocol_version === "peer-reporting-v2", "health protocol_version mismatch");
     assertPublicConfig(config);
+    await testMissingSessionHandling(server);
     for (const condition of ["hidden", "honest", "dishonest"]) {
       const ready = await createReadySession(server, config, condition, `flow-s1-${condition}-${Date.now()}`);
       await runDiceTask(server, ready.id, ready.current, condition);

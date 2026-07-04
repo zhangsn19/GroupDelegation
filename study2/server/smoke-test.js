@@ -93,6 +93,15 @@ function assertPublicConfig(config) {
   assert(f2.prompt.includes("请说明；若没有或不想补充，也可留空。"), "F2 final text mismatch");
 }
 
+async function testMissingSessionHandling(server) {
+  const missing = await request(server, "GET", "/api/session/legal-missing-study2", undefined, 410);
+  const text = JSON.stringify(missing);
+  assert(missing.error === "当前参与记录无法恢复。请联系研究团队获取新的参与链接后重新开始。", "missing session message mismatch");
+  for (const leak of ["ENOENT", "/tmp", "sessions", "data\\\\", "no such file", ".json"]) {
+    assert(!text.includes(leak), `missing session leaked ${leak}`);
+  }
+}
+
 async function createReadySession(server, config, condition, participantId) {
   process.env.TEST_CONDITION = condition;
   const created = await request(server, "POST", "/api/session", { participant_id: participantId });
@@ -142,14 +151,17 @@ async function runEffortToPeerRecords(server, config, condition, participantId) 
 }
 
 async function completeAfterIncomeReport(server, config, id, actualIncomeCents) {
-  await request(server, "POST", `/api/session/${id}/income-report`, { reported_income_cents: actualIncomeCents + 1 }, 409);
-  await request(server, "POST", `/api/session/${id}/income-report`, { reported_income_cents: actualIncomeCents - 1 }, 409);
-  const report = await request(server, "POST", `/api/session/${id}/income-report`, { reported_income_cents: actualIncomeCents });
-  assert(report.income_report.reported_income_cents === actualIncomeCents, "income report did not save reported cents");
-  assert(report.income_report.deduction_cents === Math.round(actualIncomeCents * 0.5), "deduction formula mismatch");
+  for (const badValue of ["", "-1", "abc", "1.234"]) {
+    const invalid = await request(server, "POST", `/api/session/${id}/income-report`, { reported_income: badValue }, 400);
+    assert(invalid.error === "请输入不小于 0 的金额，最多保留两位小数。", "invalid income report error mismatch");
+  }
+  const report = await request(server, "POST", `/api/session/${id}/income-report`, { reported_income: "100.23" });
+  assert(report.income_report.reported_income_cents === 10023, "income report did not save high reported cents");
+  assert(report.income_report.deduction_cents === Math.round(10023 * 0.5), "deduction formula mismatch");
   assert(report.income_report.retained_reward_cents === actualIncomeCents - report.income_report.deduction_cents, "retained reward formula mismatch");
+  assert(report.income_report.retained_reward_cents < 0, "high report should allow negative retained reward");
   assert(report.income_report.selection_started_at, "income report selection start missing");
-  await request(server, "POST", `/api/session/${id}/income-report`, { reported_income_cents: actualIncomeCents }, 409);
+  await request(server, "POST", `/api/session/${id}/income-report`, { reported_income: "100.23" }, 409);
   await request(server, "POST", `/api/session/${id}/post-survey`, { responses: makeResponses(config.postSurveyItems) });
   await request(server, "POST", `/api/session/${id}/experience`, { responses: makeResponses(config.experienceItems) });
   const invalidAge = makeResponses(config.demographicsItems);
@@ -180,6 +192,15 @@ async function completeAfterIncomeReport(server, config, id, actualIncomeCents) 
     assert(effortCsv.split("\n")[0].includes(column), `effort CSV missing ${column}`);
   }
   return completed.session;
+}
+
+async function testAcceptedIncomeAmounts(server, config) {
+  for (const amount of ["0.00", "0.01", "25.43"]) {
+    const probe = await runEffortToPeerRecords(server, config, "hidden", `income-amount-s2-${amount.replace(".", "-")}-${Date.now()}`);
+    const report = await request(server, "POST", `/api/session/${probe.id}/income-report`, { reported_income: amount });
+    assert(report.income_report.reported_income === Number(amount), `income amount ${amount} was not accepted`);
+  }
+  console.log("Study 2 income report accepted free decimal amounts: 0.00, 0.01, 25.43, 100.23");
 }
 
 function testBlockAndConcurrency() {
@@ -329,6 +350,96 @@ function testControlledLinkAssignment() {
   assert(result.status === 0, result.stderr || "controlled_link child failed");
 }
 
+function testParticipantAllowlistPolicy() {
+  const invalidMode = spawnSync(process.execPath, ["-e", `
+    process.env.NODE_ENV = "development";
+    process.env.ASSIGNMENT_MODE = "block";
+    process.env.PARTICIPANT_ID_POLICY = "allowlist";
+    process.env.PARTICIPANT_ID_ALLOWLIST_FILE = "missing.json";
+    require(${JSON.stringify(path.join(__dirname, "index.js"))});
+  `], { encoding: "utf8" });
+  assert(invalidMode.status !== 0, "allowlist with block assignment should fail startup");
+
+  const missingFile = spawnSync(process.execPath, ["-e", `
+    process.env.NODE_ENV = "development";
+    process.env.ASSIGNMENT_MODE = "controlled_link";
+    process.env.ENTRY_CODE_HIDDEN = "s2-allow-a";
+    process.env.ENTRY_CODE_HONEST = "s2-allow-b";
+    process.env.ENTRY_CODE_DISHONEST = "s2-allow-c";
+    process.env.PARTICIPANT_ID_POLICY = "allowlist";
+    process.env.PARTICIPANT_ID_ALLOWLIST_FILE = "missing.json";
+    require(${JSON.stringify(path.join(__dirname, "index.js"))});
+  `], { encoding: "utf8" });
+  assert(missingFile.status !== 0, "allowlist with missing file should fail startup");
+
+  const root = path.join(os.tmpdir(), `group-deception-study2-allowlist-${process.pid}-${Date.now()}`);
+  const dataDir = path.join(root, "sessions");
+  const allowlistPath = path.join(root, "allowlist.json");
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(allowlistPath, JSON.stringify([
+    { participant_id: "GD-S2-K7M4Q2", entry_link_id: "A" },
+    { participant_id: "GD-S2-P8N6R1", entry_link_id: "B" }
+  ]), "utf8");
+  const code = `
+    process.env.NODE_ENV = "development";
+    process.env.DEBUG_LINKS = "true";
+    process.env.ASSIGNMENT_MODE = "controlled_link";
+    process.env.ENTRY_CODE_HIDDEN = "s2-allow-a-" + Date.now();
+    process.env.ENTRY_CODE_HONEST = "s2-allow-b-" + Date.now();
+    process.env.ENTRY_CODE_DISHONEST = "s2-allow-c-" + Date.now();
+    process.env.PARTICIPANT_ID_POLICY = "allowlist";
+    process.env.PARTICIPANT_ID_ALLOWLIST_FILE = ${JSON.stringify(allowlistPath)};
+    process.env.STUDY_CONTACT_EMAIL = "123456@163.com";
+    process.env.DATA_DIR = ${JSON.stringify(dataDir)};
+    const http = require("http");
+    const app = require(${JSON.stringify(path.join(__dirname, "index.js"))});
+    const store = require(${JSON.stringify(path.join(__dirname, "store.js"))});
+    function assert(condition, message) { if (!condition) throw new Error(message); }
+    function req(server, body, expectedStatus = 200, requestPath = "/api/session") {
+      const payload = body === undefined ? null : JSON.stringify(body);
+      return new Promise((resolve, reject) => {
+        const r = http.request({ method: requestPath === "/api/config" ? "GET" : "POST", hostname: "127.0.0.1", port: server.address().port, path: requestPath, headers: payload ? { "content-type": "application/json", "content-length": Buffer.byteLength(payload) } : {} }, (res) => {
+          let raw = "";
+          res.on("data", (chunk) => raw += chunk);
+          res.on("end", () => {
+            const parsed = raw ? JSON.parse(raw) : {};
+            if (res.statusCode !== expectedStatus) reject(new Error("expected " + expectedStatus + ", got " + res.statusCode + ": " + raw));
+            else resolve(parsed);
+          });
+        });
+        r.on("error", reject);
+        if (payload) r.write(payload);
+        r.end();
+      });
+    }
+    (async () => {
+      const server = app.listen(0);
+      try {
+        const config = await req(server, undefined, 200, "/api/config");
+        assert(!JSON.stringify(config).includes("allowlist"), "public config leaked allowlist internals");
+        const missing = await req(server, { entry: process.env.ENTRY_CODE_HIDDEN }, 400);
+        const badFormat = await req(server, { participant_id: "bad-format", entry: process.env.ENTRY_CODE_HIDDEN }, 400);
+        const notListed = await req(server, { participant_id: "GD-S2-Z9Y8X7", entry: process.env.ENTRY_CODE_HIDDEN }, 403);
+        const wrongEntry = await req(server, { participant_id: "GD-S2-K7M4Q2", entry: process.env.ENTRY_CODE_HONEST }, 403);
+        assert(missing.error && badFormat.error && notListed.error && wrongEntry.error, "allowlist errors missing messages");
+        const created = await req(server, { participant_id: "GD-S2-K7M4Q2", entry: process.env.ENTRY_CODE_HIDDEN });
+        const resumed = await req(server, { participant_id: "GD-S2-K7M4Q2", entry: process.env.ENTRY_CODE_HIDDEN });
+        assert(created.session.id === resumed.session.id, "allowlisted participant did not resume same session");
+        const sessions = (await store.listSessions()).filter((session) => session.participant_id === "GD-S2-K7M4Q2");
+        assert(sessions.length === 1, "allowlist created duplicate sessions");
+        const raw = await store.readSession(created.session.id);
+        assert(raw.assignment_source === "controlled_link" && raw.entry_link_id === "A", "allowlist entry assignment mismatch");
+        console.log("Study 2 participant allowlist checks passed");
+      } finally {
+        server.close();
+      }
+    })().catch((error) => { console.error(error); process.exit(1); });
+  `;
+  const result = spawnSync(process.execPath, ["-e", code], { encoding: "utf8" });
+  if (result.stdout) process.stdout.write(result.stdout);
+  assert(result.status === 0, result.stderr || "participant allowlist child failed");
+}
+
 function testBlockModeRejectsEntry() {
   const root = path.join(os.tmpdir(), `group-deception-study2-block-entry-${process.pid}-${Date.now()}`);
   const dataDir = path.join(root, "sessions");
@@ -394,10 +505,16 @@ function staticChecks() {
   assert(incomeJs.includes("模拟扣除金额由申报收入计算；任务保留奖励 = 实际收入 − 模拟扣除金额。"), "income report final hint missing");
   assert(incomeJs.includes("基础收入") && incomeJs.includes("速度奖励") && incomeJs.includes("本轮实际收入"), "effort result income breakdown missing");
   assert(incomeJs.includes("努力任务已完成") && incomeJs.includes("你的实际收入由 4 轮任务的本轮实际收入累计得出。") && incomeJs.includes("查看同事此前的收入申报"), "actual income summary page missing");
-  assert(incomeJs.includes('step="10"') && incomeJs.includes('step="0.10"'), "income report step must be ¥0.10");
-  assert(!incomeJs.includes("申报收入将按固定规则计算需支付部分") && !incomeJs.includes("较低的申报收入对应较高的个人保留奖励"), "old income report hint must be removed");
   const actualSection = incomeJs.slice(incomeJs.indexOf("function renderActualIncome"), incomeJs.indexOf("function renderIncomeReport"));
   const reportSection = incomeJs.slice(incomeJs.indexOf("function renderIncomeReport"), incomeJs.indexOf("function renderIncomeConfirmation"));
+  assert(!incomeJs.includes('type="range"'), "income report range slider must be removed");
+  assert(!incomeJs.includes("range-input"), "income report must not use range-input class");
+  const reportSectionInput = reportSection.slice(reportSection.indexOf("<input"), reportSection.indexOf("</div>", reportSection.indexOf("<input")));
+  assert((reportSection.match(/type="number"/g) || []).length === 1, "income report must contain one number input");
+  assert(reportSection.includes('inputmode="decimal"') && reportSection.includes('min="0"') && reportSection.includes('step="any"'), "income report number input attributes mismatch");
+  assert(!reportSectionInput.includes("max="), "income report number input must not have max");
+  assert(reportSection.includes('value="${reportedValue}"'), "income report number input must start blank when no selected value exists");
+  assert(!incomeJs.includes("申报收入将按固定规则计算需支付部分") && !incomeJs.includes("较低的申报收入对应较高的个人保留奖励"), "old income report hint must be removed");
   assert(!actualSection.includes("submit-income-report"), "actual income page must not submit income report");
   assert(actualSection.includes('data-action="income-viewed"'), "actual income page must continue to peer records");
   assert(reportSection.includes("submit-income-report"), "income report page must contain submit-income-report");
@@ -405,7 +522,9 @@ function staticChecks() {
   assert(appJs.includes("peer-records-viewed") && appJs.includes("renderIncomeReport"), "income report must be rendered after peer records viewed");
   assert(!appJs.includes("params.get(\"condition\")"), "frontend must not read URL condition");
   assert(appJs.includes('params.get("entry")') && appJs.includes("entry: state.entryCode"), "frontend must send entry without interpreting condition");
-  assert(appJs.includes("INCOME_REPORT_STEP_CENTS = 10") && appJs.includes("Math.round(value / INCOME_REPORT_STEP_CENTS)"), "frontend income report step clamp missing");
+  assert(!appJs.includes("INCOME_REPORT_STEP_CENTS") && !appJs.includes("clampCents") && !appJs.includes("reported-income-number"), "frontend income report slider sync/clamp must be removed");
+  assert(appJs.includes("reported_income: input.value.trim()"), "frontend must submit typed income string");
+  assert(appJs.includes("INCOME_REPORT_ERROR") && appJs.includes("\\u8bf7\\u8f93\\u5165\\u4e0d\\u5c0f\\u4e8e 0"), "frontend income validation error missing");
   assert((appJs.match(/debrief-viewed/g) || []).length === 1, "frontend should call debrief-viewed only once");
   assert(appJs.includes("复制参与编号") && appJs.includes("已复制"), "copy participant id UI missing");
   assert(appJs.includes("参与信息") && appJs.includes("研究联系邮箱") && appJs.includes("123456@163.com"), "participant info card missing");
@@ -459,6 +578,7 @@ async function main() {
   staticChecks();
   testBlockAndConcurrency();
   testControlledLinkAssignment();
+  testParticipantAllowlistPolicy();
   testBlockModeRejectsEntry();
   const server = app.listen(0);
   try {
@@ -468,6 +588,8 @@ async function main() {
     assert(health.study_version === "study2-v1.1.0", "health study_version mismatch");
     assert(health.protocol_version === "peer-reporting-v2", "health protocol_version mismatch");
     assertPublicConfig(config);
+    await testMissingSessionHandling(server);
+    await testAcceptedIncomeAmounts(server, config);
     const dishonest = await runEffortToPeerRecords(server, config, "dishonest", `flow-s2-dishonest-${Date.now()}`);
     dishonest.records.records.forEach((record) => assert(record.reported_income_cents < record.actual_income_cents, "dishonest peer must underreport"));
     const completed = await completeAfterIncomeReport(server, config, dishonest.id, dishonest.actualIncomeCents);

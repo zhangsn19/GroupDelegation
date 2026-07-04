@@ -16,8 +16,17 @@ function sessionPath(id) {
 }
 
 async function readSession(id) {
-  const raw = await fs.readFile(sessionPath(id), "utf8");
-  return JSON.parse(raw);
+  try {
+    const raw = await fs.readFile(sessionPath(id), "utf8");
+    return JSON.parse(raw);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      const safeError = new Error("\u5f53\u524d\u53c2\u4e0e\u8bb0\u5f55\u65e0\u6cd5\u6062\u590d\u3002\u8bf7\u8054\u7cfb\u7814\u7a76\u56e2\u961f\u83b7\u53d6\u65b0\u7684\u53c2\u4e0e\u94fe\u63a5\u540e\u91cd\u65b0\u5f00\u59cb\u3002");
+      safeError.statusCode = 410;
+      throw safeError;
+    }
+    throw error;
+  }
 }
 
 async function writeSession(session) {

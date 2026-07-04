@@ -37,6 +37,9 @@ const ENTRY_CODES = {
   B: { condition: "honest", value: String(process.env.ENTRY_CODE_HONEST || "").trim() },
   C: { condition: "dishonest", value: String(process.env.ENTRY_CODE_DISHONEST || "").trim() }
 };
+const PARTICIPANT_ID_POLICY = String(process.env.PARTICIPANT_ID_POLICY || "open").trim().toLowerCase() || "open";
+const PARTICIPANT_ID_ALLOWLIST_FILE = String(process.env.PARTICIPANT_ID_ALLOWLIST_FILE || "").trim();
+const PARTICIPANT_ID_PATTERN = /^GD-S1-[A-Z0-9]{6}$/;
 const STUDY_CONTACT_EMAIL = String(process.env.STUDY_CONTACT_EMAIL || (IS_PRODUCTION ? "" : "123456@163.com")).trim();
 const COMPLETION_CODE = process.env.COMPLETION_CODE || "";
 const COMPLETION_REDIRECT_URL = process.env.COMPLETION_REDIRECT_URL || "";
@@ -65,9 +68,48 @@ function fail(statusCode, message) {
   throw error;
 }
 
+let participantAllowlist = null;
+
+function loadParticipantAllowlist(filePath) {
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(path.resolve(filePath), "utf8"));
+  } catch (error) {
+    throw new Error("PARTICIPANT_ID_ALLOWLIST_FILE must point to a readable JSON file");
+  }
+  if (!Array.isArray(parsed)) {
+    throw new Error("PARTICIPANT_ID_ALLOWLIST_FILE must contain a JSON array");
+  }
+  const map = new Map();
+  for (const item of parsed) {
+    const participantId = String(item?.participant_id || "").trim();
+    const entryLinkId = String(item?.entry_link_id || "").trim();
+    if (!PARTICIPANT_ID_PATTERN.test(participantId) || !Object.prototype.hasOwnProperty.call(ENTRY_CODES, entryLinkId)) {
+      throw new Error("PARTICIPANT_ID_ALLOWLIST_FILE contains an invalid participant_id or entry_link_id");
+    }
+    if (map.has(participantId)) {
+      throw new Error("PARTICIPANT_ID_ALLOWLIST_FILE contains duplicate participant_id values");
+    }
+    map.set(participantId, entryLinkId);
+  }
+  return map;
+}
+
 function validateAssignmentConfig() {
   if (!["block", "controlled_link"].includes(ASSIGNMENT_MODE)) {
     throw new Error("ASSIGNMENT_MODE must be block or controlled_link");
+  }
+  if (!["open", "allowlist"].includes(PARTICIPANT_ID_POLICY)) {
+    throw new Error("PARTICIPANT_ID_POLICY must be open or allowlist");
+  }
+  if (PARTICIPANT_ID_POLICY === "allowlist") {
+    if (ASSIGNMENT_MODE !== "controlled_link") {
+      throw new Error("PARTICIPANT_ID_POLICY=allowlist requires ASSIGNMENT_MODE=controlled_link");
+    }
+    if (!PARTICIPANT_ID_ALLOWLIST_FILE) {
+      throw new Error("PARTICIPANT_ID_ALLOWLIST_FILE is required when PARTICIPANT_ID_POLICY=allowlist");
+    }
+    participantAllowlist = loadParticipantAllowlist(PARTICIPANT_ID_ALLOWLIST_FILE);
   }
   if (ASSIGNMENT_MODE !== "controlled_link") return;
   const values = Object.values(ENTRY_CODES).map((item) => item.value);
@@ -86,6 +128,15 @@ function resolveEntryAssignment(entry) {
   if (!match) fail(400, "研究入口无效，请检查链接后重试。");
   const [entryLinkId, item] = match;
   return { condition: item.condition, entry_link_id: entryLinkId };
+}
+
+function validateParticipantIdPolicy(participantId, entryAssignment) {
+  if (PARTICIPANT_ID_POLICY !== "allowlist") return;
+  if (!participantId) fail(400, "\u53c2\u4e0e\u7f16\u53f7\u7f3a\u5931\u3002\u8bf7\u8fd4\u56de\u62db\u52df\u5e73\u53f0\u540e\u901a\u8fc7\u539f\u59cb\u7814\u7a76\u94fe\u63a5\u8fdb\u5165\u3002");
+  if (!PARTICIPANT_ID_PATTERN.test(participantId)) fail(400, "\u53c2\u4e0e\u7f16\u53f7\u683c\u5f0f\u65e0\u6548\u3002\u8bf7\u4f7f\u7528\u7814\u7a76\u56e2\u961f\u53d1\u653e\u7684\u539f\u59cb\u94fe\u63a5\u3002");
+  const allowedEntryLinkId = participantAllowlist?.get(participantId);
+  if (!allowedEntryLinkId) fail(403, "\u8be5\u53c2\u4e0e\u7f16\u53f7\u4e0d\u662f\u6709\u6548\u7684\u7814\u7a76\u53c2\u4e0e\u7f16\u53f7\u3002\u8bf7\u4f7f\u7528\u7814\u7a76\u56e2\u961f\u53d1\u653e\u7684\u539f\u59cb\u94fe\u63a5\u3002");
+  if (allowedEntryLinkId !== entryAssignment.entry_link_id) fail(403, "\u8be5\u53c2\u4e0e\u7f16\u53f7\u4e0e\u5f53\u524d\u7814\u7a76\u5165\u53e3\u4e0d\u5339\u914d\u3002\u8bf7\u4f7f\u7528\u7814\u7a76\u56e2\u961f\u53d1\u653e\u7684\u539f\u59cb\u94fe\u63a5\u3002");
 }
 
 validateAssignmentConfig();
@@ -310,6 +361,7 @@ async function createSession({ study, participantId, requestedCondition, entry, 
   } else if (hasEntry) {
     fail(400, "当前研究未启用指定入口分组。");
   }
+  validateParticipantIdPolicy(normalizedParticipant, entryAssignment);
   const existing = (await store.listSessions()).find((session) => (
     normalizedParticipant &&
     (session.participant_id === normalizedParticipant || session.prolific_id === normalizedParticipant) &&
