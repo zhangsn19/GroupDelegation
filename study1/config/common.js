@@ -1,7 +1,7 @@
 const VERSION = "study1-v1.1.0";
 
 const STUDIES = ["study1", "study2"];
-const CONDITIONS = ["hidden", "honest", "dishonest"];
+const CONDITIONS = ["hidden", "honest", "dishonest", "dishonest_escalating"];
 
 const STATUS_ORDER = [
   "created",

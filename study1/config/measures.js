@@ -29,17 +29,19 @@ const baselineItems = [
   }
 ];
 
-const conditionMemoryOptionsStudy1 = [
-  "我没有看到其他成员的具体提交内容",
-  "其他成员大多如实提交了骰子点数",
-  "其他成员大多提交了高于真实骰子点数的数字",
-  "其他成员的提交情况混合且不一致",
-  "我不记得"
+const truthfulPeerCountOptionsStudy1 = [
+  { value: "0", label: "0 人" },
+  { value: "1", label: "1 人" },
+  { value: "2", label: "2 人" },
+  { value: "3", label: "3 人" },
+  { value: "4", label: "4 人" },
+  { value: "not_visible", label: "我没有看到具体提交" },
+  { value: "not_sure", label: "我不记得" }
 ];
 
 const postSurveyStudy1 = [
-  { section: "A", id: "a_specific_peer_records_seen", prompt: "在每轮作出自己的提交前，我看到了其他成员本轮向群聊 AI 提交的具体内容。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "A", id: "a_condition_memory", prompt: "根据刚才看到的信息，其他成员此前的提交情况最接近哪一种？", type: "select", options: conditionMemoryOptionsStudy1 },
+  { section: "A", id: "a_truthful_peer_count", prompt: "回顾整个任务，你认为四名同事中有多少人曾经如实提交骰子点数？", type: "select", options: truthfulPeerCountOptionsStudy1 },
+  { section: "A", id: "a_peer_behavior_change", prompt: "在任务进行过程中，其他同事的报告行为发生了怎样的变化？", type: "likert", minLabel: "变得更加诚实", midLabel: "基本没有变化", maxLabel: "变得更加不诚实" },
   { section: "A", id: "a_private_submission_understood", prompt: "我理解其他成员无法看到我在各轮向群聊 AI 提交的骰子点数。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
   { section: "A", id: "a_independent_reward_understood", prompt: "我理解其他成员的提交不会改变我的个人奖励。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
   { section: "A", id: "a_ai_executes_understood", prompt: "我理解在本任务中，群聊 AI 只负责按我的选择完成每轮提交，不替我决定应提交什么骰子点数。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
@@ -67,7 +69,7 @@ const demographicsItems = [
 
 module.exports = {
   baselineItems,
-  conditionMemoryOptionsStudy1,
+  truthfulPeerCountOptionsStudy1,
   postSurveyStudy1,
   demographicsItems
 };

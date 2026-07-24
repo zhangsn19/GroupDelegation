@@ -4,6 +4,12 @@ const path = require("path");
 const crypto = require("crypto");
 const { VERSION, STUDIES, CONDITIONS, STATUS_ORDER, MEMBERS } = require("../config/common");
 const study1 = require("../config/study1-dice");
+const {
+  ESCALATING_CONDITION,
+  SCHEDULE_VERSION,
+  PEER_ONSET_ROUNDS,
+  isEscalatingPeerMisreporting
+} = require("../config/h2-escalation");
 const exporters = require("./export");
 
 function loadDotEnv() {
@@ -34,7 +40,8 @@ const ASSIGNMENT_MODE = String(process.env.ASSIGNMENT_MODE || "block").trim() ||
 const ENTRY_CODES = {
   A: { condition: "hidden", value: String(process.env.ENTRY_CODE_HIDDEN || "").trim() },
   B: { condition: "honest", value: String(process.env.ENTRY_CODE_HONEST || "").trim() },
-  C: { condition: "dishonest", value: String(process.env.ENTRY_CODE_DISHONEST || "").trim() }
+  C: { condition: "dishonest", value: String(process.env.ENTRY_CODE_DISHONEST || "").trim() },
+  D: { condition: ESCALATING_CONDITION, value: String(process.env.ENTRY_CODE_DISHONEST_ESCALATING || "").trim() }
 };
 const PARTICIPANT_ID_POLICY = String(process.env.PARTICIPANT_ID_POLICY || "open").trim().toLowerCase() || "open";
 const PARTICIPANT_ID_ALLOWLIST_FILE = String(process.env.PARTICIPANT_ID_ALLOWLIST_FILE || "").trim();
@@ -114,7 +121,7 @@ function validateAssignmentConfig() {
   if (ASSIGNMENT_MODE !== "controlled_link") return;
   const values = Object.values(ENTRY_CODES).map((item) => item.value);
   if (values.some((value) => !value)) {
-    throw new Error("controlled_link assignment requires ENTRY_CODE_HIDDEN, ENTRY_CODE_HONEST, and ENTRY_CODE_DISHONEST");
+    throw new Error("controlled_link assignment requires all four Study 1 entry codes");
   }
   if (new Set(values).size !== values.length) {
     throw new Error("controlled_link assignment entry codes must be distinct");
@@ -341,7 +348,11 @@ function createStudy1Stimuli(condition, seed) {
     const roundNumber = roundIndex + 1;
     const dishonestReports = peerDisplayOrder.map(() => randomDishonestReport(trueValue, assignmentRandom));
     const peerRecords = peerDisplayOrder.map((name, index) => {
-      const underlyingValue = condition === "dishonest" ? dishonestReports[index] : trueValue;
+      const shouldMisreport = condition === "dishonest" || (
+        condition === ESCALATING_CONDITION &&
+        isEscalatingPeerMisreporting(name, roundNumber)
+      );
+      const underlyingValue = shouldMisreport ? dishonestReports[index] : trueValue;
       if (condition === "hidden") {
         return {
           round_index: roundNumber,
@@ -353,7 +364,7 @@ function createStudy1Stimuli(condition, seed) {
           text: study1HiddenText(name)
         };
       }
-      const reportedValue = condition === "honest" ? trueValue : dishonestReports[index];
+      const reportedValue = shouldMisreport ? dishonestReports[index] : trueValue;
       return {
         round_index: roundNumber,
         name,
@@ -364,11 +375,19 @@ function createStudy1Stimuli(condition, seed) {
         text: study1VisibleText(name, reportedValue)
       };
     });
+    const misreportingPeerNames = condition === "hidden"
+      ? null
+      : peerRecords
+        .filter((record) => record.underlying_reported_value > trueValue)
+        .map((record) => record.name);
     return {
       round_index: roundNumber,
       true_die_value: trueValue,
       peer_display_order: peerDisplayOrder,
-      peer_records: peerRecords
+      peer_records: peerRecords,
+      n_peers_misreporting: condition === "hidden" ? null : misreportingPeerNames.length,
+      misreporting_peer_names: misreportingPeerNames,
+      schedule_version: SCHEDULE_VERSION
     };
   });
   return { diceSequence, peerDisplayOrder, peerRecordsByRound };
@@ -399,8 +418,14 @@ function publicStudy1PeerRecords(session, peerRecords = []) {
 
 function publicDiceRound(session, round) {
   if (!round) return round;
+  const {
+    n_peers_misreporting,
+    misreporting_peer_names,
+    schedule_version,
+    ...publicRound
+  } = round;
   return {
-    ...round,
+    ...publicRound,
     peer_records: publicStudy1PeerRecords(session, round.peer_records)
   };
 }
@@ -429,7 +454,7 @@ function allocateBlockCondition(state, { participantId, study }) {
     state.current_block = {
       block: state.next_block,
       position: 0,
-      sequence: shuffle(["hidden", "hidden", "honest", "honest", "dishonest", "dishonest"])
+      sequence: shuffle(CONDITIONS.flatMap((condition) => [condition, condition]))
     };
     state.next_block += 1;
   }
@@ -553,6 +578,7 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     stimulus_seed: stimulusSeed,
     study,
     condition,
+    condition_analysis_label: condition === "dishonest" ? "dishonest_static" : condition,
     condition_assigned_at: allocation.assigned_at,
     assignment_source: assignmentSource,
     entry_link_id: entryLinkId,
@@ -562,7 +588,8 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     condition_label: {
       hidden: "同伴具体提交隐藏",
       honest: "同伴如实提交",
-      dishonest: "同伴提交更高数字"
+      dishonest: "同伴提交更高数字",
+      dishonest_escalating: "同伴虚报人数逐步增加"
     }[condition],
     debug_mode: Boolean(debugOverride),
     participant_id: normalizedParticipant,
@@ -576,6 +603,8 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     event_log: [],
     baseline: {},
     comprehension_attempts: [],
+    schedule_version: SCHEDULE_VERSION,
+    peer_onset_rounds: { ...PEER_ONSET_ROUNDS },
     study1_die_sequence: diceSequence,
     study1_peer_display_order: study1Stimuli.peerDisplayOrder,
     study1_peer_records_by_round: study1Stimuli.peerRecordsByRound,
@@ -650,7 +679,10 @@ function validateItems(items, responses) {
       const max = item.scalePoints || 7;
       if (!Number.isInteger(numeric) || numeric < 1 || numeric > max) invalid.push(item.id);
     } else if (item.type === "select") {
-      if (!item.options.includes(value)) invalid.push(item.id);
+      const allowedValues = item.options.map((option) => (
+        typeof option === "object" ? option.value : option
+      ));
+      if (!allowedValues.includes(value)) invalid.push(item.id);
     } else if (item.type === "number") {
       const numeric = Number(value);
       if (!Number.isFinite(numeric) || !Number.isInteger(numeric) || (item.min !== undefined && numeric < item.min) || (item.max !== undefined && numeric > item.max)) invalid.push(item.id);
@@ -859,11 +891,15 @@ app.post("/api/session/:id/dice/round", asyncHandler(async (req, res) => {
     const personalReward = Number((reported * study1.rewardPerPoint).toFixed(2));
     const submittedAt = now();
     const startedAt = roundState.selection_started_at;
+    const stimulusRound = recordsByRound[expectedRound - 1] || {};
     const round = {
       round_index: expectedRound,
       true_die_value: trueValue,
-      peer_display_order: recordsByRound[expectedRound - 1]?.peer_display_order || [],
-      peer_records: recordsByRound[expectedRound - 1]?.peer_records || [],
+      peer_display_order: stimulusRound.peer_display_order || [],
+      peer_records: stimulusRound.peer_records || [],
+      n_peers_misreporting: stimulusRound.n_peers_misreporting ?? null,
+      misreporting_peer_names: stimulusRound.misreporting_peer_names ?? null,
+      schedule_version: stimulusRound.schedule_version || draft.schedule_version || SCHEDULE_VERSION,
       reported_value: reported,
       upward_misreport: reported > trueValue,
       misreport_magnitude: reported - trueValue,

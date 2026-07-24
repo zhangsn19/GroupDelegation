@@ -76,7 +76,11 @@
                 <span class="question-text">${promptText(item)}</span>
                 <select class="text-input" name="${item.id}">
                   <option value="">请选择</option>
-                  ${item.options.map((option) => `<option value="${option}" ${values[item.id] === option ? "selected" : ""}>${option}</option>`).join("")}
+                  ${item.options.map((option) => {
+                    const optionValue = typeof option === "object" ? option.value : option;
+                    const optionLabel = typeof option === "object" ? option.label : option;
+                    return `<option value="${optionValue}" ${values[item.id] === optionValue ? "selected" : ""}>${optionLabel}</option>`;
+                  }).join("")}
                 </select>
               </label>
             `;
@@ -87,7 +91,11 @@
             <fieldset class="question-card survey-card" data-question-id="${item.id}">
               <legend class="question-text">${promptText(item)}</legend>
               <div class="likert-scale likert-scale--${points}" data-scale-points="${points}">${likertButtons(item, values[item.id])}</div>
-              <div class="scale-labels"><span>1 = ${item.minLabel}</span><span>${points} = ${item.maxLabel}</span></div>
+              <div class="scale-labels">
+                <span>1 = ${item.minLabel}</span>
+                ${item.midLabel ? `<span>${Math.ceil(points / 2)} = ${item.midLabel}</span>` : ""}
+                <span>${points} = ${item.maxLabel}</span>
+              </div>
             </fieldset>
           `;
         }).join("")}
