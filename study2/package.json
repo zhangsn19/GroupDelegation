@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server/index.js",
     "dev": "node server/index.js",
-    "smoke": "node server/smoke-test.js"
+    "smoke": "node server/smoke-test.js && node server/prolific-smoke-test.js"
   },
   "engines": {
     "node": ">=20"

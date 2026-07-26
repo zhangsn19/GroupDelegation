@@ -5,6 +5,8 @@ const crypto = require("crypto");
 const { VERSION, CONDITIONS, STATUS_ORDER, MEMBERS } = require("../config/common");
 const study2 = require("../config/study2-income");
 const exporters = require("./export");
+const prolificExport = require("./prolific-export");
+const { createProlificSupport } = require("./prolific");
 
 function loadDotEnv() {
   const envPath = path.join(process.cwd(), ".env");
@@ -55,6 +57,10 @@ const STUDY2_PEER_PROFILE_OFFSETS = {
 };
 
 app.use(express.json({ limit: "1mb" }));
+app.get(["/", "/index.html"], (req, res, next) => {
+  if (ASSIGNMENT_MODE !== "prolific_taskflow") return next();
+  res.sendFile(path.join(__dirname, "..", "public", "en", "index.html"));
+});
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 function now() {
@@ -106,8 +112,8 @@ function loadParticipantAllowlist(filePath) {
 }
 
 function validateAssignmentConfig() {
-  if (!["block", "controlled_link"].includes(ASSIGNMENT_MODE)) {
-    throw new Error("ASSIGNMENT_MODE must be block or controlled_link");
+  if (!["block", "controlled_link", "prolific_taskflow"].includes(ASSIGNMENT_MODE)) {
+    throw new Error("ASSIGNMENT_MODE must be block, controlled_link, or prolific_taskflow");
   }
   if (!["open", "allowlist"].includes(PARTICIPANT_ID_POLICY)) {
     throw new Error("PARTICIPANT_ID_POLICY must be open or allowlist");
@@ -151,11 +157,24 @@ function validateParticipantIdPolicy(participantId, entryAssignment) {
 
 validateAssignmentConfig();
 
+const prolificSupport = createProlificSupport({
+  assignmentMode: ASSIGNMENT_MODE,
+  isProduction: IS_PRODUCTION,
+  allowedConditions: CONDITIONS,
+  expectedVariantCount: 3
+});
+
 function publicContactEmail() {
   return STUDY_CONTACT_EMAIL || "123456@163.com";
 }
 
-function publicCompletion() {
+function publicCompletion(session = {}) {
+  if (session.assignment_mode === "prolific_taskflow") {
+    return {
+      completion_code: null,
+      completion_redirect_url: prolificSupport.completionUrl || null
+    };
+  }
   return {
     completion_code: COMPLETION_CODE || null,
     completion_redirect_url: COMPLETION_REDIRECT_URL || null
@@ -204,10 +223,15 @@ function publicSession(session) {
     actual_income: session.actual_income ?? null,
     actual_income_cents: session.actual_income_cents ?? null,
     completed_at: session.completed_at || null,
-    completion_status: session.completion_status || null
+    completion_status: session.completion_status || null,
+    completion_ready_at: session.completion_ready_at || null,
+    completion_redirect_initiated_at: session.completion_redirect_initiated_at || null,
+    assignment_mode: session.assignment_mode || ASSIGNMENT_MODE,
+    locale: session.locale || "zh-CN",
+    income_report_selection_started_at: session.income_report_selection_started_at || null
   };
   if (session.status === "completed" || session.completion_status === "completed") {
-    payload.completion = publicCompletion();
+    payload.completion = publicCompletion(session);
   }
   return payload;
 }
@@ -428,18 +452,32 @@ function ensureStudy2PeerIncomeRecords(session) {
 
 function publicPeerIncomeRecords(session) {
   const records = session.study2_peer_income_records || session.peer_income_records || [];
-  if (session.condition !== "hidden") return records;
-  return records.map((record) => ({
-    name: record.name || record.peer_name,
-    peer_name: record.peer_name || record.name,
-    actual_income_cents: null,
-    actualIncome: null,
-    reported_income_cents: null,
-    reportedIncome: null,
-    visibility: "hidden",
-    display_position: record.display_position,
-    text: study2HiddenText()
-  }));
+  const publicRecords = session.condition !== "hidden"
+    ? records
+    : records.map((record) => ({
+      name: record.name || record.peer_name,
+      peer_name: record.peer_name || record.name,
+      actual_income_cents: null,
+      actualIncome: null,
+      reported_income_cents: null,
+      reportedIncome: null,
+      visibility: "hidden",
+      display_position: record.display_position,
+      text: study2HiddenText()
+    }));
+  if (session.locale !== "en") return publicRecords;
+  const englishNames = { "张明": "Alex", "李华": "Jordan", "王芳": "Taylor", "陈思": "Morgan" };
+  return publicRecords.map((record) => {
+    const name = englishNames[record.name || record.peer_name] || record.name || record.peer_name;
+    return {
+      ...record,
+      name,
+      peer_name: name,
+      text: record.visibility === "hidden"
+        ? "A previous income report was completed. The actual income and reported amount are not visible under the current information setting."
+        : `Actual income ¥${formatMoney(record.actual_income_cents)}; reported income ¥${formatMoney(record.reported_income_cents)}.`
+    };
+  });
 }
 
 async function readRandomizationState() {
@@ -540,8 +578,8 @@ function prepareCurrentEffortRound(session) {
   return material;
 }
 
-async function createSession({ participantId, requestedCondition, entry, lockHeld = false }) {
-  const normalizedParticipant = parseParticipantId(participantId);
+async function createSession({ participantId, requestedCondition, entry, lockHeld = false, prolificIdentity = null }) {
+  const normalizedParticipant = prolificIdentity?.prolific_pid || parseParticipantId(participantId);
   if (!normalizedParticipant && REQUIRE_PARTICIPANT_ID) {
     const error = new Error("参与编号缺失。请返回招募平台后通过原始研究链接进入。");
     error.statusCode = 400;
@@ -549,17 +587,29 @@ async function createSession({ participantId, requestedCondition, entry, lockHel
   }
   if (normalizedParticipant && !lockHeld) {
     return withRandomizationLock(async () => {
-      return createSession({ participantId: normalizedParticipant, requestedCondition, entry, lockHeld: true });
+      return createSession({
+        participantId: normalizedParticipant,
+        requestedCondition,
+        entry,
+        lockHeld: true,
+        prolificIdentity
+      });
     });
+  }
+  if (prolificIdentity) {
+    const existingProlific = prolificSupport.findExisting(await store.listSessions(), prolificIdentity);
+    if (existingProlific) return existingProlific;
   }
   let entryAssignment = null;
   const hasEntry = String(entry || "").trim() !== "";
-  if (ASSIGNMENT_MODE === "controlled_link") {
+  if (prolificIdentity) {
+    if (ASSIGNMENT_MODE !== "prolific_taskflow") fail(404, "Prolific Taskflow entry is not enabled.");
+  } else if (ASSIGNMENT_MODE === "controlled_link") {
     entryAssignment = resolveEntryAssignment(entry);
   } else if (hasEntry) {
     fail(400, "当前研究未启用指定入口分组。");
   }
-  validateParticipantIdPolicy(normalizedParticipant, entryAssignment);
+  if (!prolificIdentity) validateParticipantIdPolicy(normalizedParticipant, entryAssignment);
   const existing = (await store.listSessions()).find((session) => (
     normalizedParticipant &&
     (session.participant_id === normalizedParticipant || session.prolific_id === normalizedParticipant)
@@ -581,7 +631,15 @@ async function createSession({ participantId, requestedCondition, entry, lockHel
   let entryLinkId = null;
   const requestedDebugCondition = DEBUG_LINKS && !IS_PRODUCTION ? String(process.env.TEST_CONDITION || "").trim() : "";
   const debugOverride = ASSIGNMENT_MODE === "block" && Boolean(requestedDebugCondition);
-  if (ASSIGNMENT_MODE === "controlled_link") {
+  if (prolificIdentity) {
+    condition = prolificIdentity.condition;
+    assignmentSource = "prolific_taskflow";
+    allocation = {
+      assigned_at: now(),
+      randomization_block: null,
+      randomization_position: null
+    };
+  } else if (ASSIGNMENT_MODE === "controlled_link") {
     condition = entryAssignment.condition;
     assignmentSource = "controlled_link";
     entryLinkId = entryAssignment.entry_link_id;
@@ -644,10 +702,21 @@ async function createSession({ participantId, requestedCondition, entry, lockHel
     debug_mode: Boolean(debugOverride),
     participant_id: normalizedParticipant,
     prolific_id: normalizedParticipant,
+    prolific_pid: prolificIdentity?.prolific_pid || null,
+    prolific_study_id: prolificIdentity?.prolific_study_id || null,
+    prolific_session_id: prolificIdentity?.prolific_session_id || null,
+    taskflow_variant_id: prolificIdentity?.taskflow_variant_id || null,
+    variant_token_hash: prolificIdentity?.variant_token_hash || null,
+    record_key: prolificIdentity?.record_key || null,
+    assignment_mode: prolificIdentity ? "prolific_taskflow" : ASSIGNMENT_MODE,
+    locale: prolificIdentity ? "en" : "zh-CN",
     status: "created",
     created_at: createdAt,
     assigned_at: createdAt,
+    started_at: null,
     completed_at: null,
+    completion_ready_at: null,
+    completion_redirect_initiated_at: null,
     completion_status: null,
     stage_timestamps: { created: createdAt },
     event_log: [],
@@ -732,6 +801,30 @@ app.post("/api/session", asyncHandler(async (req, res) => {
   res.json({ session: publicSession(session) });
 }));
 
+app.post("/api/prolific/session", asyncHandler(async (req, res) => {
+  const prolificIdentity = prolificSupport.validateRequest(req.body);
+  try {
+    const session = await createSession({
+      participantId: prolificIdentity.prolific_pid,
+      requestedCondition: null,
+      entry: null,
+      prolificIdentity
+    });
+    res.json({ session: publicSession(session) });
+  } catch (error) {
+    if (["identity_conflict", "variant_conflict", "duplicate_participation"].includes(error.code)) {
+      await store.appendAuditEvent({
+        type: error.code,
+        at: now(),
+        record_key: prolificIdentity.record_key,
+        prolific_pid_hash: crypto.createHash("sha256").update(prolificIdentity.prolific_pid).digest("hex"),
+        taskflow_variant_id: prolificIdentity.taskflow_variant_id
+      });
+    }
+    throw error;
+  }
+}));
+
 app.get("/api/session/:id", asyncHandler(async (req, res) => {
   const session = await store.readSession(req.params.id);
   res.json({ session: publicSession(session) });
@@ -739,6 +832,7 @@ app.get("/api/session/:id", asyncHandler(async (req, res) => {
 
 app.post("/api/session/:id/consent", asyncHandler(async (req, res) => {
   const session = await store.updateSession(req.params.id, (draft) => {
+    draft.started_at ||= now();
     transition(draft, "consented");
     return draft;
   });
@@ -952,6 +1046,7 @@ app.post("/api/session/:id/peer-records-viewed", asyncHandler(async (req, res) =
 
 app.post("/api/session/:id/income-report", asyncHandler(async (req, res) => {
   const reportedCents = parseReportedIncomeCents(req.body || {});
+  const serverReceivedAt = now();
   const session = await store.updateSession(req.params.id, (draft) => {
     if (draft.status !== "peer_records_viewed") throw new Error("Income report requires peer_records_viewed status");
     if (draft.income_report) throw new Error("Income report already submitted");
@@ -976,6 +1071,17 @@ app.post("/api/session/:id/income-report", asyncHandler(async (req, res) => {
       retained_reward_cents: retainedRewardCents,
       retained_reward: centsToMoney(retainedRewardCents),
       decision_duration_ms: Math.max(0, new Date(submittedAt) - new Date(startedAt)),
+      decision_started_at_client: String(req.body.decision_started_at_client || "") || null,
+      decision_submitted_at_client: String(req.body.decision_submitted_at_client || "") || null,
+      decision_time_ms: Number.isFinite(Number(req.body.decision_time_ms))
+        ? Math.max(0, Math.round(Number(req.body.decision_time_ms)))
+        : null,
+      page_hidden_duration_ms: Number.isFinite(Number(req.body.page_hidden_duration_ms))
+        ? Math.max(0, Math.round(Number(req.body.page_hidden_duration_ms)))
+        : null,
+      timer_resumed_after_reload: Boolean(req.body.timer_resumed_after_reload),
+      server_received_at: serverReceivedAt,
+      saved_at: submittedAt,
       selection_started_at: startedAt,
       submitted_at: submittedAt,
       submission_source: "group_ai_private_panel"
@@ -1080,13 +1186,31 @@ app.post("/api/session/:id/debrief-viewed", asyncHandler(async (req, res) => {
 }));
 
 app.post("/api/session/:id/complete", asyncHandler(async (req, res) => {
-  const session = await store.updateSession(req.params.id, (draft) => {
+  const completed = await store.updateSession(req.params.id, (draft) => {
     if (draft.status !== "demographics_completed") throw new Error("Completion requires demographics_completed status");
     if (!draft.debrief_viewed_at) throw new Error("请先阅读并确认事后说明。");
     draft.completed_at = now();
     draft.completion_status = "completed";
     addEvent(draft, "completed");
     transition(draft, "completed");
+    return draft;
+  });
+  const session = await store.updateSession(completed.id, (draft) => {
+    draft.completion_ready_at ||= now();
+    return draft;
+  });
+  res.json({ session: publicSession(session) });
+}));
+
+app.post("/api/session/:id/completion-redirect-initiated", asyncHandler(async (req, res) => {
+  const session = await store.updateSession(req.params.id, (draft) => {
+    if (draft.status !== "completed" || draft.completion_status !== "completed") {
+      fail(409, "Completion redirect is not ready.");
+    }
+    if (!draft.completion_redirect_initiated_at) {
+      draft.completion_redirect_initiated_at = now();
+      addEvent(draft, "completion_redirect_initiated");
+    }
     return draft;
   });
   res.json({ session: publicSession(session) });
@@ -1099,6 +1223,29 @@ app.get("/api/admin/summary", requireAdmin, asyncHandler(async (req, res) => {
 
 app.get("/api/admin/export/json", requireAdmin, asyncHandler(async (req, res) => {
   res.json({ version: VERSION, sessions: filterSessions(await store.listSessions(), req.query) });
+}));
+
+app.get("/api/admin/prolific-summary", requireAdmin, asyncHandler(async (req, res) => {
+  const sessions = (await store.listSessions()).filter((session) => session.assignment_mode === "prolific_taskflow");
+  const conditions = Object.fromEntries(CONDITIONS.map((condition) => {
+    const matching = sessions.filter((session) => session.condition === condition);
+    return [condition, {
+      arrived: matching.length,
+      started: matching.filter((session) => session.started_at).length,
+      completed: matching.filter((session) => session.status === "completed").length,
+      data_complete: matching.filter(prolificExport.isDataComplete).length,
+      quality_flags: matching.filter((session) => prolificExport.qualityFlags(session).length > 0).length
+    }];
+  }));
+  res.json({ conditions, participants: prolificExport.adminRows(sessions) });
+}));
+
+app.get("/api/admin/export/prolific-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
+  const sessions = (await store.listSessions()).filter((session) => session.assignment_mode === "prolific_taskflow");
+  const archive = prolificExport.zip(prolificExport.buildFiles(sessions));
+  res.set("content-type", "application/zip");
+  res.set("content-disposition", `attachment; filename="study2-prolific-export-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.send(archive);
 }));
 
 app.get("/api/admin/export/participants.csv", requireAdmin, asyncHandler(async (req, res) => {

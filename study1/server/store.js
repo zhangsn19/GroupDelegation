@@ -3,6 +3,7 @@ const path = require("path");
 
 const DATA_DIR = path.resolve(process.cwd(), process.env.DATA_DIR || "./data/sessions");
 const locks = new Map();
+let auditWrite = Promise.resolve();
 
 async function ensureDataDir() {
   await fs.mkdir(DATA_DIR, { recursive: true });
@@ -33,13 +34,29 @@ async function writeSession(session) {
   await ensureDataDir();
   const file = sessionPath(session.id);
   const tmp = `${file}.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`;
-  await fs.writeFile(tmp, `${JSON.stringify(session, null, 2)}\n`, "utf8");
+  const handle = await fs.open(tmp, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(session, null, 2)}\n`, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
   try {
     await fs.rename(tmp, file);
   } catch (error) {
     if (error.code !== "EPERM" && error.code !== "EACCES") throw error;
     await fs.copyFile(tmp, file);
     await fs.unlink(tmp);
+  }
+  try {
+    const directory = await fs.open(DATA_DIR, "r");
+    try {
+      await directory.sync();
+    } finally {
+      await directory.close();
+    }
+  } catch (error) {
+    if (!["EINVAL", "EPERM", "EISDIR"].includes(error.code)) throw error;
   }
   return session;
 }
@@ -79,11 +96,27 @@ async function updateSession(id, updater) {
   }
 }
 
+async function appendAuditEvent(event) {
+  auditWrite = auditWrite.catch(() => {}).then(async () => {
+    await ensureDataDir();
+    const file = path.join(DATA_DIR, "identity-audit.ndjson");
+    const handle = await fs.open(file, "a", 0o600);
+    try {
+      await handle.writeFile(`${JSON.stringify(event)}\n`, "utf8");
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  });
+  return auditWrite;
+}
+
 module.exports = {
   DATA_DIR,
   ensureDataDir,
   readSession,
   writeSession,
   listSessions,
-  updateSession
+  updateSession,
+  appendAuditEvent
 };
