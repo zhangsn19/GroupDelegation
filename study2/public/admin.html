@@ -44,7 +44,8 @@
         ["JSON 原始数据", "/api/admin/export/json"],
         ["participants.csv", "/api/admin/export/participants.csv"],
         ["study2_effort_rounds.csv", "/api/admin/export/study2_effort_rounds.csv"],
-        ["study2_income_reports.csv", "/api/admin/export/study2_income_reports.csv"]
+        ["study2_income_reports.csv", "/api/admin/export/study2_income_reports.csv"],
+        ["Download complete export bundle", "/api/admin/export/prolific-bundle.zip"]
       ];
       document.querySelector("#load-summary").addEventListener("click", async () => {
         const token = tokenInput.value.trim();
@@ -52,7 +53,11 @@
           headers: { "x-admin-token": token }
         });
         const data = await response.json();
-        summaryOutput.textContent = JSON.stringify(data, null, 2);
+        const prolificResponse = await fetch("/api/admin/prolific-summary", {
+          headers: { "x-admin-token": token }
+        });
+        const prolific = await prolificResponse.json();
+        summaryOutput.textContent = JSON.stringify({ current: data, prolific }, null, 2);
         links.innerHTML = exportsList.map(([label, href]) => (
           `<button class="secondary-button" data-export="${href}">${label}</button>`
         )).join("");
