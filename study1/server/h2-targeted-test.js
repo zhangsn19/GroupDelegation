@@ -1,4 +1,5 @@
 const assert = require("assert");
+const crypto = require("crypto");
 const os = require("os");
 const path = require("path");
 
@@ -16,9 +17,35 @@ const {
   EXPECTED_MISREPORTING_COUNTS,
   peerIdForName
 } = require("../config/h2-escalation");
+const {
+  COMPOSITION_VERSION,
+  fixedDishonestCountForCondition,
+  conditionFamilyForCondition
+} = require("../config/fixed-gradient");
 const app = require("./index");
 
-const EXPECTED_CONDITIONS = ["hidden", "honest", "dishonest", "dishonest_escalating"];
+const EXPECTED_CONDITIONS = [
+  "hidden",
+  "honest",
+  "dishonest",
+  "dishonest_escalating",
+  "dishonest_fixed_1",
+  "dishonest_fixed_2",
+  "dishonest_fixed_3"
+];
+const EXPECTED_FIXED_COUNTS = {
+  honest: 0,
+  dishonest_fixed_1: 1,
+  dishonest_fixed_2: 2,
+  dishonest_fixed_3: 3,
+  dishonest: 4
+};
+const LEGACY_STIMULUS_HASHES = {
+  hidden: "a699da5b8ff73cfa1748d949cbe4ad95309a22e06f8f569270b56c7c1baeaf57",
+  honest: "0bb6f97b0189cf53804b7c0e5b2818f415b3c9b2f079e4bed1c81848fc1f5418",
+  dishonest: "2a0b35943ba9f0e07afcd573bb21109a911ad6ca766c2ab6fca897509637fe86",
+  dishonest_escalating: "0cea23e7c2411735262b1483b9ee66bf3f8c645ed15a3a22a3243f33c59cac28"
+};
 
 function actualMisreporters(round) {
   return round.peer_records
@@ -31,6 +58,28 @@ function assertLegalMisreport(record, trueValue) {
   assert(record.reportedValue <= 6, `${record.name} report must not exceed 6`);
 }
 
+function legacyProjection(stimuli) {
+  return {
+    diceSequence: stimuli.diceSequence,
+    peerDisplayOrder: stimuli.peerDisplayOrder,
+    peerRecordsByRound: stimuli.peerRecordsByRound.map((round) => ({
+      round_index: round.round_index,
+      true_die_value: round.true_die_value,
+      peer_display_order: round.peer_display_order,
+      peer_records: round.peer_records,
+      n_peers_misreporting: round.n_peers_misreporting,
+      misreporting_peer_names: round.misreporting_peer_names,
+      schedule_version: round.schedule_version
+    }))
+  };
+}
+
+function projectionHash(stimuli) {
+  return crypto.createHash("sha256")
+    .update(JSON.stringify(legacyProjection(stimuli)))
+    .digest("hex");
+}
+
 assert.deepStrictEqual(CONDITIONS, EXPECTED_CONDITIONS);
 assert.strictEqual(SCHEDULE_VERSION, "h2-escalation-v1");
 assert.deepStrictEqual(PEER_ONSET_ROUNDS, {
@@ -40,7 +89,18 @@ assert.deepStrictEqual(PEER_ONSET_ROUNDS, {
   zhang_ming: 8
 });
 
-for (let seedIndex = 0; seedIndex < 20; seedIndex += 1) {
+for (const [condition, expectedHash] of Object.entries(LEGACY_STIMULUS_HASHES)) {
+  const stimuli = app._internal.createStudy1Stimuli(condition, "legacy-regression-seed-v1");
+  assert.strictEqual(projectionHash(stimuli), expectedHash, `${condition} legacy behavior changed`);
+}
+
+const compositionSignatures = {
+  dishonest_fixed_1: new Set(),
+  dishonest_fixed_2: new Set(),
+  dishonest_fixed_3: new Set()
+};
+
+for (let seedIndex = 0; seedIndex < 40; seedIndex += 1) {
   const seed = `h2-targeted-seed-${seedIndex}`;
   for (const condition of EXPECTED_CONDITIONS) {
     const stimuli = app._internal.createStudy1Stimuli(condition, seed);
@@ -49,11 +109,44 @@ for (let seedIndex = 0; seedIndex < 20; seedIndex += 1) {
     assert.strictEqual(stimuli.peerRecordsByRound.length, 10);
     assert.strictEqual(stimuli.peerDisplayOrder.length, 4);
 
+    const expectedFixedCount = fixedDishonestCountForCondition(condition);
+    assert.strictEqual(stimuli.fixedDishonestCount, expectedFixedCount);
+    assert.strictEqual(stimuli.conditionFamily, conditionFamilyForCondition(condition));
+    assert.strictEqual(
+      stimuli.compositionVersion,
+      expectedFixedCount === null ? null : COMPOSITION_VERSION
+    );
+
+    if (expectedFixedCount === null) {
+      assert.strictEqual(stimuli.fixedDishonestPeerNames, null);
+      assert.strictEqual(stimuli.peerBehaviorAssignments, null);
+    } else {
+      assert.strictEqual(stimuli.fixedDishonestPeerNames.length, expectedFixedCount);
+      assert.strictEqual(new Set(stimuli.fixedDishonestPeerNames).size, expectedFixedCount);
+      for (const name of stimuli.fixedDishonestPeerNames) {
+        assert(stimuli.peerDisplayOrder.includes(name), `unknown fixed peer ${name}`);
+      }
+      const expectedAssignments = Object.fromEntries(
+        stimuli.peerDisplayOrder.map((name) => [
+          name,
+          stimuli.fixedDishonestPeerNames.includes(name) ? "dishonest" : "honest"
+        ])
+      );
+      assert.deepStrictEqual(stimuli.peerBehaviorAssignments, expectedAssignments);
+      if (compositionSignatures[condition]) {
+        compositionSignatures[condition].add([...stimuli.fixedDishonestPeerNames].sort().join("|"));
+      }
+    }
+
     const observedCounts = [];
     const firstMisreportRound = new Map();
     for (const round of stimuli.peerRecordsByRound) {
       assert.deepStrictEqual(round.peer_display_order, stimuli.peerDisplayOrder);
       assert.strictEqual(round.schedule_version, SCHEDULE_VERSION);
+      assert.strictEqual(round.condition_family, stimuli.conditionFamily);
+      assert.strictEqual(round.fixed_dishonest_count, stimuli.fixedDishonestCount);
+      assert.deepStrictEqual(round.fixed_dishonest_peer_names, stimuli.fixedDishonestPeerNames);
+      assert.strictEqual(round.composition_version, stimuli.compositionVersion);
       const names = actualMisreporters(round);
 
       if (condition === "hidden") {
@@ -81,8 +174,13 @@ for (let seedIndex = 0; seedIndex < 20; seedIndex += 1) {
       }
     }
 
-    if (condition === "honest") assert.deepStrictEqual(observedCounts, Array(10).fill(0));
-    if (condition === "dishonest") assert.deepStrictEqual(observedCounts, Array(10).fill(4));
+    if (Object.prototype.hasOwnProperty.call(EXPECTED_FIXED_COUNTS, condition)) {
+      assert.deepStrictEqual(observedCounts, Array(10).fill(EXPECTED_FIXED_COUNTS[condition]));
+      const fixedNames = [...stimuli.fixedDishonestPeerNames].sort();
+      for (const round of stimuli.peerRecordsByRound) {
+        assert.deepStrictEqual([...actualMisreporters(round)].sort(), fixedNames);
+      }
+    }
     if (condition === "dishonest_escalating") {
       assert.deepStrictEqual(observedCounts, [...EXPECTED_MISREPORTING_COUNTS]);
       for (const [name, firstRound] of firstMisreportRound) {
@@ -99,4 +197,8 @@ for (let seedIndex = 0; seedIndex < 20; seedIndex += 1) {
   }
 }
 
-console.log("H2 targeted tests passed: four conditions, escalation schedule, monotonic onsets, legal reports, and deterministic persistence.");
+for (const [condition, signatures] of Object.entries(compositionSignatures)) {
+  assert(signatures.size > 1, `${condition} did not vary peer composition across sessions`);
+}
+
+console.log("H2 targeted tests passed: seven conditions, A-D regression hashes, fixed gradients, escalation schedule, legal reports, and deterministic persistence.");

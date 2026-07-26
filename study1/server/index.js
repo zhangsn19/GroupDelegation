@@ -10,6 +10,12 @@ const {
   PEER_ONSET_ROUNDS,
   isEscalatingPeerMisreporting
 } = require("../config/h2-escalation");
+const {
+  fixedDishonestCountForCondition,
+  conditionFamilyForCondition,
+  compositionVersionForCondition,
+  conditionAnalysisLabelForCondition
+} = require("../config/fixed-gradient");
 const exporters = require("./export");
 
 function loadDotEnv() {
@@ -41,7 +47,10 @@ const ENTRY_CODES = {
   A: { condition: "hidden", value: String(process.env.ENTRY_CODE_HIDDEN || "").trim() },
   B: { condition: "honest", value: String(process.env.ENTRY_CODE_HONEST || "").trim() },
   C: { condition: "dishonest", value: String(process.env.ENTRY_CODE_DISHONEST || "").trim() },
-  D: { condition: ESCALATING_CONDITION, value: String(process.env.ENTRY_CODE_DISHONEST_ESCALATING || "").trim() }
+  D: { condition: ESCALATING_CONDITION, value: String(process.env.ENTRY_CODE_DISHONEST_ESCALATING || "").trim() },
+  E: { condition: "dishonest_fixed_1", value: String(process.env.ENTRY_CODE_DISHONEST_FIXED_1 || "").trim() },
+  F: { condition: "dishonest_fixed_2", value: String(process.env.ENTRY_CODE_DISHONEST_FIXED_2 || "").trim() },
+  G: { condition: "dishonest_fixed_3", value: String(process.env.ENTRY_CODE_DISHONEST_FIXED_3 || "").trim() }
 };
 const PARTICIPANT_ID_POLICY = String(process.env.PARTICIPANT_ID_POLICY || "open").trim().toLowerCase() || "open";
 const PARTICIPANT_ID_ALLOWLIST_FILE = String(process.env.PARTICIPANT_ID_ALLOWLIST_FILE || "").trim();
@@ -121,7 +130,7 @@ function validateAssignmentConfig() {
   if (ASSIGNMENT_MODE !== "controlled_link") return;
   const values = Object.values(ENTRY_CODES).map((item) => item.value);
   if (values.some((value) => !value)) {
-    throw new Error("controlled_link assignment requires all four Study 1 entry codes");
+    throw new Error("controlled_link assignment requires all seven Study 1 entry codes");
   }
   if (new Set(values).size !== values.length) {
     throw new Error("controlled_link assignment entry codes must be distinct");
@@ -344,11 +353,25 @@ function createStudy1Stimuli(condition, seed) {
   const diceSequence = seededShuffle(STUDY1_DICE_MULTISET, createSeededRandom(seed, "study1-dice"));
   const peerDisplayOrder = seededShuffle(peerNames(), createSeededRandom(seed, "study1-peer-order"));
   const assignmentRandom = createSeededRandom(seed, "study1-dishonest-assignment");
+  const fixedDishonestCount = fixedDishonestCountForCondition(condition);
+  const fixedDishonestPeerNames = fixedDishonestCount === null
+    ? null
+    : seededShuffle(peerNames(), createSeededRandom(seed, "study1-fixed-gradient-peers"))
+      .slice(0, fixedDishonestCount);
+  const fixedDishonestPeerSet = new Set(fixedDishonestPeerNames || []);
+  const peerBehaviorAssignments = fixedDishonestPeerNames === null
+    ? null
+    : Object.fromEntries(peerNames().map((name) => [
+      name,
+      fixedDishonestPeerSet.has(name) ? "dishonest" : "honest"
+    ]));
+  const conditionFamily = conditionFamilyForCondition(condition);
+  const compositionVersion = compositionVersionForCondition(condition);
   const peerRecordsByRound = diceSequence.map((trueValue, roundIndex) => {
     const roundNumber = roundIndex + 1;
     const dishonestReports = peerDisplayOrder.map(() => randomDishonestReport(trueValue, assignmentRandom));
     const peerRecords = peerDisplayOrder.map((name, index) => {
-      const shouldMisreport = condition === "dishonest" || (
+      const shouldMisreport = fixedDishonestPeerSet.has(name) || (
         condition === ESCALATING_CONDITION &&
         isEscalatingPeerMisreporting(name, roundNumber)
       );
@@ -387,10 +410,23 @@ function createStudy1Stimuli(condition, seed) {
       peer_records: peerRecords,
       n_peers_misreporting: condition === "hidden" ? null : misreportingPeerNames.length,
       misreporting_peer_names: misreportingPeerNames,
+      condition_family: conditionFamily,
+      fixed_dishonest_count: fixedDishonestCount,
+      fixed_dishonest_peer_names: fixedDishonestPeerNames,
+      composition_version: compositionVersion,
       schedule_version: SCHEDULE_VERSION
     };
   });
-  return { diceSequence, peerDisplayOrder, peerRecordsByRound };
+  return {
+    diceSequence,
+    peerDisplayOrder,
+    peerRecordsByRound,
+    conditionFamily,
+    fixedDishonestCount,
+    fixedDishonestPeerNames,
+    peerBehaviorAssignments,
+    compositionVersion
+  };
 }
 
 function sessionDiceSequence(session) {
@@ -421,6 +457,10 @@ function publicDiceRound(session, round) {
   const {
     n_peers_misreporting,
     misreporting_peer_names,
+    condition_family,
+    fixed_dishonest_count,
+    fixed_dishonest_peer_names,
+    composition_version,
     schedule_version,
     ...publicRound
   } = round;
@@ -454,7 +494,7 @@ function allocateBlockCondition(state, { participantId, study }) {
     state.current_block = {
       block: state.next_block,
       position: 0,
-      sequence: shuffle(CONDITIONS.flatMap((condition) => [condition, condition]))
+      sequence: shuffle([...CONDITIONS])
     };
     state.next_block += 1;
   }
@@ -566,7 +606,12 @@ async function createSession({ study, participantId, requestedCondition, entry, 
   const study1Stimuli = study === "study1" ? createStudy1Stimuli(condition, stimulusSeed) : {
     diceSequence: [],
     peerDisplayOrder: [],
-    peerRecordsByRound: []
+    peerRecordsByRound: [],
+    conditionFamily: null,
+    fixedDishonestCount: null,
+    fixedDishonestPeerNames: null,
+    peerBehaviorAssignments: null,
+    compositionVersion: null
   };
   const diceSequence = study1Stimuli.diceSequence;
   const session = {
@@ -578,7 +623,12 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     stimulus_seed: stimulusSeed,
     study,
     condition,
-    condition_analysis_label: condition === "dishonest" ? "dishonest_static" : condition,
+    condition_analysis_label: conditionAnalysisLabelForCondition(condition),
+    condition_family: study1Stimuli.conditionFamily,
+    fixed_dishonest_count: study1Stimuli.fixedDishonestCount,
+    fixed_dishonest_peer_names: study1Stimuli.fixedDishonestPeerNames,
+    peer_behavior_assignments: study1Stimuli.peerBehaviorAssignments,
+    composition_version: study1Stimuli.compositionVersion,
     condition_assigned_at: allocation.assigned_at,
     assignment_source: assignmentSource,
     entry_link_id: entryLinkId,
@@ -589,7 +639,10 @@ async function createSession({ study, participantId, requestedCondition, entry, 
       hidden: "同伴具体提交隐藏",
       honest: "同伴如实提交",
       dishonest: "同伴提交更高数字",
-      dishonest_escalating: "同伴虚报人数逐步增加"
+      dishonest_escalating: "同伴虚报人数逐步增加",
+      dishonest_fixed_1: "固定 1 名同伴提交更高数字",
+      dishonest_fixed_2: "固定 2 名同伴提交更高数字",
+      dishonest_fixed_3: "固定 3 名同伴提交更高数字"
     }[condition],
     debug_mode: Boolean(debugOverride),
     participant_id: normalizedParticipant,
@@ -899,6 +952,10 @@ app.post("/api/session/:id/dice/round", asyncHandler(async (req, res) => {
       peer_records: stimulusRound.peer_records || [],
       n_peers_misreporting: stimulusRound.n_peers_misreporting ?? null,
       misreporting_peer_names: stimulusRound.misreporting_peer_names ?? null,
+      condition_family: stimulusRound.condition_family ?? draft.condition_family ?? null,
+      fixed_dishonest_count: stimulusRound.fixed_dishonest_count ?? draft.fixed_dishonest_count ?? null,
+      fixed_dishonest_peer_names: stimulusRound.fixed_dishonest_peer_names ?? draft.fixed_dishonest_peer_names ?? null,
+      composition_version: stimulusRound.composition_version ?? draft.composition_version ?? null,
       schedule_version: stimulusRound.schedule_version || draft.schedule_version || SCHEDULE_VERSION,
       reported_value: reported,
       upward_misreport: reported > trueValue,

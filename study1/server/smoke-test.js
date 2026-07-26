@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const http = require("http");
 const os = require("os");
+const nodeAssert = require("node:assert");
 const { spawnSync } = require("child_process");
 
 function makeBaseTestEnv(overrides = {}) {
@@ -16,6 +17,9 @@ function makeBaseTestEnv(overrides = {}) {
     "ENTRY_CODE_HONEST",
     "ENTRY_CODE_DISHONEST",
     "ENTRY_CODE_DISHONEST_ESCALATING",
+    "ENTRY_CODE_DISHONEST_FIXED_1",
+    "ENTRY_CODE_DISHONEST_FIXED_2",
+    "ENTRY_CODE_DISHONEST_FIXED_3",
     "TEST_CONDITION",
     "ADMIN_TOKEN",
     "DEBUG_LINKS",
@@ -34,6 +38,9 @@ function makeBaseTestEnv(overrides = {}) {
     ENTRY_CODE_HONEST: "",
     ENTRY_CODE_DISHONEST: "",
     ENTRY_CODE_DISHONEST_ESCALATING: "",
+    ENTRY_CODE_DISHONEST_FIXED_1: "",
+    ENTRY_CODE_DISHONEST_FIXED_2: "",
+    ENTRY_CODE_DISHONEST_FIXED_3: "",
     TEST_CONDITION: "",
     ADMIN_TOKEN: "dev-admin-token",
     STUDY_CONTACT_EMAIL: "123456@163.com",
@@ -58,6 +65,9 @@ function applyTestEnv(env) {
     "ENTRY_CODE_HONEST",
     "ENTRY_CODE_DISHONEST",
     "ENTRY_CODE_DISHONEST_ESCALATING",
+    "ENTRY_CODE_DISHONEST_FIXED_1",
+    "ENTRY_CODE_DISHONEST_FIXED_2",
+    "ENTRY_CODE_DISHONEST_FIXED_3",
     "TEST_CONDITION",
     "ADMIN_TOKEN",
     "DEBUG_LINKS",
@@ -78,6 +88,9 @@ const app = require("./index");
 const store = require("./store");
 const study1 = require("../config/study1-dice");
 const h2Schedule = require("../config/h2-escalation");
+const { CONDITIONS } = require("../config/common");
+const fixedGradient = require("../config/fixed-gradient");
+const exporters = require("./export");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -93,6 +106,9 @@ function testProductionConfigPollutionRegression() {
     "ENTRY_CODE_HONEST",
     "ENTRY_CODE_DISHONEST",
     "ENTRY_CODE_DISHONEST_ESCALATING",
+    "ENTRY_CODE_DISHONEST_FIXED_1",
+    "ENTRY_CODE_DISHONEST_FIXED_2",
+    "ENTRY_CODE_DISHONEST_FIXED_3",
     "TEST_CONDITION",
     "ADMIN_TOKEN",
     "DEBUG_LINKS",
@@ -108,6 +124,9 @@ function testProductionConfigPollutionRegression() {
     ENTRY_CODE_HONEST: "fake-production-honest-entry",
     ENTRY_CODE_DISHONEST: "fake-production-dishonest-entry",
     ENTRY_CODE_DISHONEST_ESCALATING: "fake-production-escalating-entry",
+    ENTRY_CODE_DISHONEST_FIXED_1: "fake-production-fixed-1-entry",
+    ENTRY_CODE_DISHONEST_FIXED_2: "fake-production-fixed-2-entry",
+    ENTRY_CODE_DISHONEST_FIXED_3: "fake-production-fixed-3-entry",
     TEST_CONDITION: "dishonest",
     ADMIN_TOKEN: "fake-production-admin-token",
     DEBUG_LINKS: "false",
@@ -121,7 +140,16 @@ function testProductionConfigPollutionRegression() {
     assert(env.ADMIN_TOKEN === "dev-admin-token", "base test env did not force dev admin token");
     assert(env.DEBUG_LINKS === "true", "base test env did not force debug links");
     assert(!env.PARTICIPANT_ID_ALLOWLIST_FILE, "base test env inherited allowlist file");
-    assert(!env.ENTRY_CODE_HIDDEN && !env.ENTRY_CODE_HONEST && !env.ENTRY_CODE_DISHONEST && !env.ENTRY_CODE_DISHONEST_ESCALATING, "base test env inherited entry codes");
+    assert(
+      !env.ENTRY_CODE_HIDDEN &&
+      !env.ENTRY_CODE_HONEST &&
+      !env.ENTRY_CODE_DISHONEST &&
+      !env.ENTRY_CODE_DISHONEST_ESCALATING &&
+      !env.ENTRY_CODE_DISHONEST_FIXED_1 &&
+      !env.ENTRY_CODE_DISHONEST_FIXED_2 &&
+      !env.ENTRY_CODE_DISHONEST_FIXED_3,
+      "base test env inherited entry codes"
+    );
     assert(!env.TEST_CONDITION, "base test env inherited TEST_CONDITION");
   } finally {
     for (const key of keys) {
@@ -199,7 +227,7 @@ function comprehensionAnswers() {
 }
 
 function assertPublicSession(session) {
-  for (const key of ["study", "condition", "condition_label", "condition_name", "condition_analysis_label", "schedule_version", "peer_onset_rounds", "n_peers_misreporting", "misreporting_peer_names", "is_test_session", "debug_mode", "debug_links_enabled", "randomization_block", "randomization_position", "assignment_source", "entry_link_id"]) {
+  for (const key of ["study", "condition", "condition_label", "condition_name", "condition_analysis_label", "condition_family", "fixed_dishonest_count", "fixed_dishonest_peer_names", "peer_behavior_assignments", "composition_version", "schedule_version", "peer_onset_rounds", "n_peers_misreporting", "misreporting_peer_names", "is_test_session", "debug_mode", "debug_links_enabled", "randomization_block", "randomization_position", "assignment_source", "entry_link_id"]) {
     assert(!Object.prototype.hasOwnProperty.call(session, key), `public session exposed ${key}`);
   }
   assert(session.study_version === "study1-v1.1.0", "public session study_version mismatch");
@@ -208,7 +236,7 @@ function assertPublicSession(session) {
 
 function assertPublicConfig(config) {
   assert(config.contact_email === "123456@163.com", "config contact_email must be 123456@163.com");
-  for (const key of ["version", "study_version", "protocol_version", "pilotNotice", "condition", "condition_analysis_label", "schedule_version", "peer_onset_rounds", "randomization", "debug", "study1", "study2", "assignment_source", "entry_link_id"]) {
+  for (const key of ["version", "study_version", "protocol_version", "pilotNotice", "condition", "condition_analysis_label", "condition_family", "fixed_dishonest_count", "fixed_dishonest_peer_names", "peer_behavior_assignments", "composition_version", "schedule_version", "peer_onset_rounds", "randomization", "debug", "study1", "study2", "assignment_source", "entry_link_id"]) {
     assert(!Object.prototype.hasOwnProperty.call(config, key), `config exposed ${key}`);
   }
   assert(Array.isArray(config.baselineItems), "config baselineItems missing");
@@ -271,7 +299,7 @@ async function createReadySession(server, config, condition, participantId) {
 function assertPeerRound(condition, current) {
   assert(current.true_die_value !== 6, "fixed common die sequence must not include 6");
   assert(current.peer_records.length === 4, "each round must have four peer records");
-  for (const key of ["condition", "condition_analysis_label", "schedule_version", "peer_onset_rounds", "n_peers_misreporting", "misreporting_peer_names"]) {
+  for (const key of ["condition", "condition_analysis_label", "condition_family", "fixed_dishonest_count", "fixed_dishonest_peer_names", "peer_behavior_assignments", "composition_version", "schedule_version", "peer_onset_rounds", "n_peers_misreporting", "misreporting_peer_names"]) {
     assert(!Object.prototype.hasOwnProperty.call(current, key), `public dice payload exposed ${key}`);
   }
   let visibleMisreportCount = 0;
@@ -289,10 +317,6 @@ function assertPeerRound(condition, current) {
       if (record.reportedValue > current.true_die_value) visibleMisreportCount += 1;
     }
     if (condition === "honest") assert(record.reportedValue === current.true_die_value, "honest peer report must equal true die");
-    if (condition === "dishonest") {
-      assert(record.reportedValue > current.true_die_value, "dishonest peer report must be greater than true die");
-      assert(record.reportedValue <= 6, "dishonest peer report must not exceed 6");
-    }
     if (condition === "dishonest_escalating") {
       const peerId = h2Schedule.peerIdForName(record.name);
       const shouldMisreport = current.round_index >= h2Schedule.PEER_ONSET_ROUNDS[peerId];
@@ -301,7 +325,17 @@ function assertPeerRound(condition, current) {
     }
   }
   if (condition === "honest") assert(visibleMisreportCount === 0, "honest public misreport count mismatch");
-  if (condition === "dishonest") assert(visibleMisreportCount === 4, "dishonest public misreport count mismatch");
+  const fixedCount = fixedGradient.fixedDishonestCountForCondition(condition);
+  if (fixedCount !== null) {
+    assert(visibleMisreportCount === fixedCount, `${condition} public misreport count mismatch`);
+    for (const record of current.peer_records) {
+      if (record.reportedValue > current.true_die_value) {
+        assert(record.reportedValue <= 6, `${condition} peer report must not exceed 6`);
+      } else {
+        assert(record.reportedValue === current.true_die_value, `${condition} honest peer report mismatch`);
+      }
+    }
+  }
   if (condition === "dishonest_escalating") {
     assert(visibleMisreportCount === h2Schedule.EXPECTED_MISREPORTING_COUNTS[current.round_index - 1], "escalating public count mismatch");
   }
@@ -325,10 +359,30 @@ async function assertStudy1StimuliPersisted(id, condition) {
   assert(first.schedule_version === h2Schedule.SCHEDULE_VERSION, "Study 1 schedule_version missing");
   assert(JSON.stringify(first.peer_onset_rounds) === JSON.stringify(h2Schedule.PEER_ONSET_ROUNDS), "Study 1 peer onset rounds mismatch");
   assert(first.condition_analysis_label === (condition === "dishonest" ? "dishonest_static" : condition), "Study 1 condition analysis label mismatch");
+  const expectedFixedCount = fixedGradient.fixedDishonestCountForCondition(condition);
+  assert(first.condition_family === fixedGradient.conditionFamilyForCondition(condition), "Study 1 condition_family mismatch");
+  assert(first.fixed_dishonest_count === expectedFixedCount, "Study 1 fixed dishonest count mismatch");
+  assert(first.composition_version === fixedGradient.compositionVersionForCondition(condition), "Study 1 composition version mismatch");
+  if (expectedFixedCount === null) {
+    assert(first.fixed_dishonest_peer_names === null, "non-fixed condition should not persist fixed peer names");
+    assert(first.peer_behavior_assignments === null, "non-fixed condition should not persist fixed peer assignments");
+  } else {
+    assert(first.fixed_dishonest_peer_names.length === expectedFixedCount, "fixed peer name count mismatch");
+    assert(new Set(first.fixed_dishonest_peer_names).size === expectedFixedCount, "fixed peer names must be unique");
+    const expectedAssignments = Object.fromEntries(first.study1_peer_display_order.map((name) => [
+      name,
+      first.fixed_dishonest_peer_names.includes(name) ? "dishonest" : "honest"
+    ]));
+    nodeAssert.deepStrictEqual(first.peer_behavior_assignments, expectedAssignments, "fixed peer behavior assignments mismatch");
+  }
   for (const round of first.study1_peer_records_by_round) {
     assert(JSON.stringify(round.peer_display_order) === JSON.stringify(first.study1_peer_display_order), "Study 1 peer order not stable across rounds");
     assert(round.true_die_value === first.study1_die_sequence[round.round_index - 1], "Study 1 round true value mismatch");
     assert(round.schedule_version === h2Schedule.SCHEDULE_VERSION, "Study 1 round schedule_version mismatch");
+    assert(round.condition_family === first.condition_family, "Study 1 round condition_family mismatch");
+    assert(round.fixed_dishonest_count === first.fixed_dishonest_count, "Study 1 round fixed count mismatch");
+    assert(JSON.stringify(round.fixed_dishonest_peer_names) === JSON.stringify(first.fixed_dishonest_peer_names), "Study 1 fixed peer names changed across rounds");
+    assert(round.composition_version === first.composition_version, "Study 1 round composition version mismatch");
     const actualMisreportingNames = round.peer_records
       .filter((record) => record.underlying_reported_value > round.true_die_value)
       .map((record) => record.name);
@@ -342,18 +396,21 @@ async function assertStudy1StimuliPersisted(id, condition) {
         assert(record.round_index === round.round_index, "Study 1 hidden raw round_index mismatch");
       });
     }
-    if (condition === "honest") {
-      assert(round.n_peers_misreporting === 0 && actualMisreportingNames.length === 0, "Study 1 honest misreport count mismatch");
-      assert(JSON.stringify(round.misreporting_peer_names) === "[]", "Study 1 honest misreporting names mismatch");
-      round.peer_records.forEach((record) => assert(record.reportedValue === round.true_die_value, "Study 1 honest report mismatch"));
-    }
-    if (condition === "dishonest") {
-      assert(round.n_peers_misreporting === 4 && actualMisreportingNames.length === 4, "Study 1 dishonest misreport count mismatch");
-      assert(JSON.stringify(round.misreporting_peer_names) === JSON.stringify(actualMisreportingNames), "Study 1 dishonest names mismatch");
+    if (expectedFixedCount !== null) {
+      assert(round.n_peers_misreporting === expectedFixedCount, `Study 1 ${condition} misreport count mismatch`);
+      assert(actualMisreportingNames.length === expectedFixedCount, `Study 1 ${condition} actual misreport count mismatch`);
+      assert(JSON.stringify(round.misreporting_peer_names) === JSON.stringify(actualMisreportingNames), `Study 1 ${condition} names mismatch`);
+      assert(
+        JSON.stringify([...actualMisreportingNames].sort()) === JSON.stringify([...first.fixed_dishonest_peer_names].sort()),
+        `Study 1 ${condition} fixed peer identities changed`
+      );
       round.peer_records.forEach((record) => {
-        assert(record.reportedValue > round.true_die_value, "Study 1 dishonest report must exceed true value");
-        assert(record.reportedValue >= round.true_die_value + 1, "Study 1 dishonest report must be at least true + 1");
-        assert(record.reportedValue <= 6, "Study 1 dishonest report must not exceed 6");
+        if (first.fixed_dishonest_peer_names.includes(record.name)) {
+          assert(record.reportedValue > round.true_die_value, `Study 1 ${condition} report must exceed true value`);
+          assert(record.reportedValue <= 6, `Study 1 ${condition} report must not exceed 6`);
+        } else {
+          assert(record.reportedValue === round.true_die_value, `Study 1 ${condition} honest peer report mismatch`);
+        }
       });
     }
     if (condition === "dishonest_escalating") {
@@ -373,6 +430,24 @@ async function assertStudy1StimuliPersisted(id, condition) {
       }
     }
   }
+  if (condition === "dishonest_fixed_1") {
+    const code = `
+      process.env.DATA_DIR = ${JSON.stringify(store.DATA_DIR)};
+      const store = require(${JSON.stringify(path.join(__dirname, "store.js"))});
+      store.readSession(${JSON.stringify(id)}).then((session) => {
+        const expectedNames = ${JSON.stringify(first.fixed_dishonest_peer_names)};
+        if (JSON.stringify(session.fixed_dishonest_peer_names) !== JSON.stringify(expectedNames)) throw new Error("fixed peer names changed after restart");
+        if (JSON.stringify(session.study1_peer_records_by_round) !== ${JSON.stringify(JSON.stringify(first.study1_peer_records_by_round))}) throw new Error("peer records changed after restart");
+        console.log("Study 1 restart persistence check passed");
+      }).catch((error) => { console.error(error); process.exit(1); });
+    `;
+    const restarted = spawnSync(process.execPath, ["-e", code], {
+      encoding: "utf8",
+      env: makeBaseTestEnv({ DATA_DIR: store.DATA_DIR })
+    });
+    if (restarted.stdout) process.stdout.write(restarted.stdout);
+    assert(restarted.status === 0, restarted.stderr || "Study 1 restart persistence child failed");
+  }
 }
 
 function testStudy1DeterministicSeeds() {
@@ -388,6 +463,14 @@ function testStudy1DeterministicSeeds() {
   );
   const escalating = app._internal.createStudy1Stimuli("dishonest_escalating", "deterministic-escalating-seed");
   assert(JSON.stringify(escalating.peerRecordsByRound.map((round) => round.n_peers_misreporting)) === JSON.stringify(h2Schedule.EXPECTED_MISREPORTING_COUNTS), "Study 1 escalating deterministic schedule mismatch");
+  for (const condition of ["dishonest_fixed_1", "dishonest_fixed_2", "dishonest_fixed_3"]) {
+    const signatures = new Set();
+    for (let i = 0; i < 30; i += 1) {
+      const stimuli = app._internal.createStudy1Stimuli(condition, `fixed-composition-${condition}-${i}`);
+      signatures.add([...stimuli.fixedDishonestPeerNames].sort().join("|"));
+    }
+    assert(signatures.size > 1, `${condition} should produce different peer compositions across sessions`);
+  }
 }
 
 function testDataDirLoadedBeforeStore() {
@@ -465,7 +548,7 @@ async function runDiceTask(server, id, current, condition) {
     });
     assert(submitted.round.selection_started_at === presented.current.selection_started_at, "server must use stored selection_started_at");
     assert(submitted.round.decision_duration_ms >= 0, "server must compute decision duration");
-    for (const key of ["condition", "condition_analysis_label", "schedule_version", "peer_onset_rounds", "n_peers_misreporting", "misreporting_peer_names"]) {
+    for (const key of ["condition", "condition_analysis_label", "condition_family", "fixed_dishonest_count", "fixed_dishonest_peer_names", "peer_behavior_assignments", "composition_version", "schedule_version", "peer_onset_rounds", "n_peers_misreporting", "misreporting_peer_names"]) {
       assert(!Object.prototype.hasOwnProperty.call(submitted.round, key), `public submitted round exposed ${key}`);
     }
     if (round === 1) {
@@ -487,6 +570,10 @@ async function runDiceTask(server, id, current, condition) {
     const stimulusRound = stored.study1_peer_records_by_round[round.round_index - 1];
     assert(round.n_peers_misreporting === stimulusRound.n_peers_misreporting, "stored round misreport count differs from stimulus");
     assert(JSON.stringify(round.misreporting_peer_names) === JSON.stringify(stimulusRound.misreporting_peer_names), "stored round misreport names differ from stimulus");
+    assert(round.condition_family === stimulusRound.condition_family, "stored round condition family differs from stimulus");
+    assert(round.fixed_dishonest_count === stimulusRound.fixed_dishonest_count, "stored round fixed count differs from stimulus");
+    assert(JSON.stringify(round.fixed_dishonest_peer_names) === JSON.stringify(stimulusRound.fixed_dishonest_peer_names), "stored round fixed peer names differ from stimulus");
+    assert(round.composition_version === stimulusRound.composition_version, "stored round composition version differs from stimulus");
     assert(round.schedule_version === h2Schedule.SCHEDULE_VERSION, "stored round schedule version mismatch");
   }
 }
@@ -527,8 +614,11 @@ async function completeAfterTask(server, config, id) {
   assert(completed.session.completion?.completion_code === "SMOKE-STUDY1-COMPLETE", "completion code missing");
   const csv = await request(server, "GET", "/api/admin/export/participants.csv?include_test=true", undefined, 200, { "x-admin-token": "dev-admin-token" });
   assert(csv.includes("debrief_viewed_at"), "participants CSV missing debrief_viewed_at");
+  for (const column of ["condition", "condition_analysis_label", "condition_family", "fixed_dishonest_count", "composition_version"]) {
+    assert(csv.split("\n")[0].includes(column), `participants CSV missing ${column}`);
+  }
   const diceCsv = await request(server, "GET", "/api/admin/export/study1_dice_rounds.csv?include_test=true", undefined, 200, { "x-admin-token": "dev-admin-token" });
-  for (const column of ["condition_analysis_label", "n_peers_misreporting", "misreporting_peer_names", "schedule_version", "stimulus_version", "stimulus_seed", "peer_display_order_json", "peer_records_json"]) {
+  for (const column of ["condition_analysis_label", "condition_family", "fixed_dishonest_count", "fixed_dishonest_peer_names", "composition_version", "n_peers_misreporting", "misreporting_peer_names", "schedule_version", "stimulus_version", "stimulus_seed", "peer_display_order_json", "peer_records_json"]) {
     assert(diceCsv.split("\n")[0].includes(column), `Study 1 dice CSV missing ${column}`);
   }
   return completed.session;
@@ -564,11 +654,17 @@ function testBlockAndConcurrency() {
     (async () => {
       const server = app.listen(0);
       try {
-        for (let i = 0; i < 16; i += 1) await req(server, "block-s1-" + i);
+        const conditions = ${JSON.stringify(CONDITIONS)};
+        for (let i = 0; i < 7; i += 1) await req(server, "block-s1-" + i);
+        const stateAfterSeven = JSON.parse(fs.readFileSync(path.join(path.dirname(process.env.DATA_DIR), "randomization-state.json"), "utf8"));
+        const firstSeven = stateAfterSeven.allocations.filter((item) => item.study === "study1" && item.participant_id.startsWith("block-s1-"));
+        const countsAfterSeven = firstSeven.reduce((acc, item) => { acc[item.condition] = (acc[item.condition] || 0) + 1; return acc; }, {});
+        assert(conditions.every((condition) => countsAfterSeven[condition] === 1), "7-person block counts mismatch " + JSON.stringify(countsAfterSeven));
+        for (let i = 7; i < 14; i += 1) await req(server, "block-s1-" + i);
         const state = JSON.parse(fs.readFileSync(path.join(path.dirname(process.env.DATA_DIR), "randomization-state.json"), "utf8"));
         const allocations = state.allocations.filter((item) => item.study === "study1" && item.participant_id.startsWith("block-s1-"));
         const counts = allocations.reduce((acc, item) => { acc[item.condition] = (acc[item.condition] || 0) + 1; return acc; }, {});
-        assert(counts.hidden === 4 && counts.honest === 4 && counts.dishonest === 4 && counts.dishonest_escalating === 4, "block counts mismatch " + JSON.stringify(counts));
+        assert(conditions.every((condition) => counts[condition] === 2), "14-person block counts mismatch " + JSON.stringify(counts));
         const [a, b] = await Promise.all([req(server, "same-s1"), req(server, "same-s1")]);
         assert(a.session.id === b.session.id, "same participant got different session ids");
         const sessions = (await store.listSessions()).filter((session) => session.participant_id === "same-s1");
@@ -577,7 +673,8 @@ function testBlockAndConcurrency() {
         assert(sessions.length === 1, "same participant duplicate sessions");
         assert(sameAllocations.length === 1, "same participant duplicate allocations");
         console.log("Study 1 concurrent same participant: session_id=" + a.session.id + " sessions=" + sessions.length + " allocations=" + sameAllocations.length);
-        console.log("Study 1 block randomization counts: hidden=" + counts.hidden + " honest=" + counts.honest + " dishonest=" + counts.dishonest + " dishonest_escalating=" + counts.dishonest_escalating);
+        console.log("Study 1 7-person block counts: " + JSON.stringify(countsAfterSeven));
+        console.log("Study 1 14-person block counts: " + JSON.stringify(counts));
       } finally {
         server.close();
       }
@@ -599,6 +696,9 @@ function testControlledLinkAssignment() {
     process.env.ENTRY_CODE_HONEST = "s1-entry-b-" + Date.now();
     process.env.ENTRY_CODE_DISHONEST = "s1-entry-c-" + Date.now();
     process.env.ENTRY_CODE_DISHONEST_ESCALATING = "s1-entry-d-" + Date.now();
+    process.env.ENTRY_CODE_DISHONEST_FIXED_1 = "s1-entry-e-" + Date.now();
+    process.env.ENTRY_CODE_DISHONEST_FIXED_2 = "s1-entry-f-" + Date.now();
+    process.env.ENTRY_CODE_DISHONEST_FIXED_3 = "s1-entry-g-" + Date.now();
     process.env.TEST_CONDITION = "dishonest";
     process.env.STUDY_CONTACT_EMAIL = "123456@163.com";
     process.env.DATA_DIR = ${JSON.stringify(dataDir)};
@@ -611,7 +711,10 @@ function testControlledLinkAssignment() {
       hidden: process.env.ENTRY_CODE_HIDDEN,
       honest: process.env.ENTRY_CODE_HONEST,
       dishonest: process.env.ENTRY_CODE_DISHONEST,
-      dishonest_escalating: process.env.ENTRY_CODE_DISHONEST_ESCALATING
+      dishonest_escalating: process.env.ENTRY_CODE_DISHONEST_ESCALATING,
+      dishonest_fixed_1: process.env.ENTRY_CODE_DISHONEST_FIXED_1,
+      dishonest_fixed_2: process.env.ENTRY_CODE_DISHONEST_FIXED_2,
+      dishonest_fixed_3: process.env.ENTRY_CODE_DISHONEST_FIXED_3
     };
     function assert(condition, message) { if (!condition) throw new Error(message); }
     function req(server, body, expectedStatus = 200, requestPath = "/api/session") {
@@ -635,6 +738,11 @@ function testControlledLinkAssignment() {
       const forbiddenKeys = new Set([
         "condition",
         "condition_analysis_label",
+        "condition_family",
+        "fixed_dishonest_count",
+        "fixed_dishonest_peer_names",
+        "peer_behavior_assignments",
+        "composition_version",
         "assignment_source",
         "entry_link_id",
         "schedule_version",
@@ -651,7 +759,7 @@ function testControlledLinkAssignment() {
       };
       visit(value);
       const text = JSON.stringify(value);
-      for (const forbidden of [process.env.ENTRY_CODE_HIDDEN, process.env.ENTRY_CODE_HONEST, process.env.ENTRY_CODE_DISHONEST, process.env.ENTRY_CODE_DISHONEST_ESCALATING]) {
+      for (const forbidden of [process.env.ENTRY_CODE_HIDDEN, process.env.ENTRY_CODE_HONEST, process.env.ENTRY_CODE_DISHONEST, process.env.ENTRY_CODE_DISHONEST_ESCALATING, process.env.ENTRY_CODE_DISHONEST_FIXED_1, process.env.ENTRY_CODE_DISHONEST_FIXED_2, process.env.ENTRY_CODE_DISHONEST_FIXED_3]) {
         assert(!text.includes(forbidden), "public response leaked entry secret");
       }
     }
@@ -663,13 +771,13 @@ function testControlledLinkAssignment() {
         await req(server, { participant_id: "bad-entry-s1", entry: "wrong-entry" }, 400);
         const before = await store.listSessions();
         assert(before.length === 0, "missing/invalid entry created sessions");
-        for (const condition of ["hidden","honest","dishonest","dishonest_escalating"]) {
+        for (const condition of ${JSON.stringify(CONDITIONS)}) {
           const created = await req(server, { participant_id: "controlled-s1-" + condition, entry: entries[condition] });
           assertPublicClean(created.session);
           const raw = await store.readSession(created.session.id);
           assert(raw.condition === condition, "controlled condition mismatch");
           assert(raw.assignment_source === "controlled_link", "assignment_source mismatch");
-          assert(["A","B","C","D"].includes(raw.entry_link_id), "entry_link_id missing");
+          assert(["A","B","C","D","E","F","G"].includes(raw.entry_link_id), "entry_link_id missing");
           assert(raw.randomization_block === null && raw.randomization_position === null, "controlled link must not have block position");
           assert(JSON.stringify(raw).includes(entries[condition]) === false, "raw entry code leaked to session");
         }
@@ -697,7 +805,10 @@ function testControlledLinkAssignment() {
       ENTRY_CODE_HIDDEN: "s1-entry-a-test",
       ENTRY_CODE_HONEST: "s1-entry-b-test",
       ENTRY_CODE_DISHONEST: "s1-entry-c-test",
-      ENTRY_CODE_DISHONEST_ESCALATING: "s1-entry-d-test"
+      ENTRY_CODE_DISHONEST_ESCALATING: "s1-entry-d-test",
+      ENTRY_CODE_DISHONEST_FIXED_1: "s1-entry-e-test",
+      ENTRY_CODE_DISHONEST_FIXED_2: "s1-entry-f-test",
+      ENTRY_CODE_DISHONEST_FIXED_3: "s1-entry-g-test"
     })
   });
   if (result.stdout) process.stdout.write(result.stdout);
@@ -729,6 +840,9 @@ function testParticipantAllowlistPolicy() {
     process.env.ENTRY_CODE_HONEST = "s1-allow-b";
     process.env.ENTRY_CODE_DISHONEST = "s1-allow-c";
     process.env.ENTRY_CODE_DISHONEST_ESCALATING = "s1-allow-d";
+    process.env.ENTRY_CODE_DISHONEST_FIXED_1 = "s1-allow-e";
+    process.env.ENTRY_CODE_DISHONEST_FIXED_2 = "s1-allow-f";
+    process.env.ENTRY_CODE_DISHONEST_FIXED_3 = "s1-allow-g";
     process.env.PARTICIPANT_ID_POLICY = "allowlist";
     process.env.PARTICIPANT_ID_ALLOWLIST_FILE = "missing.json";
     require(${JSON.stringify(path.join(__dirname, "index.js"))});
@@ -742,6 +856,9 @@ function testParticipantAllowlistPolicy() {
       ENTRY_CODE_HONEST: "s1-allow-b",
       ENTRY_CODE_DISHONEST: "s1-allow-c",
       ENTRY_CODE_DISHONEST_ESCALATING: "s1-allow-d",
+      ENTRY_CODE_DISHONEST_FIXED_1: "s1-allow-e",
+      ENTRY_CODE_DISHONEST_FIXED_2: "s1-allow-f",
+      ENTRY_CODE_DISHONEST_FIXED_3: "s1-allow-g",
       PARTICIPANT_ID_ALLOWLIST_FILE: "missing.json"
     })
   });
@@ -753,7 +870,10 @@ function testParticipantAllowlistPolicy() {
   fs.mkdirSync(root, { recursive: true });
   fs.writeFileSync(allowlistPath, JSON.stringify([
     { participant_id: "GD-S1-K7M4Q2", entry_link_id: "A" },
-    { participant_id: "GD-S1-P8N6R1", entry_link_id: "B" }
+    { participant_id: "GD-S1-P8N6R1", entry_link_id: "B" },
+    { participant_id: "GD-S1-E1A2B3", entry_link_id: "E" },
+    { participant_id: "GD-S1-F1C2D3", entry_link_id: "F" },
+    { participant_id: "GD-S1-G1E2F3", entry_link_id: "G" }
   ]), "utf8");
   const code = `
     process.env.NODE_ENV = "development";
@@ -763,6 +883,9 @@ function testParticipantAllowlistPolicy() {
     process.env.ENTRY_CODE_HONEST = "s1-allow-b-" + Date.now();
     process.env.ENTRY_CODE_DISHONEST = "s1-allow-c-" + Date.now();
     process.env.ENTRY_CODE_DISHONEST_ESCALATING = "s1-allow-d-" + Date.now();
+    process.env.ENTRY_CODE_DISHONEST_FIXED_1 = "s1-allow-e-" + Date.now();
+    process.env.ENTRY_CODE_DISHONEST_FIXED_2 = "s1-allow-f-" + Date.now();
+    process.env.ENTRY_CODE_DISHONEST_FIXED_3 = "s1-allow-g-" + Date.now();
     process.env.PARTICIPANT_ID_POLICY = "allowlist";
     process.env.PARTICIPANT_ID_ALLOWLIST_FILE = ${JSON.stringify(allowlistPath)};
     process.env.STUDY_CONTACT_EMAIL = "123456@163.com";
@@ -805,6 +928,15 @@ function testParticipantAllowlistPolicy() {
         assert(sessions.length === 1, "allowlist created duplicate sessions");
         const raw = await store.readSession(created.session.id);
         assert(raw.assignment_source === "controlled_link" && raw.entry_link_id === "A", "allowlist entry assignment mismatch");
+        for (const [participant_id, entry, expectedCondition, expectedEntry] of [
+          ["GD-S1-E1A2B3", process.env.ENTRY_CODE_DISHONEST_FIXED_1, "dishonest_fixed_1", "E"],
+          ["GD-S1-F1C2D3", process.env.ENTRY_CODE_DISHONEST_FIXED_2, "dishonest_fixed_2", "F"],
+          ["GD-S1-G1E2F3", process.env.ENTRY_CODE_DISHONEST_FIXED_3, "dishonest_fixed_3", "G"]
+        ]) {
+          const result = await req(server, { participant_id, entry });
+          const fixedRaw = await store.readSession(result.session.id);
+          assert(fixedRaw.condition === expectedCondition && fixedRaw.entry_link_id === expectedEntry, "fixed allowlist entry assignment mismatch");
+        }
         console.log("Study 1 participant allowlist checks passed");
       } finally {
         server.close();
@@ -821,6 +953,9 @@ function testParticipantAllowlistPolicy() {
       ENTRY_CODE_HONEST: "s1-allow-b-test",
       ENTRY_CODE_DISHONEST: "s1-allow-c-test",
       ENTRY_CODE_DISHONEST_ESCALATING: "s1-allow-d-test",
+      ENTRY_CODE_DISHONEST_FIXED_1: "s1-allow-e-test",
+      ENTRY_CODE_DISHONEST_FIXED_2: "s1-allow-f-test",
+      ENTRY_CODE_DISHONEST_FIXED_3: "s1-allow-g-test",
       PARTICIPANT_ID_ALLOWLIST_FILE: allowlistPath
     })
   });
@@ -870,17 +1005,43 @@ function testBlockModeRejectsEntry() {
   assert(result.status === 0, result.stderr || "block entry child failed");
 }
 
+function testLegacySessionExportCompatibility() {
+  const legacy = {
+    id: "legacy-session",
+    participant_id: "legacy-participant",
+    study: "study1",
+    condition: "honest",
+    status: "task_in_progress",
+    created_at: "2026-01-01T00:00:00.000Z",
+    dice_rounds: [{
+      round_index: 1,
+      true_die_value: 3,
+      reported_value: 3,
+      peer_records: [],
+      n_peers_misreporting: 0,
+      misreporting_peer_names: []
+    }]
+  };
+  const participantCsv = exporters.participantsCsv([legacy]);
+  const diceCsv = exporters.study1DiceRoundsCsv([legacy]);
+  assert(participantCsv.includes("condition_family"), "legacy participants export missing new header");
+  assert(diceCsv.includes("fixed_dishonest_peer_names"), "legacy dice export missing new header");
+  assert(!Object.prototype.hasOwnProperty.call(legacy, "condition_family"), "legacy export mutated source session");
+  assert(!Object.prototype.hasOwnProperty.call(legacy.dice_rounds[0], "composition_version"), "legacy export mutated source round");
+}
+
 function staticChecks() {
   const root = path.join(__dirname, "..");
   const appJs = fs.readFileSync(path.join(root, "public/js/app.js"), "utf8");
   const diceJs = fs.readFileSync(path.join(root, "public/js/study1-dice.js"), "utf8");
   const indexHtml = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
+  const adminHtml = fs.readFileSync(path.join(root, "public/admin.html"), "utf8");
   const styleCss = fs.readFileSync(path.join(root, "public/css/style.css"), "utf8");
   const surveyJs = fs.readFileSync(path.join(root, "public/js/survey.js"), "utf8");
   const serverJs = fs.readFileSync(path.join(root, "server/index.js"), "utf8");
   const measureConfig = fs.readFileSync(path.join(root, "config/measures.js"), "utf8");
   const studyConfig = fs.readFileSync(path.join(root, "config/study1-dice.js"), "utf8");
-  const allText = [appJs, diceJs, indexHtml, styleCss, surveyJs, serverJs, measureConfig, studyConfig].join("\n");
+  const allText = [appJs, diceJs, indexHtml, adminHtml, styleCss, surveyJs, serverJs, measureConfig, studyConfig].join("\n");
   assert(!appJs.includes("params.get(\"condition\")"), "frontend must not read URL condition");
   assert(!appJs.includes("params.get(\"study\")"), "frontend must not read URL study");
   assert(appJs.includes('params.get("entry")') && appJs.includes("entry: state.entryCode"), "frontend must send entry without interpreting condition");
@@ -916,7 +1077,18 @@ function staticChecks() {
   assert(!surveyJs.includes(".replace("), "F2 frontend replace logic must be removed");
   assert(serverJs.includes("contact_email: publicContactEmail()"), "config contact email missing");
   assert(!serverJs.includes("debug_links_enabled"), "server source should not expose debug_links_enabled");
-  assert(serverJs.includes('ASSIGNMENT_MODE') && serverJs.includes('controlled_link') && serverJs.includes('ENTRY_CODE_HIDDEN') && serverJs.includes('ENTRY_CODE_DISHONEST_ESCALATING'), "four-condition controlled_link assignment source missing");
+  assert(serverJs.includes('ASSIGNMENT_MODE') && serverJs.includes('controlled_link') && serverJs.includes('ENTRY_CODE_HIDDEN') && serverJs.includes('ENTRY_CODE_DISHONEST_ESCALATING') && serverJs.includes('ENTRY_CODE_DISHONEST_FIXED_1') && serverJs.includes('ENTRY_CODE_DISHONEST_FIXED_2') && serverJs.includes('ENTRY_CODE_DISHONEST_FIXED_3'), "seven-condition controlled_link assignment source missing");
+  for (const option of [
+    '<option value="hidden">Hidden</option>',
+    '<option value="honest">Honest / Fixed 0</option>',
+    '<option value="dishonest_fixed_1">Fixed 1</option>',
+    '<option value="dishonest_fixed_2">Fixed 2</option>',
+    '<option value="dishonest_fixed_3">Fixed 3</option>',
+    '<option value="dishonest">Dishonest Static / Fixed 4</option>',
+    '<option value="dishonest_escalating">Dishonest Escalating</option>'
+  ]) {
+    assert(adminHtml.includes(option), `admin condition option missing: ${option}`);
+  }
   assert(measureConfig.includes("a_truthful_peer_count") && measureConfig.includes("a_peer_behavior_change"), "H2 manipulation checks missing");
   assert(surveyJs.includes("item.midLabel"), "H2 midpoint scale label support missing");
   assert(!serverJs.includes("dishonest_escalating_") && !serverJs.includes('"D1"') && !serverJs.includes('"D2"') && !serverJs.includes('"D3"'), "unexpected extra H2 condition found");
@@ -947,6 +1119,7 @@ async function main() {
   testControlledLinkAssignment();
   testParticipantAllowlistPolicy();
   testBlockModeRejectsEntry();
+  testLegacySessionExportCompatibility();
   const server = app.listen(0);
   try {
     const config = await request(server, "GET", "/api/config");
@@ -957,16 +1130,24 @@ async function main() {
     assertPublicConfig(config);
     await testMissingSessionHandling(server);
     await testApiNeverReturnsHtml(server);
-    for (const condition of ["hidden", "honest", "dishonest", "dishonest_escalating"]) {
+    for (const condition of CONDITIONS) {
       const ready = await createReadySession(server, config, condition, `flow-s1-${condition}-${Date.now()}`);
       await assertStudy1StimuliPersisted(ready.id, condition);
       await runDiceTask(server, ready.id, ready.current, condition);
     }
     const adminSummary = await request(server, "GET", "/api/admin/summary?include_test=true", undefined, 200, { "x-admin-token": "dev-admin-token" });
-    assert(JSON.stringify(Object.keys(adminSummary.summary.study1)) === JSON.stringify(["hidden", "honest", "dishonest", "dishonest_escalating"]), "admin summary condition set mismatch");
+    assert(JSON.stringify(Object.keys(adminSummary.summary.study1)) === JSON.stringify(CONDITIONS), "admin summary condition set mismatch");
     assert(adminSummary.summary.study1.dishonest.condition_analysis_label === "dishonest_static", "admin summary static analysis label mismatch");
+    for (const condition of CONDITIONS) {
+      const row = adminSummary.summary.study1[condition];
+      assert(row && typeof row.sessions === "number" && typeof row.started === "number" && typeof row.completed === "number", `admin summary metrics missing for ${condition}`);
+    }
     const escalatingSummary = await request(server, "GET", "/api/admin/summary?include_test=true&condition=dishonest_escalating", undefined, 200, { "x-admin-token": "dev-admin-token" });
     assert(escalatingSummary.summary.study1.dishonest_escalating.sessions >= 1, "admin escalating condition filter mismatch");
+    for (const condition of ["dishonest_fixed_1", "dishonest_fixed_2", "dishonest_fixed_3"]) {
+      const filtered = await request(server, "GET", `/api/admin/summary?include_test=true&condition=${condition}`, undefined, 200, { "x-admin-token": "dev-admin-token" });
+      assert(filtered.summary.study1[condition].sessions >= 1, `admin ${condition} filter mismatch`);
+    }
     const allDiceCsv = await request(server, "GET", "/api/admin/export/study1_dice_rounds.csv?include_test=true&condition=dishonest_escalating", undefined, 200, { "x-admin-token": "dev-admin-token" });
     assert(allDiceCsv.includes("dishonest_escalating"), "dice CSV missing escalating condition");
     assert(allDiceCsv.includes("h2-escalation-v1"), "dice CSV missing escalation schedule version");

@@ -1,4 +1,9 @@
 const { CONDITIONS } = require("../config/common");
+const {
+  fixedDishonestCountForCondition,
+  conditionFamilyForCondition,
+  conditionAnalysisLabelForCondition
+} = require("../config/fixed-gradient");
 
 function csvEscape(value) {
   if (value === null || value === undefined) return "";
@@ -47,7 +52,13 @@ function participantsCsv(sessions) {
     prolific_id: session.prolific_id || "",
     study: session.study,
     condition: session.condition,
-    condition_analysis_label: session.condition_analysis_label || (session.condition === "dishonest" ? "dishonest_static" : session.condition),
+    condition_analysis_label: session.condition_analysis_label || conditionAnalysisLabelForCondition(session.condition),
+    condition_family: session.condition_family ?? "",
+    fixed_dishonest_count: session.fixed_dishonest_count ?? "",
+    fixed_dishonest_peer_names_json: Array.isArray(session.fixed_dishonest_peer_names)
+      ? JSON.stringify(session.fixed_dishonest_peer_names)
+      : "",
+    composition_version: session.composition_version || "",
     schedule_version: session.schedule_version || "",
     peer_onset_rounds_json: session.peer_onset_rounds ? JSON.stringify(session.peer_onset_rounds) : "",
     assignment_source: session.assignment_source || "block",
@@ -73,7 +84,7 @@ function participantsCsv(sessions) {
   }));
 
   const dynamicKeys = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
-  const preferred = ["session_id", "participant_id", "study", "condition", "condition_analysis_label", "schedule_version", "peer_onset_rounds_json", "assignment_source", "entry_link_id", "condition_assigned_at", "randomization_block", "randomization_position", "is_test_session", "study_version", "protocol_version", "created_at", "completed_at", "debrief_viewed_at", "completion_status"];
+  const preferred = ["session_id", "participant_id", "study", "condition", "condition_analysis_label", "condition_family", "fixed_dishonest_count", "fixed_dishonest_peer_names_json", "composition_version", "schedule_version", "peer_onset_rounds_json", "assignment_source", "entry_link_id", "condition_assigned_at", "randomization_block", "randomization_position", "is_test_session", "study_version", "protocol_version", "created_at", "completed_at", "debrief_viewed_at", "completion_status"];
   const keys = [...preferred, ...dynamicKeys.filter((key) => !preferred.includes(key))];
   return toCsv(rows, keys.map((key) => ({ key })));
 }
@@ -88,7 +99,9 @@ function study1DiceRoundsCsv(sessions) {
         participant_id: session.participant_id || session.prolific_id || "",
         study: session.study,
         condition: session.condition,
-        condition_analysis_label: session.condition_analysis_label || (session.condition === "dishonest" ? "dishonest_static" : session.condition),
+        condition_analysis_label: session.condition_analysis_label || conditionAnalysisLabelForCondition(session.condition),
+        condition_family: round.condition_family ?? session.condition_family ?? "",
+        fixed_dishonest_count: round.fixed_dishonest_count ?? session.fixed_dishonest_count ?? "",
         round: round.round_index,
         true_dice: round.true_die_value,
         submitted_dice: round.reported_value,
@@ -106,6 +119,10 @@ function study1DiceRoundsCsv(sessions) {
         submission_source: round.submission_source,
         n_peers_misreporting: round.n_peers_misreporting,
         misreporting_peer_names: Array.isArray(round.misreporting_peer_names) ? round.misreporting_peer_names.join("|") : "",
+        fixed_dishonest_peer_names: Array.isArray(round.fixed_dishonest_peer_names)
+          ? round.fixed_dishonest_peer_names.join("|")
+          : (Array.isArray(session.fixed_dishonest_peer_names) ? session.fixed_dishonest_peer_names.join("|") : ""),
+        composition_version: round.composition_version || session.composition_version || "",
         schedule_version: round.schedule_version || session.schedule_version || "",
         stimulus_version: session.stimulus_version || "",
         stimulus_seed: session.stimulus_seed || "",
@@ -120,6 +137,8 @@ function study1DiceRoundsCsv(sessions) {
     { key: "study" },
     { key: "condition" },
     { key: "condition_analysis_label" },
+    { key: "condition_family" },
+    { key: "fixed_dishonest_count" },
     { key: "round" },
     { key: "true_dice" },
     { key: "submitted_dice" },
@@ -137,6 +156,8 @@ function study1DiceRoundsCsv(sessions) {
     { key: "submission_source" },
     { key: "n_peers_misreporting" },
     { key: "misreporting_peer_names" },
+    { key: "fixed_dishonest_peer_names" },
+    { key: "composition_version" },
     { key: "schedule_version" },
     { key: "stimulus_version" },
     { key: "stimulus_seed" },
@@ -156,8 +177,11 @@ function summary(sessions) {
     for (const condition of CONDITIONS) {
       const matching = sessions.filter((session) => session.study === study && session.condition === condition);
       counts[study][condition] = {
-        condition_analysis_label: condition === "dishonest" ? "dishonest_static" : condition,
+        condition_analysis_label: conditionAnalysisLabelForCondition(condition),
+        condition_family: conditionFamilyForCondition(condition),
+        fixed_dishonest_count: fixedDishonestCountForCondition(condition),
         sessions: matching.length,
+        started: matching.filter((session) => session.status && session.status !== "created").length,
         completed: matching.filter((session) => session.status === "completed").length
       };
     }
