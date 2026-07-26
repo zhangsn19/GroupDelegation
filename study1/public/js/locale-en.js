@@ -51,6 +51,8 @@
   ]);
 
   const study1 = new Map([
+    ["实验一：骰子结果申报任务", "Study 1: Die-reporting task"],
+    ["当前 Study 1 使用固定 10 轮共同骰子序列；正式招募前需研究团队确认任务报酬参数。", "Study 1 uses a 10-round shared-die sequence. Task-bonus parameters must be confirmed by the research team before launch."],
     ["骰子结果申报任务", "Die-reporting task"], ["个人骰子任务", "Individual die-reporting task"],
     ["你的群体", "Your group"], ["你与四位同事组成模拟同事群体，并使用同一个共享群聊 AI。", "You and four coworkers form a simulated work group and use the same shared group-chat AI."],
     ["每轮共同骰子", "Shared die in each round"], ["每一轮开始时，所有成员都会看到同一个骰子结果。任务要求成员报告本轮共同看到的骰子结果。随后，其他成员会先完成本轮报告。", "At the start of each round, all members see the same die outcome. Members are asked to report that shared outcome. The other members submit their reports first."],

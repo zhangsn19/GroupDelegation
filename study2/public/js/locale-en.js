@@ -1,6 +1,8 @@
 (function () {
   const translations = {
     "你": "You",
+    "实验二：收入申报任务": "Study 2: Income-reporting task",
+    "当前使用 Study 2 pilot 默认参数：4 轮、每轮 8 个数字、每题 ¥0.80、最高速度奖励 ¥1.00、申报最小单位 ¥0.10、扣除率 0.5。正式招募前需冻结。": "Pilot parameters: four rounds, eight items per round, ¥0.80 per correct answer, a maximum speed bonus of ¥1.00, a ¥0.10 reporting increment, and a 0.5 deduction rate. These parameters must be frozen before launch.",
     "任务成员": "Participant",
     "同事": "Coworker",
     "群聊 AI": "Group-chat AI",
@@ -65,6 +67,7 @@
     "完全没有": "Not at all",
     "非常强烈": "Very strongly",
     "从不": "Never",
+    "从未": "Never",
     "非常频繁": "Very frequently",
     "我不记得": "I do not remember",
     "年龄": "Age",
