@@ -1,6 +1,9 @@
 (function () {
   const study = document.documentElement.dataset.study;
   const common = new Map([
+    ["张", "A"], ["李", "J"], ["王", "T"], ["陈", "M"], ["群", "AI"],
+    ["请继续阅读任务规则", "Continue to the task rules"],
+    ["（可选）", " (optional)"],
     ["你", "You"], ["任务成员", "Participant"], ["同事", "Coworker"], ["群聊 AI", "Group-chat AI"],
     ["群聊助手", "Group-chat assistant"], ["张明", "Alex"], ["李华", "Jordan"], ["王芳", "Taylor"], ["陈思", "Morgan"],
     ["参与信息", "Participation details"], ["你的参与编号", "Your participant ID"], ["研究联系邮箱", "Research contact"],
@@ -132,6 +135,7 @@
 
   function translateCore(text) {
     if (dictionary.has(text)) return dictionary.get(text);
+    if (text.endsWith("（可选）")) return `${text.slice(0, -"（可选）".length)} (optional)`;
     let match = text.match(/^第 (\d+) \/ (\d+) 轮开始$/);
     if (match) return `Round ${match[1]} of ${match[2]} begins`;
     match = text.match(/^第 (\d+) \/ (\d+) 轮$/);
@@ -159,8 +163,22 @@
     if (typeof value === "string") return translateCore(value);
     if (Array.isArray(value)) return value.map(deepTranslate);
     if (value && typeof value === "object") {
-      const translated = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, deepTranslate(item)]));
-      if (value.id && itemEnglish[value.id]) Object.assign(translated, itemEnglish[value.id]);
+      const english = value.id && itemEnglish[value.id];
+      const translated = Object.fromEntries(Object.entries(value).map(([key, item]) => [
+        key,
+        english && Object.prototype.hasOwnProperty.call(english, key) ? item : deepTranslate(item)
+      ]));
+      if (english) {
+        Object.assign(translated, english);
+        if (Array.isArray(value.options) && Array.isArray(english.options)) {
+          translated.options = english.options.map((option, index) => {
+            if (option && typeof option === "object") return option;
+            const original = value.options[index];
+            const stableValue = original && typeof original === "object" ? original.value : original;
+            return { value: stableValue, label: option };
+          });
+        }
+      }
       return translated;
     }
     return value;

@@ -76,7 +76,11 @@
                 <span class="question-text">${promptText(item)}</span>
                 <select class="text-input" name="${item.id}">
                   <option value="">请选择</option>
-                  ${item.options.map((option) => `<option value="${option}" ${values[item.id] === option ? "selected" : ""}>${option}</option>`).join("")}
+                  ${item.options.map((option) => {
+                    const optionValue = typeof option === "object" ? option.value : option;
+                    const optionLabel = typeof option === "object" ? option.label : option;
+                    return `<option value="${optionValue}" ${values[item.id] === optionValue ? "selected" : ""}>${optionLabel}</option>`;
+                  }).join("")}
                 </select>
               </label>
             `;

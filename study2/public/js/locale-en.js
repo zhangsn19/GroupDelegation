@@ -1,5 +1,15 @@
 (function () {
   const translations = {
+    "张": "A",
+    "李": "J",
+    "王": "T",
+    "陈": "M",
+    "群": "AI",
+    "请继续阅读收入申报任务规则": "Continue to the income-reporting rules",
+    "（可选）": " (optional)",
+    "请判断每个数字是奇数还是偶数。本轮时限为 30 秒。": "Classify each number as odd or even. The time limit for this round is 30 seconds.",
+    "本轮剩余时间：": "Time remaining:",
+    "秒": "seconds",
     "你": "You",
     "实验二：收入申报任务": "Study 2: Income-reporting task",
     "当前使用 Study 2 pilot 默认参数：4 轮、每轮 8 个数字、每题 ¥0.80、最高速度奖励 ¥1.00、申报最小单位 ¥0.10、扣除率 0.5。正式招募前需冻结。": "Pilot parameters: four rounds, eight items per round, ¥0.80 per correct answer, a maximum speed bonus of ¥1.00, a ¥0.10 reporting increment, and a 0.5 deduction rate. These parameters must be frozen before launch.",
@@ -189,6 +199,7 @@
 
   function translateCore(text) {
     if (Object.prototype.hasOwnProperty.call(translations, text)) return translations[text];
+    if (text.endsWith("（可选）")) return `${text.slice(0, -"（可选）".length)} (optional)`;
     let match = text.match(/^第 (\d+) \/ (\d+) 轮$/);
     if (match) return `Round ${match[1]} of ${match[2]}`;
     match = text.match(/^第 (\d+) 轮：¥(.+)$/);
@@ -212,9 +223,27 @@
     if (typeof value === "string") return translateCore(value);
     if (Array.isArray(value)) return value.map(deepTranslate);
     if (value && typeof value === "object") {
-      const translated = Object.fromEntries(Object.entries(value).map(([key, item]) => [key, deepTranslate(item)]));
-      if (value.id && itemEnglish[value.id]) Object.assign(translated, itemEnglish[value.id]);
-      if (value.title && value.body && ruleEnglish[value.title]) Object.assign(translated, ruleEnglish[value.title]);
+      const english = value.id && itemEnglish[value.id];
+      const rule = value.title && value.body && ruleEnglish[value.title];
+      const translated = Object.fromEntries(Object.entries(value).map(([key, item]) => [
+        key,
+        (english && Object.prototype.hasOwnProperty.call(english, key))
+          || (rule && Object.prototype.hasOwnProperty.call(rule, key))
+          ? item
+          : deepTranslate(item)
+      ]));
+      if (english) {
+        Object.assign(translated, english);
+        if (Array.isArray(value.options) && Array.isArray(english.options)) {
+          translated.options = english.options.map((option, index) => {
+            if (option && typeof option === "object") return option;
+            const original = value.options[index];
+            const stableValue = original && typeof original === "object" ? original.value : original;
+            return { value: stableValue, label: option };
+          });
+        }
+      }
+      if (rule) Object.assign(translated, rule);
       return translated;
     }
     return value;
