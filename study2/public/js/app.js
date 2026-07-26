@@ -8,8 +8,14 @@
   };
   const content = document.querySelector("#experiment-content");
   const phaseIndicator = document.querySelector("#phase-indicator");
-  const INCOME_REPORT_ERROR = "\u8bf7\u8f93\u5165\u4e0d\u5c0f\u4e8e 0 \u7684\u91d1\u989d\uff0c\u6700\u591a\u4fdd\u7559\u4e24\u4f4d\u5c0f\u6570\u3002";
-  const SAVE_ERROR_MESSAGE = "\u5f53\u524d\u64cd\u4f5c\u6682\u65f6\u672a\u80fd\u4fdd\u5b58\uff0c\u8bf7\u5237\u65b0\u9875\u9762\u540e\u91cd\u8bd5\uff1b\u82e5\u95ee\u9898\u6301\u7eed\uff0c\u8bf7\u8054\u7cfb\u7814\u7a76\u56e2\u961f\u3002";
+  const prolificQueryPresent = ["PROLIFIC_PID", "STUDY_ID", "SESSION_ID", "variant"]
+    .some((key) => Boolean((params.get(key) || "").trim()));
+  const INCOME_REPORT_ERROR = prolificQueryPresent
+    ? "Enter a non-negative amount with no more than two decimal places."
+    : "\u8bf7\u8f93\u5165\u4e0d\u5c0f\u4e8e 0 \u7684\u91d1\u989d\uff0c\u6700\u591a\u4fdd\u7559\u4e24\u4f4d\u5c0f\u6570\u3002";
+  const SAVE_ERROR_MESSAGE = prolificQueryPresent
+    ? "This action could not be saved. Refresh the page and try again. If the problem continues, contact the research team."
+    : "\u5f53\u524d\u64cd\u4f5c\u6682\u65f6\u672a\u80fd\u4fdd\u5b58\uff0c\u8bf7\u5237\u65b0\u9875\u9762\u540e\u91cd\u8bd5\uff1b\u82e5\u95ee\u9898\u6301\u7eed\uff0c\u8bf7\u8054\u7cfb\u7814\u7a76\u56e2\u961f\u3002";
   const SAFE_SERVER_MESSAGES = new Set([
     INCOME_REPORT_ERROR,
     "\u5f53\u524d\u53c2\u4e0e\u8bb0\u5f55\u65e0\u6cd5\u6062\u590d\u3002\u8bf7\u8054\u7cfb\u7814\u7a76\u56e2\u961f\u83b7\u53d6\u65b0\u7684\u53c2\u4e0e\u94fe\u63a5\u540e\u91cd\u65b0\u5f00\u59cb\u3002",
@@ -20,6 +26,13 @@
     "\u8bf7\u68c0\u67e5\u4ee5\u4e0b\u4fe1\u606f\uff1a"
   ]);
   const entryCode = (params.get("entry") || "").trim();
+  const prolificParams = {
+    PROLIFIC_PID: (params.get("PROLIFIC_PID") || "").trim(),
+    STUDY_ID: (params.get("STUDY_ID") || "").trim(),
+    SESSION_ID: (params.get("SESSION_ID") || "").trim(),
+    variant: (params.get("variant") || "").trim()
+  };
+  const isProlificEntry = Object.values(prolificParams).some(Boolean);
     const participantId = (
     params.get("participant_id") ||
     params.get("participantId") ||
@@ -41,8 +54,43 @@
     actualIncome: null,
     actualIncomeCents: null,
     selectedIncomeCents: null,
-    incomeSubmitting: false
+    incomeSubmitting: false,
+    decisionTimer: null
   };
+
+  function beginDecisionTimer(resumedAfterReload) {
+    state.decisionTimer = {
+      startedAtClient: new Date().toISOString(),
+      startedAtMonotonic: performance.now(),
+      hiddenStartedAt: document.hidden ? performance.now() : null,
+      hiddenDurationMs: 0,
+      resumedAfterReload: Boolean(resumedAfterReload)
+    };
+  }
+
+  function decisionTimingPayload() {
+    const timer = state.decisionTimer;
+    if (!timer) return {};
+    const submittedAtMonotonic = performance.now();
+    const activeHiddenMs = timer.hiddenStartedAt === null ? 0 : submittedAtMonotonic - timer.hiddenStartedAt;
+    return {
+      decision_started_at_client: timer.startedAtClient,
+      decision_submitted_at_client: new Date().toISOString(),
+      decision_time_ms: Math.max(0, Math.round(submittedAtMonotonic - timer.startedAtMonotonic)),
+      page_hidden_duration_ms: Math.max(0, Math.round(timer.hiddenDurationMs + activeHiddenMs)),
+      timer_resumed_after_reload: timer.resumedAfterReload
+    };
+  }
+
+  document.addEventListener?.("visibilitychange", () => {
+    const timer = state.decisionTimer;
+    if (!timer) return;
+    if (document.hidden && timer.hiddenStartedAt === null) timer.hiddenStartedAt = performance.now();
+    if (!document.hidden && timer.hiddenStartedAt !== null) {
+      timer.hiddenDurationMs += performance.now() - timer.hiddenStartedAt;
+      timer.hiddenStartedAt = null;
+    }
+  });
 
   async function api(path, options = {}) {
     const response = await fetch(path, {
@@ -86,6 +134,7 @@
 
   function toParticipantMessage(data = {}) {
     const candidate = data.message || data.error || "";
+    if (isProlificEntry && candidate && !/[\u3400-\u9fff]/.test(candidate)) return candidate;
     return SAFE_SERVER_MESSAGES.has(candidate) ? candidate : SAVE_ERROR_MESSAGE;
   }
 
@@ -160,9 +209,11 @@
   }
 
   async function startSession() {
-    const data = await api("/api/session", {
+    const data = await api(isProlificEntry ? "/api/prolific/session" : "/api/session", {
       method: "POST",
-      body: { participant_id: state.participantId, entry: state.entryCode }
+      body: isProlificEntry
+        ? prolificParams
+        : { participant_id: state.participantId, entry: state.entryCode }
     });
     setSession(data.session);
     await routeFromStatus();
@@ -187,7 +238,7 @@
     else if (state.session.status === "income_viewed") await renderPeerRecords();
     else if (state.session.status === "peer_records_viewed") {
       state.selectedIncomeCents = null;
-      renderIncomeReport();
+      renderIncomeReport(true);
     } else if (state.session.status === "income_report_completed") renderPostSurvey();
     else if (state.session.status === "post_survey_completed") renderExperience();
     else if (state.session.status === "experience_completed") renderDemographics();
@@ -385,15 +436,16 @@
     state.actualIncome = data.actual_income;
     state.actualIncomeCents = data.session.actual_income_cents ?? Math.round(data.actual_income * 100);
     state.selectedIncomeCents = null;
-    renderIncomeReport();
+    renderIncomeReport(false);
   }
 
-  function renderIncomeReport() {
+  function renderIncomeReport(resumedAfterReload = false) {
     setPhase("私密收入申报");
     content.innerHTML = window.Study2Income.renderIncomeReport(
       state.actualIncomeCents,
       state.selectedIncomeCents
     );
+    beginDecisionTimer(resumedAfterReload);
   }
 
   async function submitIncomeReport() {
@@ -415,10 +467,12 @@
       const data = await api(`/api/session/${state.session.id}/income-report`, {
         method: "POST",
         body: {
-          reported_income: input.value.trim()
+          reported_income: input.value.trim(),
+          ...decisionTimingPayload()
         }
       });
       setSession(data.session);
+      state.decisionTimer = null;
       content.innerHTML = window.Study2Income.renderIncomeConfirmation(data.income_report);
     } finally {
       state.incomeSubmitting = false;
@@ -527,6 +581,11 @@
     setSession(data.session);
     renderCompletion();
     showScreen("complete");
+    const redirectUrl = data.session?.completion?.completion_redirect_url;
+    if (data.session?.assignment_mode === "prolific_taskflow" && redirectUrl) {
+      await api(`/api/session/${state.session.id}/completion-redirect-initiated`, { method: "POST" });
+      window.location.assign(redirectUrl);
+    }
   }
 
   function renderCompletion() {
@@ -682,6 +741,9 @@
 
   async function init() {
     state.config = await api("/api/config");
+    if (isProlificEntry && window.EnglishLocale) {
+      state.config = window.EnglishLocale.deepTranslate(state.config);
+    }
     state.members = state.config.members;
   }
 
