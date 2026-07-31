@@ -1,4 +1,5 @@
 const { execFileSync } = require("child_process");
+const study2 = require("../config/study2-income");
 
 const SCHEMA_VERSION = "prolific-export-v1";
 
@@ -46,6 +47,7 @@ function participants(sessions, env) {
     prolific_session_id: session.prolific_session_id,
     primary_prolific_session_id: session.primary_prolific_session_id || session.prolific_session_id,
     current_prolific_session_id: session.current_prolific_session_id || session.prolific_session_id,
+    prolific_session_aliases: session.prolific_session_aliases || [session.prolific_session_id].filter(Boolean),
     prolific_session_aliases_json: session.prolific_session_aliases || [session.prolific_session_id].filter(Boolean),
     resume_count: Number(session.resume_count || 0),
     last_resumed_at: session.last_resumed_at || "",
@@ -112,6 +114,16 @@ function surveys(sessions) {
   }));
 }
 
+function surveyColumns() {
+  return [
+    "record_key", "prolific_pid", "prolific_session_id",
+    ...study2.baselineItems.map((item) => `pre_${item.id}`),
+    ...study2.postSurveyItems.map((item) => `post_${item.id}`),
+    ...study2.experienceItems.map((item) => `experience_${item.id}`),
+    ...study2.demographicsItems.map((item) => `demo_${item.id}`)
+  ];
+}
+
 function bonuses(sessions, env) {
   return sessions.map((session) => ({
     prolific_pid: session.prolific_pid,
@@ -123,11 +135,12 @@ function bonuses(sessions, env) {
   }));
 }
 
-function gitCommit() {
+function gitCommit(env) {
+  if (env.GIT_COMMIT) return env.GIT_COMMIT;
   try {
     return execFileSync("git", ["rev-parse", "HEAD"], { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
   } catch {
-    return process.env.GIT_COMMIT || "";
+    return "";
   }
 }
 
@@ -139,7 +152,7 @@ function buildFiles(sessions, env = process.env) {
   const columns = (rows, preferred) => [...preferred, ...new Set(rows.flatMap(Object.keys).filter((key) => !preferred.includes(key)))];
   const metadata = {
     exported_at_utc: new Date().toISOString(),
-    git_commit: gitCommit(),
+    git_commit: gitCommit(env),
     release_id: env.RELEASE_ID || "",
     study_version: sessions[0]?.study_version || "",
     protocol_version: sessions[0]?.protocol_version || "",
@@ -150,9 +163,9 @@ function buildFiles(sessions, env = process.env) {
     round_count: roundRows.length
   };
   return {
-    "participants.csv": csv(participantRows, columns(participantRows, ["record_key", "prolific_pid", "prolific_study_id", "prolific_session_id", "primary_prolific_session_id", "current_prolific_session_id", "prolific_session_aliases_json", "resume_count", "last_resumed_at", "is_preview", "taskflow_variant_id", "condition", "assignment_mode", "locale", "status", "consented_at", "started_at", "completed_at", "total_duration_ms", "rounds_completed", "data_complete", "comprehension_pass", "quality_flags", "completion_ready_at", "completion_redirect_initiated_at", "bonus_amount", "bonus_currency", "study_version", "protocol_version"])),
+    "participants.csv": csv(participantRows, columns(participantRows, ["record_key", "prolific_pid", "prolific_study_id", "prolific_session_id", "primary_prolific_session_id", "current_prolific_session_id", "prolific_session_aliases", "prolific_session_aliases_json", "resume_count", "last_resumed_at", "is_preview", "taskflow_variant_id", "condition", "assignment_mode", "locale", "status", "consented_at", "started_at", "completed_at", "total_duration_ms", "rounds_completed", "data_complete", "comprehension_pass", "quality_flags", "completion_ready_at", "completion_redirect_initiated_at", "bonus_amount", "bonus_currency", "study_version", "protocol_version"])),
     "study2_rounds.csv": csv(roundRows, ["record_key", "prolific_pid", "prolific_session_id", "condition", "round_index", "effort_score", "actual_income", "reported_income", "deduction", "retained_income", "peer_actual_income_json", "peer_reported_income_json", "n_peers_misreporting", "decision_time_ms", "page_hidden_duration_ms", "decision_started_at_client", "decision_submitted_at_client", "server_received_at", "saved_at"]),
-    "surveys.csv": csv(surveyRows, columns(surveyRows, ["record_key", "prolific_pid", "prolific_session_id"])),
+    "surveys.csv": csv(surveyRows, surveyColumns()),
     "bonus_payments.csv": csv(bonusRows, ["prolific_pid", "prolific_session_id", "bonus_amount", "bonus_currency", "bonus_eligible", "bonus_reason"]),
     "raw_sessions.ndjson": `${sessions.map((session) => JSON.stringify(session)).join("\n")}\n`,
     "export_metadata.json": `${JSON.stringify(metadata, null, 2)}\n`

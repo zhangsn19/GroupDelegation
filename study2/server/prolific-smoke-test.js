@@ -6,6 +6,7 @@ const path = require("path");
 const { spawnSync } = require("child_process");
 const { CONDITIONS } = require("../config/common");
 const { createProlificSupport } = require("./prolific");
+const prolificExport = require("./prolific-export");
 
 const study = CONDITIONS.length === 7 ? "study1" : "study2";
 const expectedStudyId = `taskflow-test-${study}`;
@@ -168,6 +169,25 @@ async function main() {
     let previewRaw = JSON.parse(await fs.readFile(path.join(dataDir, `${previewFirst.payload.session.id}.json`), "utf8"));
     assert.strictEqual(previewRaw.is_preview, true);
     assert.strictEqual(previewRaw.preview_source, "prolific_preview");
+    const exportFixture = {
+      ...previewRaw,
+      baseline: { ai_use_frequency: 0 },
+      post_survey: { f_decision_considerations: "first line\nsecond line" }
+    };
+    const previewFiles = prolificExport.buildFiles([exportFixture], { ...process.env, GIT_COMMIT: "export-test-commit" });
+    const participantHeader = previewFiles["participants.csv"].split(/\r?\n/, 1)[0].split(",");
+    assert.ok(participantHeader.includes("prolific_session_aliases"));
+    assert.ok(participantHeader.includes("prolific_session_aliases_json"));
+    assert.ok(previewFiles["participants.csv"].includes("submission_preview"));
+    assert.ok(previewFiles["surveys.csv"].startsWith("\uFEFF"));
+    assert.ok(previewFiles["surveys.csv"].includes(",0,"));
+    assert.ok(previewFiles["surveys.csv"].includes('"first line\nsecond line"'));
+    assert.strictEqual(JSON.parse(previewFiles["export_metadata.json"]).git_commit, "export-test-commit");
+    const emptySurveyHeader = prolificExport.buildFiles([], { ...process.env, GIT_COMMIT: "export-test-commit" })["surveys.csv"].split(/\r?\n/, 1)[0];
+    assert.ok(emptySurveyHeader.includes("pre_ai_use_frequency"));
+    assert.ok(emptySurveyHeader.includes("post_f_design_influences"));
+    assert.ok(emptySurveyHeader.includes("experience_income_reporting_familiarity"));
+    assert.ok(emptySurveyHeader.includes("demo_education"));
     previewRaw.status = "completed";
     previewRaw.completion_status = "completed";
     await fs.writeFile(path.join(dataDir, `${previewFirst.payload.session.id}.json`), `${JSON.stringify(previewRaw, null, 2)}\n`);
@@ -223,23 +243,42 @@ async function main() {
     const rootHtml = await root.text();
     assert.match(rootHtml, /<html lang="en"/);
     assert.doesNotMatch(rootHtml, /[\u3400-\u9fff]/);
-    const summaryResponse = await fetch(`${baseUrl}/api/admin/prolific-summary`, {
+    const summaryResponse = await fetch(`${baseUrl}/api/admin/prolific-summary?include_test=true`, {
       headers: { "x-admin-token": process.env.ADMIN_TOKEN }
     });
     const summary = await summaryResponse.json();
     assert.strictEqual(summaryResponse.status, 200);
     assert.ok(summary.participants.every((row) => !String(row.prolific_pid).includes("prolific_pid_")));
     assert.strictEqual(summary.preview_mode_enabled, true);
+    assert.strictEqual(summary.formal.arrived, summary.participants.length);
+    assert.strictEqual(summary.preview.arrived, summary.preview_participants.length);
+    assert.strictEqual(summary.formal.incomplete + summary.formal.completed, summary.formal.arrived);
+    assert.strictEqual(summary.preview.incomplete + summary.preview.completed, summary.preview.arrived);
     assert.ok(summary.participants.every((row) => row.is_preview === false));
     assert.ok(summary.preview_participants.length >= 3 && summary.preview_participants.every((row) => row.is_preview === true));
-    const bundleResponse = await fetch(`${baseUrl}/api/admin/export/prolific-bundle.zip`, {
+    const filteredSummaryResponse = await fetch(`${baseUrl}/api/admin/prolific-summary?include_test=true&condition=${encodeURIComponent(previewRaw.condition)}`, { headers: { "x-admin-token": process.env.ADMIN_TOKEN } });
+    const filteredSummary = await filteredSummaryResponse.json();
+    assert.ok(filteredSummary.participants.every((row) => row.condition === previewRaw.condition));
+    assert.ok(filteredSummary.preview_participants.every((row) => row.condition === previewRaw.condition));
+    const completedSummary = await (await fetch(`${baseUrl}/api/admin/prolific-summary?include_test=true&status=completed`, { headers: { "x-admin-token": process.env.ADMIN_TOKEN } })).json();
+    assert.ok([...completedSummary.participants, ...completedSummary.preview_participants].every((row) => row.status === "completed"));
+    const resumedSummary = await (await fetch(`${baseUrl}/api/admin/prolific-summary?include_test=true&resumed_only=true`, { headers: { "x-admin-token": process.env.ADMIN_TOKEN } })).json();
+    assert.ok([...resumedSummary.participants, ...resumedSummary.preview_participants].every((row) => row.resume_count > 0));
+    const aliasesSummary = await (await fetch(`${baseUrl}/api/admin/prolific-summary?include_test=true&aliases_only=true`, { headers: { "x-admin-token": process.env.ADMIN_TOKEN } })).json();
+    assert.ok([...aliasesSummary.participants, ...aliasesSummary.preview_participants].every((row) => row.session_alias_count > 1));
+    const conflictSummary = await (await fetch(`${baseUrl}/api/admin/prolific-summary?include_test=true&recovery_flag=identity_conflict`, { headers: { "x-admin-token": process.env.ADMIN_TOKEN } })).json();
+    assert.ok([...conflictSummary.participants, ...conflictSummary.preview_participants].every((row) => row.quality_flags.includes("identity_conflict")));
+    const previewOnlySummary = await (await fetch(`${baseUrl}/api/admin/prolific-summary?include_test=true&record_kind=preview`, { headers: { "x-admin-token": process.env.ADMIN_TOKEN } })).json();
+    assert.strictEqual(previewOnlySummary.formal.arrived, 0);
+    assert.ok(previewOnlySummary.preview.arrived > 0);
+    const bundleResponse = await fetch(`${baseUrl}/api/admin/export/prolific-bundle.zip?include_test=true`, {
       headers: { "x-admin-token": process.env.ADMIN_TOKEN }
     });
     const bundle = Buffer.from(await bundleResponse.arrayBuffer());
     assert.strictEqual(bundleResponse.status, 200);
     assert.strictEqual(bundle.readUInt32LE(0), 0x04034b50);
     assert.ok(!bundle.includes(Buffer.from("prolific_pid_preview")), "formal bundle included Preview data");
-    const previewBundleResponse = await fetch(`${baseUrl}/api/admin/export/prolific-preview-bundle.zip`, { headers: { "x-admin-token": process.env.ADMIN_TOKEN } });
+    const previewBundleResponse = await fetch(`${baseUrl}/api/admin/export/prolific-preview-bundle.zip?include_test=true`, { headers: { "x-admin-token": process.env.ADMIN_TOKEN } });
     const previewBundle = Buffer.from(await previewBundleResponse.arrayBuffer());
     assert.strictEqual(previewBundleResponse.status, 200);
     assert.ok(previewBundle.includes(Buffer.from("prolific_pid_preview")), "Preview bundle missing Preview data");

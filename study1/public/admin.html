@@ -80,24 +80,27 @@
         ["Download formal Prolific export bundle", "/api/admin/export/prolific-bundle.zip"],
         ["Download Preview records bundle", "/api/admin/export/prolific-preview-bundle.zip"]
       ];
-      document.querySelector("#load-summary").addEventListener("click", async () => {
+      async function loadSummary() {
         const token = tokenInput.value.trim();
         const response = await fetch(`/api/admin/summary?${queryString()}`, {
           headers: { "x-admin-token": token }
         });
         const data = await response.json();
-        const prolificResponse = await fetch("/api/admin/prolific-summary", {
+        const prolificResponse = await fetch(`/api/admin/prolific-summary?${queryString()}`, {
           headers: { "x-admin-token": token }
         });
         prolificSummary = await prolificResponse.json();
-        summaryOutput.textContent = JSON.stringify({ current: data, preview_mode_enabled: prolificSummary.preview_mode_enabled, formal_condition_counts: prolificSummary.conditions }, null, 2);
+        summaryOutput.textContent = JSON.stringify({ current: data, preview_mode_enabled: prolificSummary.preview_mode_enabled, formal: prolificSummary.formal, preview: prolificSummary.preview }, null, 2);
         renderProlificRecords();
         links.innerHTML = exportsList.map(([label, href]) => (
           `<button class="secondary-button" data-export="${href}">${label}</button>`
         )).join("");
-      });
+      }
+      document.querySelector("#load-summary").addEventListener("click", loadSummary);
       ["record-kind", "record-status", "record-conflict", "resumed-only", "aliases-only"].forEach((id) => {
-        document.querySelector(`#${id}`).addEventListener("change", renderProlificRecords);
+        document.querySelector(`#${id}`).addEventListener("change", () => {
+          if (prolificSummary) loadSummary();
+        });
       });
       function filterRecords(records) {
         const status = document.querySelector("#record-status").value;
@@ -145,6 +148,11 @@
         if (document.querySelector("#include-test").checked) params.set("include_test", "true");
         if (document.querySelector("#start-date").value) params.set("start_date", document.querySelector("#start-date").value);
         if (document.querySelector("#end-date").value) params.set("end_date", document.querySelector("#end-date").value);
+        params.set("record_kind", document.querySelector("#record-kind").value);
+        params.set("status", document.querySelector("#record-status").value);
+        if (document.querySelector("#resumed-only").checked) params.set("resumed_only", "true");
+        if (document.querySelector("#aliases-only").checked) params.set("aliases_only", "true");
+        params.set("recovery_flag", document.querySelector("#record-conflict").value);
         return params.toString();
       }
     </script>

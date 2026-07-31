@@ -826,16 +826,48 @@ function asyncHandler(fn) {
 function filterSessions(sessions, query = {}) {
   const includeTest = String(query.include_test || query.includeTest || "").toLowerCase() === "true";
   const condition = query.condition || "all";
+  const status = query.status || "all";
+  const resumedOnly = String(query.resumed_only || "").toLowerCase() === "true";
+  const aliasesOnly = String(query.aliases_only || "").toLowerCase() === "true";
+  const recoveryFlag = query.recovery_flag || "all";
   const start = query.start_date ? new Date(`${query.start_date}T00:00:00.000Z`) : null;
   const end = query.end_date ? new Date(`${query.end_date}T23:59:59.999Z`) : null;
   return sessions.filter((session) => {
     if (!includeTest && session.is_test_session) return false;
     if (condition !== "all" && condition && session.condition !== condition) return false;
+    if (status === "completed" && session.status !== "completed") return false;
+    if (status === "incomplete" && session.status === "completed") return false;
+    if (resumedOnly && Number(session.resume_count || 0) < 1) return false;
+    if (aliasesOnly && (session.prolific_session_aliases || []).length <= 1) return false;
+    if (recoveryFlag !== "all" && !prolificExport.qualityFlags(session).includes(recoveryFlag)) return false;
     const created = session.created_at ? new Date(session.created_at) : null;
     if (start && created && created < start) return false;
     if (end && created && created > end) return false;
     return true;
   });
+}
+
+function prolificAdminSummary(sessions) {
+  const conditions = Object.fromEntries(CONDITIONS.map((condition) => {
+    const matching = sessions.filter((session) => session.condition === condition);
+    return [condition, {
+      arrived: matching.length,
+      started: matching.filter((session) => session.started_at).length,
+      incomplete: matching.filter((session) => session.status !== "completed").length,
+      completed: matching.filter((session) => session.status === "completed").length,
+      data_complete: matching.filter(prolificExport.isDataComplete).length,
+      quality_flags: matching.filter((session) => prolificExport.qualityFlags(session).length > 0).length
+    }];
+  }));
+  return {
+    arrived: sessions.length,
+    started: sessions.filter((session) => session.started_at).length,
+    incomplete: sessions.filter((session) => session.status !== "completed").length,
+    completed: sessions.filter((session) => session.status === "completed").length,
+    data_complete: sessions.filter(prolificExport.isDataComplete).length,
+    quality_flags: sessions.filter((session) => prolificExport.qualityFlags(session).length > 0).length,
+    conditions
+  };
 }
 
 app.get("/api/config", (req, res) => {
@@ -1303,7 +1335,8 @@ app.post("/api/session/:id/completion-redirect-initiated", asyncHandler(async (r
 }));
 
 app.get("/api/admin/summary", requireAdmin, asyncHandler(async (req, res) => {
-  const sessions = filterSessions(await store.listSessions(), req.query);
+  let sessions = filterSessions(await store.listSessions(), req.query);
+  if (ASSIGNMENT_MODE === "prolific_taskflow") sessions = sessions.filter((session) => !session.is_preview);
   res.json({ version: VERSION, summary: exporters.summary(sessions), data_dir: store.DATA_DIR });
 }));
 
@@ -1312,24 +1345,17 @@ app.get("/api/admin/export/json", requireAdmin, asyncHandler(async (req, res) =>
 }));
 
 app.get("/api/admin/prolific-summary", requireAdmin, asyncHandler(async (req, res) => {
-  const allSessions = (await store.listSessions()).filter((session) => session.assignment_mode === "prolific_taskflow");
-  const sessions = allSessions.filter((session) => !session.is_preview);
-  const previewSessions = allSessions.filter((session) => session.is_preview);
-  const conditions = Object.fromEntries(CONDITIONS.map((condition) => {
-    const matching = sessions.filter((session) => session.condition === condition);
-    return [condition, {
-      arrived: matching.length,
-      started: matching.filter((session) => session.started_at).length,
-      completed: matching.filter((session) => session.status === "completed").length,
-      data_complete: matching.filter(prolificExport.isDataComplete).length,
-      quality_flags: matching.filter((session) => prolificExport.qualityFlags(session).length > 0).length
-    }];
-  }));
-  res.json({ preview_mode_enabled: prolificSupport.previewMode, conditions, participants: prolificExport.adminRows(sessions), preview_participants: prolificExport.adminRows(previewSessions) });
+  const allSessions = filterSessions(await store.listSessions(), req.query).filter((session) => session.assignment_mode === "prolific_taskflow");
+  const recordKind = req.query.record_kind || "all";
+  const sessions = recordKind === "preview" ? [] : allSessions.filter((session) => !session.is_preview);
+  const previewSessions = recordKind === "formal" ? [] : allSessions.filter((session) => session.is_preview);
+  const formal = prolificAdminSummary(sessions);
+  const preview = prolificAdminSummary(previewSessions);
+  res.json({ preview_mode_enabled: prolificSupport.previewMode, formal, preview, conditions: formal.conditions, preview_conditions: preview.conditions, participants: prolificExport.adminRows(sessions), preview_participants: prolificExport.adminRows(previewSessions) });
 }));
 
 app.get("/api/admin/export/prolific-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
-  const sessions = (await store.listSessions()).filter((session) => session.assignment_mode === "prolific_taskflow" && !session.is_preview);
+  const sessions = filterSessions(await store.listSessions(), req.query).filter((session) => session.assignment_mode === "prolific_taskflow" && !session.is_preview);
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions));
   res.set("content-type", "application/zip");
   res.set("content-disposition", `attachment; filename="study2-prolific-export-${new Date().toISOString().slice(0, 10)}.zip"`);
@@ -1337,7 +1363,7 @@ app.get("/api/admin/export/prolific-bundle.zip", requireAdmin, asyncHandler(asyn
 }));
 
 app.get("/api/admin/export/prolific-preview-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
-  const sessions = (await store.listSessions()).filter((session) => session.assignment_mode === "prolific_taskflow" && session.is_preview);
+  const sessions = filterSessions(await store.listSessions(), req.query).filter((session) => session.assignment_mode === "prolific_taskflow" && session.is_preview);
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions));
   res.set("content-type", "application/zip");
   res.set("content-disposition", `attachment; filename="study2-prolific-preview-export-${new Date().toISOString().slice(0, 10)}.zip"`);
