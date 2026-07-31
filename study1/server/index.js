@@ -231,6 +231,68 @@ function addEvent(session, type, data = {}) {
   session.event_log.push({ type, at: now(), ...data });
 }
 
+function normalizeProlificTracking(session) {
+  if (session.assignment_mode !== "prolific_taskflow") return session;
+  const primary = session.primary_prolific_session_id || session.prolific_session_id;
+  const current = session.current_prolific_session_id || session.prolific_session_id || primary;
+  session.primary_prolific_session_id = primary;
+  session.current_prolific_session_id = current;
+  session.prolific_session_aliases = [...new Set([
+    primary,
+    current,
+    ...(Array.isArray(session.prolific_session_aliases) ? session.prolific_session_aliases : [])
+  ].filter(Boolean))];
+  session.resume_count = Number(session.resume_count || 0);
+  session.resume_events = Array.isArray(session.resume_events) ? session.resume_events : [];
+  session.is_preview = Boolean(session.is_preview);
+  session.preview_source = session.is_preview ? (session.preview_source || "prolific_preview") : null;
+  return session;
+}
+
+async function resumeProlificSession(match, identity) {
+  return store.updateSession(match.session.id, (draft) => {
+    normalizeProlificTracking(draft);
+    if (match.action === "resume_new_submission") {
+      const resumedAt = now();
+      if (!draft.prolific_session_aliases.includes(identity.prolific_session_id)) {
+        draft.prolific_session_aliases.push(identity.prolific_session_id);
+      }
+      draft.current_prolific_session_id = identity.prolific_session_id;
+      draft.resume_count += 1;
+      draft.last_resumed_at = resumedAt;
+      const event = {
+        at: resumedAt,
+        prolific_session_id: identity.prolific_session_id,
+        previous_status: draft.status
+      };
+      draft.resume_events.push(event);
+      addEvent(draft, "prolific_session_resumed", event);
+    }
+    return draft;
+  });
+}
+
+function mergeDecisionTiming(target, payload = {}) {
+  target.decision_timing ||= { segments: [] };
+  const timing = target.decision_timing;
+  timing.segments = Array.isArray(timing.segments) ? timing.segments : [];
+  const segmentId = String(payload.decision_segment_id || `legacy-${Date.now()}`).trim();
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(segmentId)) throw new Error("Invalid decision timing segment");
+  const activeMs = Math.max(0, Math.min(86400000, Math.round(Number(payload.decision_segment_active_ms ?? payload.decision_time_ms ?? 0))));
+  const hiddenMs = Math.max(0, Math.min(activeMs, Math.round(Number(payload.decision_segment_hidden_ms ?? payload.page_hidden_duration_ms ?? 0))));
+  let segment = timing.segments.find((item) => item.segment_id === segmentId);
+  if (!segment) {
+    segment = { segment_id: segmentId, active_duration_ms: 0, page_hidden_duration_ms: 0 };
+    timing.segments.push(segment);
+  }
+  segment.active_duration_ms = Math.max(segment.active_duration_ms, activeMs);
+  segment.page_hidden_duration_ms = Math.max(segment.page_hidden_duration_ms, hiddenMs);
+  segment.updated_at = now();
+  timing.accumulated_active_ms = timing.segments.reduce((sum, item) => sum + item.active_duration_ms, 0);
+  timing.accumulated_hidden_ms = timing.segments.reduce((sum, item) => sum + item.page_hidden_duration_ms, 0);
+  return timing;
+}
+
 function statusIndex(status) {
   return STATUS_ORDER.indexOf(status);
 }
@@ -579,7 +641,7 @@ async function createSession({ study, participantId, requestedCondition, entry, 
   }
   if (prolificIdentity) {
     const existingProlific = prolificSupport.findExisting(await store.listSessions(), prolificIdentity);
-    if (existingProlific) return existingProlific;
+    if (existingProlific) return resumeProlificSession(existingProlific, prolificIdentity);
   }
   let entryAssignment = null;
   const hasEntry = String(entry || "").trim() !== "";
@@ -591,7 +653,7 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     fail(400, "当前研究未启用指定入口分组。");
   }
   if (!prolificIdentity) validateParticipantIdPolicy(normalizedParticipant, entryAssignment);
-  const existing = (await store.listSessions()).find((session) => (
+  const existing = prolificIdentity ? null : (await store.listSessions()).find((session) => (
     normalizedParticipant &&
     (session.participant_id === normalizedParticipant || session.prolific_id === normalizedParticipant) &&
     session.study === study
@@ -707,6 +769,14 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     prolific_pid: prolificIdentity?.prolific_pid || null,
     prolific_study_id: prolificIdentity?.prolific_study_id || null,
     prolific_session_id: prolificIdentity?.prolific_session_id || null,
+    primary_prolific_session_id: prolificIdentity?.prolific_session_id || null,
+    current_prolific_session_id: prolificIdentity?.prolific_session_id || null,
+    prolific_session_aliases: prolificIdentity ? [prolificIdentity.prolific_session_id] : [],
+    resume_count: 0,
+    last_resumed_at: null,
+    resume_events: [],
+    is_preview: Boolean(prolificIdentity?.is_preview),
+    preview_source: prolificIdentity?.preview_source || null,
     taskflow_variant_id: prolificIdentity?.taskflow_variant_id || null,
     variant_token_hash: prolificIdentity?.variant_token_hash || null,
     record_key: prolificIdentity?.record_key || null,
@@ -782,7 +852,10 @@ function currentDicePayload(session) {
     total_rounds: diceSequence.length,
     true_die_value: diceSequence[index],
     peer_records: publicStudy1PeerRecords(session, roundStimulus.peer_records || []),
-    selection_started_at: state?.selection_started_at || null
+    selection_started_at: state?.selection_started_at || null,
+    decision_timing_accumulated_ms: state?.decision_timing?.accumulated_active_ms || 0,
+    page_hidden_duration_accumulated_ms: state?.decision_timing?.accumulated_hidden_ms || 0,
+    decision_timing_segment_count: state?.decision_timing?.segments?.length || 0
   };
 }
 
@@ -894,8 +967,17 @@ app.post("/api/prolific/session", asyncHandler(async (req, res) => {
     res.json({ session: publicSession(session) });
   } catch (error) {
     if (["identity_conflict", "variant_conflict", "duplicate_participation"].includes(error.code)) {
+      if (error.session_id) {
+        await store.updateSession(error.session_id, (draft) => {
+          draft.abnormal_events = Array.isArray(draft.abnormal_events) ? draft.abnormal_events : [];
+          const event = { type: error.audit_type || error.code, at: now() };
+          draft.abnormal_events.push(event);
+          addEvent(draft, event.type);
+          return draft;
+        });
+      }
       await store.appendAuditEvent({
-        type: error.code,
+        type: error.audit_type || error.code,
         at: now(),
         record_key: prolificIdentity.record_key,
         prolific_pid_hash: crypto.createHash("sha256").update(prolificIdentity.prolific_pid).digest("hex"),
@@ -1013,6 +1095,16 @@ app.post("/api/session/:id/dice/presented", asyncHandler(async (req, res) => {
   res.json({ session: publicSession(session), current: currentDicePayload(session) });
 }));
 
+app.post("/api/session/:id/decision-timing", asyncHandler(async (req, res) => {
+  const roundIndex = Number(req.body.round_index);
+  await store.updateSession(req.params.id, (draft) => {
+    if (draft.status !== "task_in_progress" || roundIndex !== draft.dice_rounds.length + 1) throw new Error("Decision timing does not match the current round");
+    mergeDecisionTiming(prepareCurrentDiceRound(draft), req.body);
+    return draft;
+  });
+  res.status(204).end();
+}));
+
 app.post("/api/session/:id/dice/round", asyncHandler(async (req, res) => {
   const reported = Number(req.body.reported_value);
   const roundIndex = Number(req.body.round_index);
@@ -1039,6 +1131,7 @@ app.post("/api/session/:id/dice/round", asyncHandler(async (req, res) => {
     const personalReward = Number((reported * study1.rewardPerPoint).toFixed(2));
     const submittedAt = now();
     const startedAt = roundState.selection_started_at;
+    const decisionTiming = mergeDecisionTiming(roundState, req.body);
     const stimulusRound = recordsByRound[expectedRound - 1] || {};
     const round = {
       round_index: expectedRound,
@@ -1062,13 +1155,10 @@ app.post("/api/session/:id/dice/round", asyncHandler(async (req, res) => {
       decision_duration_ms: Math.max(0, new Date(submittedAt) - new Date(startedAt)),
       decision_started_at_client: String(req.body.decision_started_at_client || "") || null,
       decision_submitted_at_client: String(req.body.decision_submitted_at_client || "") || null,
-      decision_time_ms: Number.isFinite(Number(req.body.decision_time_ms))
-        ? Math.max(0, Math.round(Number(req.body.decision_time_ms)))
-        : null,
-      page_hidden_duration_ms: Number.isFinite(Number(req.body.page_hidden_duration_ms))
-        ? Math.max(0, Math.round(Number(req.body.page_hidden_duration_ms)))
-        : null,
-      timer_resumed_after_reload: Boolean(req.body.timer_resumed_after_reload),
+      decision_time_ms: decisionTiming.accumulated_active_ms,
+      page_hidden_duration_ms: decisionTiming.accumulated_hidden_ms,
+      timer_resumed_after_reload: decisionTiming.segments.length > 1 || Boolean(req.body.timer_resumed_after_reload),
+      decision_timing_segments: decisionTiming.segments,
       server_received_at: serverReceivedAt,
       saved_at: submittedAt,
       submission_source: "group_ai_private_panel"
@@ -1174,7 +1264,9 @@ app.get("/api/admin/export/json", requireAdmin, asyncHandler(async (req, res) =>
 }));
 
 app.get("/api/admin/prolific-summary", requireAdmin, asyncHandler(async (req, res) => {
-  const sessions = (await store.listSessions()).filter((session) => session.assignment_mode === "prolific_taskflow");
+  const allSessions = (await store.listSessions()).filter((session) => session.assignment_mode === "prolific_taskflow");
+  const sessions = allSessions.filter((session) => !session.is_preview);
+  const previewSessions = allSessions.filter((session) => session.is_preview);
   const conditions = Object.fromEntries(CONDITIONS.map((condition) => {
     const matching = sessions.filter((session) => session.condition === condition);
     return [condition, {
@@ -1185,14 +1277,22 @@ app.get("/api/admin/prolific-summary", requireAdmin, asyncHandler(async (req, re
       quality_flags: matching.filter((session) => prolificExport.qualityFlags(session).length > 0).length
     }];
   }));
-  res.json({ conditions, participants: prolificExport.adminRows(sessions) });
+  res.json({ preview_mode_enabled: prolificSupport.previewMode, conditions, participants: prolificExport.adminRows(sessions), preview_participants: prolificExport.adminRows(previewSessions) });
 }));
 
 app.get("/api/admin/export/prolific-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
-  const sessions = (await store.listSessions()).filter((session) => session.assignment_mode === "prolific_taskflow");
+  const sessions = (await store.listSessions()).filter((session) => session.assignment_mode === "prolific_taskflow" && !session.is_preview);
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions));
   res.set("content-type", "application/zip");
   res.set("content-disposition", `attachment; filename="study1-prolific-export-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.send(archive);
+}));
+
+app.get("/api/admin/export/prolific-preview-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
+  const sessions = (await store.listSessions()).filter((session) => session.assignment_mode === "prolific_taskflow" && session.is_preview);
+  const archive = prolificExport.zip(prolificExport.buildFiles(sessions));
+  res.set("content-type", "application/zip");
+  res.set("content-disposition", `attachment; filename="study1-prolific-preview-export-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 

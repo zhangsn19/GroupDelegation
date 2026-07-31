@@ -26,6 +26,26 @@
         <input id="start-date" class="text-input" type="date">
         <label class="field-label" for="end-date">结束日期</label>
         <input id="end-date" class="text-input" type="date">
+        <label class="field-label" for="record-kind">Prolific record type</label>
+        <select id="record-kind" class="text-input">
+          <option value="all">Formal and Preview</option>
+          <option value="formal">Formal only</option>
+          <option value="preview">Preview only</option>
+        </select>
+        <label class="field-label" for="record-status">Prolific status</label>
+        <select id="record-status" class="text-input">
+          <option value="all">All statuses</option>
+          <option value="incomplete">Incomplete</option>
+          <option value="completed">Completed</option>
+        </select>
+        <label class="consent-check"><input id="resumed-only" type="checkbox"><span>Resumed records only</span></label>
+        <label class="consent-check"><input id="aliases-only" type="checkbox"><span>Session alias count greater than 1</span></label>
+        <label class="field-label" for="record-conflict">Recovery flags</label>
+        <select id="record-conflict" class="text-input">
+          <option value="all">All records</option>
+          <option value="recovery_conflict">Recovery conflict</option>
+          <option value="identity_conflict">Identity conflict</option>
+        </select>
         <div class="action-row">
           <button id="load-summary" class="primary-button">查看汇总</button>
         </div>
@@ -33,19 +53,27 @@
       <section class="panel">
         <h2>汇总</h2>
         <pre id="summary-output" class="code-output">尚未加载。</pre>
+        <h2 id="formal-heading">Formal Records</h2>
+        <pre id="formal-output" class="code-output">Not loaded.</pre>
+        <h2 id="preview-heading">Preview Records</h2>
+        <pre id="preview-output" class="code-output">Not loaded.</pre>
         <div id="export-links" class="export-grid"></div>
       </section>
     </main>
     <script>
       const tokenInput = document.querySelector("#admin-token");
       const summaryOutput = document.querySelector("#summary-output");
+      const formalOutput = document.querySelector("#formal-output");
+      const previewOutput = document.querySelector("#preview-output");
       const links = document.querySelector("#export-links");
+      let prolificSummary = null;
       const exportsList = [
         ["JSON 原始数据", "/api/admin/export/json"],
         ["participants.csv", "/api/admin/export/participants.csv"],
         ["study2_effort_rounds.csv", "/api/admin/export/study2_effort_rounds.csv"],
         ["study2_income_reports.csv", "/api/admin/export/study2_income_reports.csv"],
-        ["Download complete export bundle", "/api/admin/export/prolific-bundle.zip"]
+        ["Download formal Prolific export bundle", "/api/admin/export/prolific-bundle.zip"],
+        ["Download Preview records bundle", "/api/admin/export/prolific-preview-bundle.zip"]
       ];
       document.querySelector("#load-summary").addEventListener("click", async () => {
         const token = tokenInput.value.trim();
@@ -56,12 +84,40 @@
         const prolificResponse = await fetch("/api/admin/prolific-summary", {
           headers: { "x-admin-token": token }
         });
-        const prolific = await prolificResponse.json();
-        summaryOutput.textContent = JSON.stringify({ current: data, prolific }, null, 2);
+        prolificSummary = await prolificResponse.json();
+        summaryOutput.textContent = JSON.stringify({ current: data, preview_mode_enabled: prolificSummary.preview_mode_enabled, formal_condition_counts: prolificSummary.conditions }, null, 2);
+        renderProlificRecords();
         links.innerHTML = exportsList.map(([label, href]) => (
           `<button class="secondary-button" data-export="${href}">${label}</button>`
         )).join("");
       });
+      ["record-kind", "record-status", "record-conflict", "resumed-only", "aliases-only"].forEach((id) => {
+        document.querySelector(`#${id}`).addEventListener("change", renderProlificRecords);
+      });
+      function filterRecords(records) {
+        const status = document.querySelector("#record-status").value;
+        const conflict = document.querySelector("#record-conflict").value;
+        return records.filter((record) => {
+          if (status === "completed" && record.status !== "completed") return false;
+          if (status === "incomplete" && record.status === "completed") return false;
+          if (document.querySelector("#resumed-only").checked && Number(record.resume_count || 0) < 1) return false;
+          if (document.querySelector("#aliases-only").checked && Number(record.session_alias_count || 0) <= 1) return false;
+          if (conflict !== "all" && !(record.quality_flags || []).includes(conflict)) return false;
+          return true;
+        });
+      }
+      function renderProlificRecords() {
+        if (!prolificSummary) return;
+        const kind = document.querySelector("#record-kind").value;
+        const formal = filterRecords(prolificSummary.participants || []);
+        const preview = filterRecords(prolificSummary.preview_participants || []);
+        document.querySelector("#formal-heading").hidden = kind === "preview";
+        formalOutput.hidden = kind === "preview";
+        formalOutput.textContent = JSON.stringify(formal, null, 2);
+        document.querySelector("#preview-heading").hidden = kind === "formal";
+        previewOutput.hidden = kind === "formal";
+        previewOutput.textContent = JSON.stringify(preview, null, 2);
+      }
       links.addEventListener("click", async (event) => {
         const button = event.target.closest("[data-export]");
         if (!button) return;

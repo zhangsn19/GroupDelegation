@@ -26,8 +26,8 @@ def main():
             {"study_id": "study-a", "session_id": "session-2", "participant_id": "pid-2", "status": "RETURNED"},
         ])
         write_csv(experiment, [
-            {"record_key": "record-1", "prolific_study_id": "study-a", "prolific_session_id": "session-1", "prolific_pid": "pid-1", "status": "completed"},
-            {"record_key": "record-3", "prolific_study_id": "study-a", "prolific_session_id": "session-3", "prolific_pid": "pid-3", "status": "created"},
+            {"record_key": "record-1", "prolific_study_id": "study-a", "prolific_session_id": "session-primary", "primary_prolific_session_id": "session-primary", "current_prolific_session_id": "session-1", "prolific_session_aliases_json": '["session-primary","session-1"]', "prolific_pid": "pid-1", "status": "completed"},
+            {"record_key": "record-3", "prolific_study_id": "study-a", "prolific_session_id": "session-3", "primary_prolific_session_id": "session-3", "current_prolific_session_id": "session-3", "prolific_session_aliases_json": '["session-3"]', "prolific_pid": "pid-3", "status": "created"},
         ])
         subprocess.run([
             sys.executable,

@@ -56,6 +56,7 @@ function createProlificSupport({
   const recordSecret = String(env.SERVER_RECORD_SECRET || "").trim();
   const bonusCurrency = String(env.BONUS_CURRENCY || "").trim();
   const bonusDisplayLabel = String(env.BONUS_DISPLAY_LABEL || "").trim();
+  const previewMode = String(env.PROLIFIC_PREVIEW_MODE || "").toLowerCase() === "true";
   let variants = new Map();
 
   if (active) {
@@ -106,6 +107,10 @@ function createProlificSupport({
     const prolificPid = validateId(body.PROLIFIC_PID ?? body.prolific_pid, "PROLIFIC_PID");
     const studyId = validateId(body.STUDY_ID ?? body.prolific_study_id, "STUDY_ID");
     const sessionId = validateId(body.SESSION_ID ?? body.prolific_session_id, "SESSION_ID");
+    const previewRequested = body.preview === true || String(body.preview || "").toLowerCase() === "true";
+    if (previewRequested && !previewMode) {
+      throw requestError(403, "preview_mode_disabled", "Prolific Preview is not enabled for this study.");
+    }
     const variant = String(body.variant || "").trim();
     if (studyId !== expectedStudyId) {
       throw requestError(403, "invalid_study_id", "This study link is not valid.");
@@ -123,51 +128,84 @@ function createProlificSupport({
       condition: descriptor.condition,
       assignment_mode: "prolific_taskflow",
       locale: "en",
+      is_preview: previewRequested,
+      preview_source: previewRequested ? "prolific_preview" : null,
       record_key: crypto
         .createHmac("sha256", recordSecret)
-        .update(`${studyId}|${sessionId}`)
+        .update(`${previewRequested ? "preview" : "formal"}|${studyId}|${previewRequested ? sessionId : prolificPid}`)
         .digest("hex"),
     };
   }
 
   function findExisting(sessions, identity) {
-    const sameSubmission = sessions.find(
-      (session) => session.prolific_session_id === identity.prolific_session_id,
-    );
+    const aliases = (session) => [...new Set([
+      session.prolific_session_id,
+      session.primary_prolific_session_id,
+      session.current_prolific_session_id,
+      ...(Array.isArray(session.prolific_session_aliases) ? session.prolific_session_aliases : []),
+    ].filter(Boolean))];
+    const sameSubmission = sessions.find((session) => aliases(session).includes(identity.prolific_session_id));
     if (sameSubmission) {
       if (
         sameSubmission.prolific_pid !== identity.prolific_pid ||
         sameSubmission.prolific_study_id !== identity.prolific_study_id
       ) {
-        throw requestError(
+        const error = requestError(
           409,
           "identity_conflict",
           "This Prolific submission is already linked to a different identity.",
         );
+        error.audit_type = "identity_conflict";
+        throw error;
+      }
+      if (Boolean(sameSubmission.is_preview) !== Boolean(identity.is_preview)) {
+        const error = requestError(409, "identity_conflict", "This Prolific submission is already linked to a different identity.");
+        error.audit_type = "identity_conflict";
+        throw error;
       }
       if (
         sameSubmission.taskflow_variant_id !== identity.taskflow_variant_id ||
         sameSubmission.variant_token_hash !== identity.variant_token_hash
       ) {
-        throw requestError(
+        const error = requestError(
           409,
           "variant_conflict",
           "This Prolific submission was assigned through a different Taskflow variant.",
         );
+        error.session_id = sameSubmission.id;
+        error.audit_type = "variant_resume_conflict";
+        throw error;
       }
-      return sameSubmission;
+      return { session: sameSubmission, action: "resume_same_submission" };
     }
+    if (identity.is_preview) return null;
     const sameParticipant = sessions.find(
       (session) =>
+        !session.is_preview &&
         session.prolific_pid === identity.prolific_pid &&
         session.prolific_study_id === identity.prolific_study_id,
     );
     if (sameParticipant) {
-      throw requestError(
+      if (
+        sameParticipant.taskflow_variant_id !== identity.taskflow_variant_id ||
+        sameParticipant.variant_token_hash !== identity.variant_token_hash
+      ) {
+        const error = requestError(409, "variant_conflict", "Your saved study record belongs to a different Taskflow assignment. Please return to Prolific or contact the research team.");
+        error.session_id = sameParticipant.id;
+        error.audit_type = "variant_resume_conflict";
+        throw error;
+      }
+      if (sameParticipant.status !== "completed" && sameParticipant.completion_status !== "completed") {
+        return { session: sameParticipant, action: "resume_new_submission" };
+      }
+      const error = requestError(
         409,
         "duplicate_participation",
         "You have already taken part in this study. Please return to Prolific.",
       );
+      error.session_id = sameParticipant.id;
+      error.audit_type = "completed_duplicate_attempt";
+      throw error;
     }
     return null;
   }
@@ -178,6 +216,7 @@ function createProlificSupport({
     completionUrl,
     bonusCurrency,
     bonusDisplayLabel,
+    previewMode,
     validateRequest,
     findExisting,
   };

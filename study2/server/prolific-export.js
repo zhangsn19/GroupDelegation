@@ -24,6 +24,9 @@ function qualityFlags(session) {
   if (!Number.isFinite(session.income_report?.decision_time_ms) || session.income_report.decision_time_ms < 0) flags.push("invalid_decision_time");
   if (Number(session.income_report?.page_hidden_duration_ms || 0) > 300000) flags.push("excessive_page_hidden_time");
   if (!session.completion_redirect_initiated_at) flags.push("completion_not_confirmed");
+  const abnormalTypes = new Set((session.abnormal_events || []).map((event) => event.type));
+  if (abnormalTypes.has("variant_resume_conflict")) flags.push("recovery_conflict");
+  if (abnormalTypes.has("identity_conflict")) flags.push("identity_conflict");
   return flags;
 }
 
@@ -41,6 +44,12 @@ function participants(sessions, env) {
     prolific_pid: session.prolific_pid,
     prolific_study_id: session.prolific_study_id,
     prolific_session_id: session.prolific_session_id,
+    primary_prolific_session_id: session.primary_prolific_session_id || session.prolific_session_id,
+    current_prolific_session_id: session.current_prolific_session_id || session.prolific_session_id,
+    prolific_session_aliases_json: session.prolific_session_aliases || [session.prolific_session_id].filter(Boolean),
+    resume_count: Number(session.resume_count || 0),
+    last_resumed_at: session.last_resumed_at || "",
+    is_preview: session.is_preview ? 1 : 0,
     taskflow_variant_id: session.taskflow_variant_id,
     condition: session.condition,
     assignment_mode: session.assignment_mode,
@@ -141,7 +150,7 @@ function buildFiles(sessions, env = process.env) {
     round_count: roundRows.length
   };
   return {
-    "participants.csv": csv(participantRows, columns(participantRows, ["record_key", "prolific_pid", "prolific_study_id", "prolific_session_id", "taskflow_variant_id", "condition", "assignment_mode", "locale", "status", "consented_at", "started_at", "completed_at", "total_duration_ms", "rounds_completed", "data_complete", "comprehension_pass", "quality_flags", "completion_ready_at", "completion_redirect_initiated_at", "bonus_amount", "bonus_currency", "study_version", "protocol_version"])),
+    "participants.csv": csv(participantRows, columns(participantRows, ["record_key", "prolific_pid", "prolific_study_id", "prolific_session_id", "primary_prolific_session_id", "current_prolific_session_id", "prolific_session_aliases_json", "resume_count", "last_resumed_at", "is_preview", "taskflow_variant_id", "condition", "assignment_mode", "locale", "status", "consented_at", "started_at", "completed_at", "total_duration_ms", "rounds_completed", "data_complete", "comprehension_pass", "quality_flags", "completion_ready_at", "completion_redirect_initiated_at", "bonus_amount", "bonus_currency", "study_version", "protocol_version"])),
     "study2_rounds.csv": csv(roundRows, ["record_key", "prolific_pid", "prolific_session_id", "condition", "round_index", "effort_score", "actual_income", "reported_income", "deduction", "retained_income", "peer_actual_income_json", "peer_reported_income_json", "n_peers_misreporting", "decision_time_ms", "page_hidden_duration_ms", "decision_started_at_client", "decision_submitted_at_client", "server_received_at", "saved_at"]),
     "surveys.csv": csv(surveyRows, columns(surveyRows, ["record_key", "prolific_pid", "prolific_session_id"])),
     "bonus_payments.csv": csv(bonusRows, ["prolific_pid", "prolific_session_id", "bonus_amount", "bonus_currency", "bonus_eligible", "bonus_reason"]),
@@ -203,6 +212,12 @@ function adminRows(sessions) {
   return sessions.map((session) => ({
     prolific_pid: session.prolific_pid ? `${session.prolific_pid.slice(0, 4)}…${session.prolific_pid.slice(-4)}` : "",
     session_id: session.id ? session.id.slice(-8) : "",
+    primary_session_id: (session.primary_prolific_session_id || session.prolific_session_id || "").slice(-8),
+    current_session_id: (session.current_prolific_session_id || session.prolific_session_id || "").slice(-8),
+    session_alias_count: (session.prolific_session_aliases || [session.prolific_session_id].filter(Boolean)).length,
+    resume_count: Number(session.resume_count || 0),
+    last_resumed_at: session.last_resumed_at || null,
+    is_preview: Boolean(session.is_preview),
     condition: session.condition,
     status: session.status,
     started_at: session.started_at,

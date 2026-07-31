@@ -30,7 +30,8 @@
     PROLIFIC_PID: (params.get("PROLIFIC_PID") || "").trim(),
     STUDY_ID: (params.get("STUDY_ID") || "").trim(),
     SESSION_ID: (params.get("SESSION_ID") || "").trim(),
-    variant: (params.get("variant") || "").trim()
+    variant: (params.get("variant") || "").trim(),
+    preview: (params.get("preview") || "").trim() === "true"
   };
   const isProlificEntry = Object.values(prolificParams).some(Boolean);
     const participantId = (
@@ -58,13 +59,16 @@
     decisionTimer: null
   };
 
-  function beginDecisionTimer(resumedAfterReload) {
+  function beginDecisionTimer(resumedAfterReload, persisted = {}) {
     state.decisionTimer = {
+      segmentId: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       startedAtClient: new Date().toISOString(),
       startedAtMonotonic: performance.now(),
       hiddenStartedAt: document.hidden ? performance.now() : null,
       hiddenDurationMs: 0,
-      resumedAfterReload: Boolean(resumedAfterReload)
+      resumedAfterReload: Boolean(resumedAfterReload),
+      persistedActiveMs: Number(persisted.activeMs || 0),
+      persistedHiddenMs: Number(persisted.hiddenMs || 0)
     };
   }
 
@@ -76,8 +80,11 @@
     return {
       decision_started_at_client: timer.startedAtClient,
       decision_submitted_at_client: new Date().toISOString(),
-      decision_time_ms: Math.max(0, Math.round(submittedAtMonotonic - timer.startedAtMonotonic)),
-      page_hidden_duration_ms: Math.max(0, Math.round(timer.hiddenDurationMs + activeHiddenMs)),
+      decision_segment_id: timer.segmentId,
+      decision_segment_active_ms: Math.max(0, Math.round(submittedAtMonotonic - timer.startedAtMonotonic)),
+      decision_segment_hidden_ms: Math.max(0, Math.round(timer.hiddenDurationMs + activeHiddenMs)),
+      decision_time_ms: timer.persistedActiveMs + Math.max(0, Math.round(submittedAtMonotonic - timer.startedAtMonotonic)),
+      page_hidden_duration_ms: timer.persistedHiddenMs + Math.max(0, Math.round(timer.hiddenDurationMs + activeHiddenMs)),
       timer_resumed_after_reload: timer.resumedAfterReload
     };
   }
@@ -90,6 +97,11 @@
       timer.hiddenDurationMs += performance.now() - timer.hiddenStartedAt;
       timer.hiddenStartedAt = null;
     }
+  });
+
+  window.addEventListener?.("pagehide", () => {
+    if (!state.decisionTimer || !state.session || state.session.status !== "peer_records_viewed") return;
+    navigator.sendBeacon?.(`/api/session/${state.session.id}/decision-timing`, new Blob([JSON.stringify(decisionTimingPayload())], { type: "application/json" }));
   });
 
   async function api(path, options = {}) {
@@ -445,7 +457,10 @@
       state.actualIncomeCents,
       state.selectedIncomeCents
     );
-    beginDecisionTimer(resumedAfterReload);
+    beginDecisionTimer(resumedAfterReload, {
+      activeMs: state.session.decision_timing_accumulated_ms,
+      hiddenMs: state.session.page_hidden_duration_accumulated_ms
+    });
   }
 
   async function submitIncomeReport() {
