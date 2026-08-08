@@ -8,7 +8,7 @@
     "start": "node server/index.js",
     "dev": "node server/index.js",
     "test:h2": "node server/h2-targeted-test.js",
-    "smoke": "node server/smoke-test.js && node server/prolific-smoke-test.js"
+    "smoke": "node server/smoke-test.js && node server/prolific-smoke-test.js && node server/human-ai-targeted-test.js"
   },
   "engines": {
     "node": ">=20"

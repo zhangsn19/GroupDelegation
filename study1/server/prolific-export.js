@@ -1,5 +1,12 @@
 const { execFileSync } = require("child_process");
 const study1 = require("../config/study1-dice");
+const {
+  PROTOCOL_VERSION: HUMAN_AI_PROTOCOL_VERSION,
+  IDENTITY_MANIPULATION_VERSION,
+  CONDITION_MAP_VERSION,
+  PEER_IDENTITIES,
+  activeCells,
+} = require("../config/human-ai-protocol");
 
 const SCHEMA_VERSION = "prolific-export-v1";
 
@@ -55,6 +62,10 @@ function participants(sessions, env) {
       is_preview: session.is_preview ? 1 : 0,
       taskflow_variant_id: session.taskflow_variant_id,
       condition: session.condition,
+      peer_identity: session.peer_identity || (session.protocol_version === HUMAN_AI_PROTOCOL_VERSION ? "" : "human_legacy"),
+      identity_manipulation_version: session.identity_manipulation_version || "",
+      condition_map_version: session.condition_map_version || "",
+      is_qa: session.is_qa ? 1 : 0,
       assignment_mode: session.assignment_mode,
       locale: session.locale,
       status: session.status,
@@ -88,6 +99,8 @@ function rounds(sessions) {
     last_resumed_at: session.last_resumed_at || "",
     is_preview: session.is_preview ? 1 : 0,
     condition: session.condition,
+    peer_identity: session.peer_identity || "",
+    protocol_version: session.protocol_version || "",
     round_index: round.round_index,
     true_die_value: round.true_die_value,
     reported_die_value: round.reported_value,
@@ -97,6 +110,10 @@ function rounds(sessions) {
     peer_records_json: round.peer_records,
     n_peers_misreporting: round.n_peers_misreporting,
     misreporting_peer_names_json: round.misreporting_peer_names,
+    misreporting_peer_ids_json: (round.peer_records || [])
+      .filter((record) => Number(record.underlying_reported_value) > Number(round.true_die_value))
+      .map((record) => record.member_id)
+      .filter(Boolean),
     decision_time_ms: round.decision_time_ms,
     page_hidden_duration_ms: round.page_hidden_duration_ms,
     decision_started_at_client: round.decision_started_at_client,
@@ -121,7 +138,7 @@ function surveyColumns() {
   return [
     "record_key", "prolific_pid", "prolific_session_id",
     ...study1.baselineItems.map((item) => `pre_${item.id}`),
-    ...study1.postSurveyItems.map((item) => `post_${item.id}`),
+    ...new Set([...study1.postSurveyItems, ...(study1.humanAiPostSurveyItems || [])].map((item) => `post_${item.id}`)),
     ...study1.demographicsItems.map((item) => `demo_${item.id}`)
   ];
 }
@@ -151,6 +168,18 @@ function buildFiles(sessions, env = process.env) {
   const roundRows = rounds(sessions);
   const surveyRows = surveys(sessions);
   const bonusRows = bonuses(sessions, env);
+  const hasHumanAi = sessions.some((session) => session.protocol_version === HUMAN_AI_PROTOCOL_VERSION);
+  const cellRows = hasHumanAi ? activeCells().map((cell) => {
+    const matching = sessions.filter((session) => session.protocol_version === HUMAN_AI_PROTOCOL_VERSION && session.peer_identity === cell.peer_identity && session.condition === cell.condition);
+    return {
+      ...cell,
+      arrived: matching.length,
+      started: matching.filter((session) => session.started_at).length,
+      completed: matching.filter((session) => session.status === "completed").length,
+      data_complete: matching.filter(isDataComplete).length,
+      quality_flagged: matching.filter((session) => qualityFlags(session).length > 0).length,
+    };
+  }) : [];
   const columns = (rows, preferred) => [...preferred, ...new Set(rows.flatMap(Object.keys).filter((key) => !preferred.includes(key)))];
   const metadata = {
     exported_at_utc: new Date().toISOString(),
@@ -159,17 +188,23 @@ function buildFiles(sessions, env = process.env) {
     study_version: sessions[0]?.study_version || "",
     protocol_version: sessions[0]?.protocol_version || "",
     schema_version: SCHEMA_VERSION,
-    condition_map_version: env.CONDITION_MAP_VERSION || "",
+    identity_manipulation_version: hasHumanAi ? IDENTITY_MANIPULATION_VERSION : "",
+    condition_map_version: hasHumanAi ? CONDITION_MAP_VERSION : (env.CONDITION_MAP_VERSION || ""),
+    supported_cell_count: hasHumanAi ? 14 : undefined,
+    active_cell_count: hasHumanAi ? 12 : undefined,
+    peer_identity_levels: hasHumanAi ? PEER_IDENTITIES : undefined,
+    legacy_conditions_supported: hasHumanAi ? ["dishonest_escalating"] : undefined,
     locale: "en",
     record_count: sessions.length,
     round_count: roundRows.length
   };
   return {
-    "participants.csv": csv(participantRows, columns(participantRows, ["record_key", "prolific_pid", "prolific_study_id", "prolific_session_id", "primary_prolific_session_id", "current_prolific_session_id", "prolific_session_aliases", "prolific_session_aliases_json", "resume_count", "last_resumed_at", "is_preview", "taskflow_variant_id", "condition", "assignment_mode", "locale", "status", "consented_at", "started_at", "completed_at", "total_duration_ms", "rounds_completed", "data_complete", "comprehension_pass", "quality_flags", "completion_ready_at", "completion_redirect_initiated_at", "bonus_amount", "bonus_currency", "study_version", "protocol_version"])),
-    "study1_rounds.csv": csv(roundRows, ["record_key", "prolific_pid", "prolific_session_id", "condition", "round_index", "true_die_value", "reported_die_value", "misreport_amount", "is_misreport", "peer_display_order_json", "peer_records_json", "n_peers_misreporting", "misreporting_peer_names_json", "decision_time_ms", "page_hidden_duration_ms", "decision_started_at_client", "decision_submitted_at_client", "server_received_at", "saved_at"]),
+    "participants.csv": csv(participantRows, columns(participantRows, ["record_key", "prolific_pid", "prolific_study_id", "prolific_session_id", "primary_prolific_session_id", "current_prolific_session_id", "prolific_session_aliases", "prolific_session_aliases_json", "resume_count", "last_resumed_at", "is_preview", "is_qa", "taskflow_variant_id", "peer_identity", "condition", "assignment_mode", "locale", "status", "consented_at", "started_at", "completed_at", "total_duration_ms", "rounds_completed", "data_complete", "comprehension_pass", "quality_flags", "completion_ready_at", "completion_redirect_initiated_at", "bonus_amount", "bonus_currency", "study_version", "protocol_version", "identity_manipulation_version", "condition_map_version"])),
+    "study1_rounds.csv": csv(roundRows, ["record_key", "prolific_pid", "prolific_session_id", "peer_identity", "protocol_version", "condition", "round_index", "true_die_value", "reported_die_value", "misreport_amount", "is_misreport", "peer_display_order_json", "peer_records_json", "n_peers_misreporting", "misreporting_peer_names_json", "misreporting_peer_ids_json", "decision_time_ms", "page_hidden_duration_ms", "decision_started_at_client", "decision_submitted_at_client", "server_received_at", "saved_at"]),
     "surveys.csv": csv(surveyRows, surveyColumns()),
     "bonus_payments.csv": csv(bonusRows, ["prolific_pid", "prolific_session_id", "bonus_amount", "bonus_currency", "bonus_eligible", "bonus_reason"]),
     "raw_sessions.ndjson": `${sessions.map((session) => JSON.stringify(session)).join("\n")}\n`,
+    ...(hasHumanAi ? { "cell_summary.csv": csv(cellRows, ["peer_identity", "condition", "arrived", "started", "completed", "data_complete", "quality_flagged"]) } : {}),
     "export_metadata.json": `${JSON.stringify(metadata, null, 2)}\n`
   };
 }
@@ -234,6 +269,8 @@ function adminRows(sessions) {
     last_resumed_at: session.last_resumed_at || null,
     is_preview: Boolean(session.is_preview),
     condition: session.condition,
+    peer_identity: session.peer_identity || (session.protocol_version === HUMAN_AI_PROTOCOL_VERSION ? "" : "human_legacy"),
+    protocol_version: session.protocol_version || "",
     status: session.status,
     started_at: session.started_at,
     completed_at: session.completed_at,

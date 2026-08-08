@@ -36,6 +36,10 @@
           <option value="formal">Formal only</option>
           <option value="preview">Preview only</option>
         </select>
+        <label class="field-label" for="filter-peer-identity">peer_identity / protocol</label>
+        <select id="filter-peer-identity" class="text-input">
+          <option value="all">All</option><option value="human">Human</option><option value="ai">AI</option><option value="human_legacy">Legacy / History</option>
+        </select>
         <label class="field-label" for="record-status">Prolific status</label>
         <select id="record-status" class="text-input">
           <option value="all">All statuses</option>
@@ -53,6 +57,13 @@
         <div class="action-row">
           <button id="load-summary" class="primary-button">查看汇总</button>
         </div>
+        <h2>Human-AI v1 QA Preview</h2>
+        <select id="qa-peer-identity" class="text-input"><option value="human">Human</option><option value="ai">AI</option></select>
+        <select id="qa-condition" class="text-input">
+          <option value="hidden">Hidden</option><option value="honest">Honest</option><option value="dishonest_fixed_1">Fixed 1</option><option value="dishonest_fixed_2">Fixed 2</option><option value="dishonest_fixed_3">Fixed 3</option><option value="dishonest">All-Dishonest</option><option value="dishonest_escalating">Escalating (QA/legacy)</option>
+        </select>
+        <button id="create-qa" class="secondary-button">Create authenticated QA session</button>
+        <pre id="qa-output" class="code-output">Default-off: ALLOW_QA_PREVIEW=false</pre>
       </section>
       <section class="panel">
         <h2>汇总</h2>
@@ -79,7 +90,19 @@
         ["study2_income_reports.csv", "/api/admin/export/study2_income_reports.csv"],
         ["Download formal Prolific export bundle", "/api/admin/export/prolific-bundle.zip"],
         ["Download Preview records bundle", "/api/admin/export/prolific-preview-bundle.zip"]
+        ,["Download isolated QA bundle", "/api/admin/export/qa-bundle.zip"]
       ];
+      document.querySelector("#create-qa").addEventListener("click", async () => {
+        const response = await fetch("/api/admin/qa/session", {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-admin-token": tokenInput.value.trim() },
+          body: JSON.stringify({ peer_identity: document.querySelector("#qa-peer-identity").value, condition: document.querySelector("#qa-condition").value })
+        });
+        const data = await response.json();
+        document.querySelector("#qa-output").textContent = response.ok
+          ? `Created ${data.session.peer_identity}/${data.session.id}. Open /en/?qa_session=${encodeURIComponent(data.session.id)}`
+          : (data.error || "QA unavailable");
+      });
       async function loadSummary() {
         const token = tokenInput.value.trim();
         const response = await fetch(`/api/admin/summary?${queryString()}`, {
@@ -145,6 +168,7 @@
       function queryString() {
         const params = new URLSearchParams();
         params.set("condition", document.querySelector("#filter-condition").value);
+        params.set("peer_identity", document.querySelector("#filter-peer-identity").value);
         if (document.querySelector("#include-test").checked) params.set("include_test", "true");
         if (document.querySelector("#start-date").value) params.set("start_date", document.querySelector("#start-date").value);
         if (document.querySelector("#end-date").value) params.set("end_date", document.querySelector("#end-date").value);

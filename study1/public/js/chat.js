@@ -93,6 +93,12 @@
     }));
   }
 
+  function identityIntroMessages(members) {
+    return members
+      .filter((member) => member.id !== "participant")
+      .map((member) => ({ sender: member, text: `${member.name} is ready.`, tone: "system" }));
+  }
+
   function peerRecordMessages(members, records) {
     const byName = Object.fromEntries(members.map((member) => [member.name, member]));
     return records.map((record) => ({
@@ -108,6 +114,7 @@
   window.ChatView = {
     createReadOnlyChat,
     introMessages,
+    identityIntroMessages,
     peerRecordMessages,
     delay
   };

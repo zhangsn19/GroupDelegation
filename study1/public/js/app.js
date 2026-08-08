@@ -1,5 +1,7 @@
 (function () {
   const params = new URLSearchParams(window.location.search);
+  const qaSessionId = (params.get("qa_session") || "").trim();
+  const reviewSessionId = (params.get("review_session") || "").trim();
   const screens = {
     landing: document.querySelector("#screen-landing"),
     consent: document.querySelector("#screen-consent"),
@@ -154,8 +156,16 @@
     phaseIndicator.textContent = label;
   }
 
+  function isHumanAiProtocol() {
+    return state.session?.protocol_version === "study1-human-ai-v1";
+  }
+
   function setSession(session) {
     state.session = session;
+    if (Array.isArray(session.peer_members)) state.members = session.peer_members;
+    if (Array.isArray(session.post_survey_items)) state.config.postSurveyItems = session.post_survey_items;
+    if (Array.isArray(session.rule_blocks)) state.config.ruleBlocks = session.rule_blocks;
+    if (Array.isArray(session.comprehension_questions)) state.config.comprehensionQuestions = session.comprehension_questions;
   }
 
   function setError(error) {
@@ -269,9 +279,12 @@
     setPhase("群体介绍");
     content.innerHTML = "";
     const chat = window.ChatView.createReadOnlyChat(content, state.members, {
-      footerText: "群聊 AI 负责接收并提交成员报告。"
+      footerText: isHumanAiProtocol() ? "The Submission System records each member's report." : "群聊 AI 负责接收并提交成员报告。"
     });
-    await chat.addMessagesSequentially(window.ChatView.introMessages(state.members), 650);
+    const introMessages = isHumanAiProtocol()
+      ? window.ChatView.identityIntroMessages(state.members)
+      : window.ChatView.introMessages(state.members);
+    await chat.addMessagesSequentially(introMessages, 650);
     content.insertAdjacentHTML("beforeend", `
       <div class="step-nav step-nav-cta">
         <p class="step-nav-hint">请继续阅读任务规则</p>
@@ -358,7 +371,7 @@
     content.insertAdjacentHTML("beforeend", window.Study1Dice.renderCommonDie(state.diceCurrent));
     content.insertAdjacentHTML("beforeend", `<p class="status-hint">正在展示成员提交记录</p>`);
     const chat = window.ChatView.createReadOnlyChat(content, state.members, {
-      footerText: "群聊 AI 负责接收并提交成员报告。"
+      footerText: isHumanAiProtocol() ? "Submission System" : "群聊 AI 负责接收并提交成员报告。"
     });
     const ai = { name: "群聊 AI", avatar: "AI" };
     const roundMessages = [
@@ -479,7 +492,14 @@
     setPhase("事后说明");
     const contact = state.config.contact_email || "123456@163.com";
     const pid = state.session.participant_id || "";
-    content.innerHTML = `
+    if (isHumanAiProtocol()) {
+      content.innerHTML = `
+        <div class="card"><h2>Debrief</h2><div class="consent-text">
+          <p>Thank you for completing the study. The other-member reports were scripted experimental stimuli; no live people or live AI systems generated them during your session.</p>
+          <p>The study examines how the stated identity and reporting behavior of peers may affect decisions. Your records are used only for research. Contact the research team with your participant ID if you have questions about the study or your participation.</p>
+        </div></div>${participantInfoCard(pid, contact)}
+        <div class="step-nav"><p class="status-hint" id="debrief-save-status">Saving debrief acknowledgement...</p><button class="btn btn-primary" data-action="complete">Complete</button></div>`;
+    } else content.innerHTML = `
       <div class="card">
         <h2>事后说明</h2>
         <div class="consent-text">
@@ -652,10 +672,19 @@
 
   async function init() {
     state.config = await api("/api/config");
-    if (isProlificEntry && window.EnglishLocale) {
+    if ((isProlificEntry || qaSessionId || reviewSessionId) && window.EnglishLocale) {
       state.config = window.EnglishLocale.deepTranslate(state.config);
     }
     state.members = state.config.members;
+    if (qaSessionId) {
+      const data = await api(`/api/qa/session/${encodeURIComponent(qaSessionId)}`);
+      setSession(data.session);
+      await routeFromStatus();
+    } else if (reviewSessionId) {
+      const data = await api(`/api/review/session/${encodeURIComponent(reviewSessionId)}`);
+      setSession(data.session);
+      await routeFromStatus();
+    }
   }
 
   init().catch((error) => {

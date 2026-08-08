@@ -3,6 +3,46 @@ const { baselineItems, postSurveyStudy1, demographicsItems } = require("./measur
 const FIXED_DICE_SEQUENCE = [3, 5, 2, 4, 1, 3, 2, 5, 4, 1];
 const REWARD_PER_POINT = 1;
 
+const humanAiPostSurveyItems = [
+  ...postSurveyStudy1.filter((item) => !["a_ai_executes_understood", "e_ai_followed_choice", "e_ai_influenced_decision", "e_ai_decided_outcome"].includes(item.id)),
+  { section: "G", id: "peer_influence_self_report", prompt: "The other members' reports influenced the values I chose to submit.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
+  { section: "G", id: "peer_reports_considered", prompt: "I considered the other members' reports when making my decisions.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
+  { section: "G", id: "peer_behavior_appropriateness_influence", prompt: "The other members' behavior affected what I considered appropriate to report.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
+  { section: "G", id: "shared_group_responsibility", prompt: "Responsibility for the group's reporting behavior was shared among group members.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
+  { section: "H", id: "identity_recall", prompt: "The four other members were presented as:", type: "select", options: [{ value: "human", label: "Human members" }, { value: "ai", label: "AI members" }, { value: "unsure", label: "Not sure" }] },
+  { section: "H", id: "identity_confidence", prompt: "How confident are you in that answer?", type: "likert", minLabel: "Not at all confident", maxLabel: "Very confident" },
+  { section: "H", id: "perceived_peer_agency", prompt: "The other members appeared to make their own reporting decisions.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
+  { section: "I", id: "open_decision_factors", prompt: "Briefly describe the main factors that influenced your reporting decisions.", type: "text" },
+];
+
+const humanAiRuleBlocks = [
+  { title: "Your group", body: "" },
+  { title: "Shared die", body: "In each round, every member sees the same die result and independently chooses a value to report." },
+  { title: "Submission System", body: "The Submission System records each member's report. It does not decide what anyone should report." },
+  { title: "Private reports", body: "" },
+  { title: "Task bonus", body: "Your round bonus equals the value you submit. Each member's task result is calculated separately." },
+];
+
+function humanAiRuleBlocksFor(peerIdentity, condition) {
+  const identityIntroduction = peerIdentity === "ai"
+    ? "You will complete this task with four AI group members."
+    : "You will complete this task with four other human group members.";
+  const reportVisibility = condition === "hidden"
+    ? "The other group members' report values are not shown in this task. Other members cannot see your private report."
+    : "You will see the other four group members' reports before making your own private report. Other members cannot see your report.";
+  return humanAiRuleBlocks.map((block) => {
+    if (block.title === "Your group") return { ...block, body: identityIntroduction };
+    if (block.title === "Private reports") return { ...block, body: reportVisibility };
+    return { ...block };
+  });
+}
+
+const humanAiComprehensionQuestions = [
+  { id: "reported_object", prompt: "What does each member report?", correctValue: "common_die", review: "Members report a value for the shared die result.", options: [{ value: "common_die", label: "The shared die result" }, { value: "private_preference", label: "A preferred reward" }, { value: "other_members", label: "Another member's report" }] },
+  { id: "private_submission", prompt: "Can the other members see your private report?", correctValue: "no", review: "Your report is not shown to the other members.", options: [{ value: "yes", label: "Yes" }, { value: "no", label: "No" }, { value: "after", label: "Only after the task" }] },
+  { id: "reward_direction", prompt: "How is your submitted value related to your round bonus?", correctValue: "higher_reward", review: "A higher submitted value produces a higher round bonus.", options: [{ value: "higher_reward", label: "Higher report, higher bonus" }, { value: "lower_reward", label: "Lower report, higher bonus" }, { value: "unrelated", label: "They are unrelated" }] },
+];
+
 const ruleBlocks = [
   {
     title: "你的群体",
@@ -68,6 +108,10 @@ module.exports = {
   taskName: "骰子结果申报任务",
   baselineItems,
   postSurveyItems: postSurveyStudy1,
+  humanAiPostSurveyItems,
+  humanAiRuleBlocks,
+  humanAiRuleBlocksFor,
+  humanAiComprehensionQuestions,
   demographicsItems,
   ruleBlocks,
   comprehensionQuestions,

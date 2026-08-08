@@ -1,4 +1,10 @@
 const crypto = require("crypto");
+const {
+  PROTOCOL_VERSION: HUMAN_AI_PROTOCOL_VERSION,
+  isPeerIdentity,
+  isActiveHumanAiCondition,
+  activeCells,
+} = require("../config/human-ai-protocol");
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
@@ -32,13 +38,25 @@ function parseVariantMap(raw, allowedConditions) {
     if (!/^[A-Za-z0-9_-]{43,256}$/.test(token)) {
       throw configError("Each Prolific variant token must be opaque and at least 32 bytes");
     }
-    const descriptor = typeof value === "string" ? { condition: value } : value;
+    const isLegacyString = typeof value === "string";
+    const isLegacy = isLegacyString || !Object.prototype.hasOwnProperty.call(value || {}, "peer_identity");
+    const descriptor = isLegacyString ? { condition: value, variant_id: `legacy_${value}` } : value;
     const condition = String(descriptor?.condition || "").trim();
     const variantId = String(descriptor?.variant_id || descriptor?.id || "").trim();
     if (!allowedConditions.includes(condition) || !ID_PATTERN.test(variantId)) {
       throw configError("Each Prolific variant must have a valid variant_id and condition");
     }
-    map.set(token, { condition, variant_id: variantId });
+    const peerIdentity = String(descriptor?.peer_identity || "").trim();
+    if (!isLegacy && (!isPeerIdentity(peerIdentity) || !isActiveHumanAiCondition(condition))) {
+      throw configError("Human-AI variant objects require a valid peer_identity and active condition");
+    }
+    map.set(token, {
+      condition,
+      variant_id: variantId,
+      peer_identity: isLegacy ? null : peerIdentity,
+      protocol_version: isLegacy ? null : HUMAN_AI_PROTOCOL_VERSION,
+      mapping_format: isLegacy ? "legacy_string" : "human_ai_object",
+    });
   }
   return map;
 }
@@ -78,15 +96,22 @@ function createProlificSupport({
       throw configError("STUDY_CONTACT_EMAIL is required in prolific_taskflow mode");
     }
     variants = parseVariantMap(env.PROLIFIC_VARIANT_MAP_JSON, allowedConditions);
-    if (variants.size !== expectedVariantCount) {
-      throw configError(`PROLIFIC_VARIANT_MAP_JSON must contain ${expectedVariantCount} variants`);
-    }
-    const mappedConditions = [...variants.values()].map((item) => item.condition);
-    if (
-      new Set(mappedConditions).size !== expectedVariantCount ||
-      allowedConditions.some((condition) => !mappedConditions.includes(condition))
-    ) {
-      throw configError("Prolific variants must map one-to-one to all study conditions");
+    const descriptors = [...variants.values()];
+    const legacy = descriptors.every((item) => item.mapping_format === "legacy_string");
+    const humanAi = descriptors.every((item) => item.mapping_format === "human_ai_object");
+    if (!legacy && !humanAi) throw configError("Prolific variant mappings must not mix legacy strings and Human-AI objects");
+    if (legacy) {
+      if (variants.size !== expectedVariantCount) throw configError(`Legacy PROLIFIC_VARIANT_MAP_JSON must contain ${expectedVariantCount} variants`);
+      const mappedConditions = descriptors.map((item) => item.condition);
+      if (new Set(mappedConditions).size !== expectedVariantCount || allowedConditions.some((condition) => !mappedConditions.includes(condition))) {
+        throw configError("Legacy Prolific variants must map one-to-one to all study conditions");
+      }
+    } else {
+      const expectedCells = new Set(activeCells().map((cell) => `${cell.peer_identity}|${cell.condition}`));
+      const mappedCells = descriptors.map((item) => `${item.peer_identity}|${item.condition}`);
+      if (variants.size !== expectedCells.size || new Set(mappedCells).size !== expectedCells.size || mappedCells.some((cell) => !expectedCells.has(cell))) {
+        throw configError("Human-AI Prolific variants must map one-to-one to all 12 active cells");
+      }
     }
   } else if (isProduction && assignmentMode !== "controlled_link") {
     // Existing block mode remains available for development only.
@@ -126,6 +151,9 @@ function createProlificSupport({
       taskflow_variant_id: descriptor.variant_id,
       variant_token_hash: crypto.createHash("sha256").update(variant).digest("hex"),
       condition: descriptor.condition,
+      peer_identity: descriptor.peer_identity,
+      protocol_version: descriptor.protocol_version,
+      mapping_format: descriptor.mapping_format,
       assignment_mode: "prolific_taskflow",
       locale: "en",
       is_preview: previewRequested,
@@ -165,7 +193,9 @@ function createProlificSupport({
       }
       if (
         sameSubmission.taskflow_variant_id !== identity.taskflow_variant_id ||
-        sameSubmission.variant_token_hash !== identity.variant_token_hash
+        sameSubmission.variant_token_hash !== identity.variant_token_hash ||
+        (sameSubmission.peer_identity || null) !== (identity.peer_identity || null) ||
+        (sameSubmission.protocol_version === HUMAN_AI_PROTOCOL_VERSION) !== (identity.protocol_version === HUMAN_AI_PROTOCOL_VERSION)
       ) {
         const error = requestError(
           409,
@@ -188,7 +218,9 @@ function createProlificSupport({
     if (sameParticipant) {
       if (
         sameParticipant.taskflow_variant_id !== identity.taskflow_variant_id ||
-        sameParticipant.variant_token_hash !== identity.variant_token_hash
+        sameParticipant.variant_token_hash !== identity.variant_token_hash ||
+        (sameParticipant.peer_identity || null) !== (identity.peer_identity || null) ||
+        (sameParticipant.protocol_version === HUMAN_AI_PROTOCOL_VERSION) !== (identity.protocol_version === HUMAN_AI_PROTOCOL_VERSION)
       ) {
         const error = requestError(409, "variant_conflict", "Your saved study record belongs to a different Taskflow assignment. Please return to Prolific or contact the research team.");
         error.session_id = sameParticipant.id;
