@@ -188,6 +188,9 @@ function publicContactEmail() {
 }
 
 function publicCompletion(session = {}) {
+  if (["qa_preview", "team_review"].includes(session.assignment_mode)) {
+    return { completion_code: null, completion_redirect_url: null };
+  }
   if (session.assignment_mode === "prolific_taskflow") {
     return {
       completion_code: null,
@@ -225,6 +228,7 @@ function publicSession(session) {
     payload.condition_map_version = session.condition_map_version;
     payload.peer_members = peerMembersForIdentity(session.peer_identity);
     payload.post_survey_items = postSurveyItemsForSession(session);
+    payload.demographics_items = demographicsItemsForSession(session);
     payload.rule_blocks = study1.humanAiRuleBlocksFor(session.peer_identity, session.condition);
     payload.comprehension_questions = publicComprehensionQuestions(study1.humanAiComprehensionQuestions);
   }
@@ -257,6 +261,12 @@ function postSurveyItemsForSession(session) {
   return session?.protocol_version === HUMAN_AI_PROTOCOL_VERSION
     ? study1.humanAiPostSurveyItems
     : study1.postSurveyItems;
+}
+
+function demographicsItemsForSession(session) {
+  return session?.protocol_version === HUMAN_AI_PROTOCOL_VERSION
+    ? study1.humanAiDemographicsItems
+    : study1.demographicsItems;
 }
 
 function normalizeProlificTracking(session) {
@@ -989,6 +999,8 @@ function filterSessions(sessions, query = {}) {
   const includeTest = String(query.include_test || query.includeTest || "").toLowerCase() === "true";
   const condition = query.condition || "all";
   const peerIdentity = query.peer_identity || "all";
+  const protocolVersion = query.protocol_version || "all";
+  const scope = query.scope || "all";
   const status = query.status || "all";
   const resumedOnly = String(query.resumed_only || "").toLowerCase() === "true";
   const aliasesOnly = String(query.aliases_only || "").toLowerCase() === "true";
@@ -999,6 +1011,8 @@ function filterSessions(sessions, query = {}) {
     if (!includeTest && session.is_test_session) return false;
     if (condition !== "all" && condition && session.condition !== condition) return false;
     if (peerIdentity !== "all" && peerIdentity && (session.peer_identity || "human_legacy") !== peerIdentity) return false;
+    if (protocolVersion !== "all" && protocolVersion && (session.protocol_version || "legacy") !== protocolVersion) return false;
+    if (scope !== "all" && scope && prolificExport.sessionScope(session) !== scope) return false;
     if (status === "completed" && session.status !== "completed") return false;
     if (status === "incomplete" && session.status === "completed") return false;
     if (resumedOnly && Number(session.resume_count || 0) < 1) return false;
@@ -1398,11 +1412,17 @@ app.post("/api/session/:id/post-survey", asyncHandler(async (req, res) => {
 
 app.post("/api/session/:id/demographics", asyncHandler(async (req, res) => {
   const responses = req.body.responses || {};
-  const validation = validateItems(study1.demographicsItems, responses);
+  const existingSession = await store.readSession(req.params.id);
+  const validation = validateItems(demographicsItemsForSession(existingSession), responses);
   if (validation.error) return res.status(400).json(validation);
   const session = await store.updateSession(req.params.id, (draft) => {
     if (draft.status !== "post_survey_completed") throw new Error("Demographics requires post_survey_completed status");
-    draft.demographics = responses;
+    const storedDemographics = { ...responses };
+    if (draft.protocol_version === HUMAN_AI_PROTOCOL_VERSION) {
+      draft.post_survey.open_decision_factors = storedDemographics.open_decision_factors;
+      delete storedDemographics.open_decision_factors;
+    }
+    draft.demographics = storedDemographics;
     addEvent(draft, "demographics_completed");
     transition(draft, "demographics_completed");
     return draft;
@@ -1461,6 +1481,22 @@ app.get("/api/admin/summary", requireAdmin, asyncHandler(async (req, res) => {
 
 app.get("/api/admin/export/json", requireAdmin, asyncHandler(async (req, res) => {
   res.json({ version: VERSION, sessions: filterSessions(await store.listSessions(), req.query) });
+}));
+
+app.get("/api/admin/session/:id", requireAdmin, asyncHandler(async (req, res) => {
+  const session = await store.readSession(req.params.id);
+  res.json({
+    metadata: prolificExport.adminRows([session])[0],
+    rounds: session.dice_rounds || [],
+    survey: { baseline: session.baseline || {}, post_survey: session.post_survey || {}, demographics: session.demographics || {} },
+    quality_flags: prolificExport.qualityFlags(session),
+    completion: { status: session.status, completed_at: session.completed_at || null, completion_ready_at: session.completion_ready_at || null, redirect_initiated_at: session.completion_redirect_initiated_at || null },
+  });
+}));
+
+app.get("/api/admin/records", requireAdmin, asyncHandler(async (req, res) => {
+  const sessions = filterSessions(await store.listSessions(), req.query);
+  res.json({ participants: prolificExport.adminRows(sessions) });
 }));
 
 app.get("/api/admin/prolific-summary", requireAdmin, asyncHandler(async (req, res) => {

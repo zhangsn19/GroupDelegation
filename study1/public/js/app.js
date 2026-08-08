@@ -164,8 +164,13 @@
     state.session = session;
     if (Array.isArray(session.peer_members)) state.members = session.peer_members;
     if (Array.isArray(session.post_survey_items)) state.config.postSurveyItems = session.post_survey_items;
+    if (Array.isArray(session.demographics_items)) state.config.demographicsItems = session.demographics_items;
     if (Array.isArray(session.rule_blocks)) state.config.ruleBlocks = session.rule_blocks;
     if (Array.isArray(session.comprehension_questions)) state.config.comprehensionQuestions = session.comprehension_questions;
+    if (isHumanAiProtocol()) {
+      const consentIntro = screens.consent.querySelector(".consent-text p");
+      if (consentIntro) consentIntro.textContent = "You will complete an individual reporting task with four other group members using a neutral Submission System.";
+    }
   }
 
   function setError(error) {
@@ -495,7 +500,7 @@
     if (isHumanAiProtocol()) {
       content.innerHTML = `
         <div class="card"><h2>Debrief</h2><div class="consent-text">
-          <p>Thank you for completing the study. The other-member reports were scripted experimental stimuli; no live people or live AI systems generated them during your session.</p>
+          <p>The identities and reporting patterns of the other group members were simulated and controlled by the research system for experimental purposes. No other human participants or live AI models were making these reporting decisions in real time.</p>
           <p>The study examines how the stated identity and reporting behavior of peers may affect decisions. Your records are used only for research. Contact the research team with your participant ID if you have questions about the study or your participation.</p>
         </div></div>${participantInfoCard(pid, contact)}
         <div class="step-nav"><p class="status-hint" id="debrief-save-status">Saving debrief acknowledgement...</p><button class="btn btn-primary" data-action="complete">Complete</button></div>`;

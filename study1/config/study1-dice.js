@@ -3,16 +3,28 @@ const { baselineItems, postSurveyStudy1, demographicsItems } = require("./measur
 const FIXED_DICE_SEQUENCE = [3, 5, 2, 4, 1, 3, 2, 5, 4, 1];
 const REWARD_PER_POINT = 1;
 
+const postById = Object.fromEntries(postSurveyStudy1.map((item) => [item.id, item]));
+const withSection = (id, section) => ({ ...postById[id], section });
 const humanAiPostSurveyItems = [
-  ...postSurveyStudy1.filter((item) => !["a_ai_executes_understood", "e_ai_followed_choice", "e_ai_influenced_decision", "e_ai_decided_outcome"].includes(item.id)),
-  { section: "G", id: "peer_influence_self_report", prompt: "The other members' reports influenced the values I chose to submit.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
-  { section: "G", id: "peer_reports_considered", prompt: "I considered the other members' reports when making my decisions.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
-  { section: "G", id: "peer_behavior_appropriateness_influence", prompt: "The other members' behavior affected what I considered appropriate to report.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
-  { section: "G", id: "shared_group_responsibility", prompt: "Responsibility for the group's reporting behavior was shared among group members.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
-  { section: "H", id: "identity_recall", prompt: "The four other members were presented as:", type: "select", options: [{ value: "human", label: "Human members" }, { value: "ai", label: "AI members" }, { value: "unsure", label: "Not sure" }] },
-  { section: "H", id: "identity_confidence", prompt: "How confident are you in that answer?", type: "likert", minLabel: "Not at all confident", maxLabel: "Very confident" },
-  { section: "H", id: "perceived_peer_agency", prompt: "The other members appeared to make their own reporting decisions.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
-  { section: "I", id: "open_decision_factors", prompt: "Briefly describe the main factors that influenced your reporting decisions.", type: "text" },
+  withSection("b_peer_true_reporting_common", "N"), withSection("b_peer_reward_reporting_common", "N"),
+  withSection("b_peer_behavior_predictable", "N"), withSection("c_true_reporting_acceptable", "N"),
+  withSection("c_reward_reporting_acceptable", "N"),
+  { section: "S", id: "peer_influence_self_report", prompt: "The other group members influenced my reporting decisions.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
+  { section: "S", id: "peer_reports_considered", prompt: "I considered the other group members' reports when deciding what to report.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
+  { section: "S", id: "peer_behavior_appropriateness_influence", prompt: "The behavior of the other group members affected what I considered appropriate to report.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
+  withSection("e_reflects_my_decision", "R"), withSection("e_personal_responsibility", "R"),
+  { section: "R", id: "shared_group_responsibility", prompt: "Responsibility for the task outcome was shared across group members.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
+  withSection("d_guilt", "R"), withSection("d_moral_discomfort", "R"),
+  withSection("a_truthful_peer_count", "M"), withSection("a_peer_behavior_change", "M"),
+  withSection("a_private_submission_understood", "M"), withSection("a_independent_reward_understood", "M"),
+  { section: "X", id: "identity_recall", prompt: "The other four group members were:", type: "select", options: [{ value: "human", label: "Human participants" }, { value: "ai", label: "AI agents" }, { value: "not_sure", label: "Not sure" }] },
+  { section: "C2", id: "identity_confidence", prompt: "How confident are you about your answer above?", type: "likert", minLabel: "Not at all confident", maxLabel: "Very confident" },
+  { section: "P", id: "perceived_peer_agency", prompt: "The other group members seemed to make their own reporting decisions.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
+];
+
+const humanAiDemographicsItems = [
+  ...demographicsItems,
+  { section: "O", id: "open_decision_factors", prompt: "What, if anything, influenced your reporting decisions during the task?", type: "text" },
 ];
 
 const humanAiRuleBlocks = [
@@ -109,6 +121,7 @@ module.exports = {
   baselineItems,
   postSurveyItems: postSurveyStudy1,
   humanAiPostSurveyItems,
+  humanAiDemographicsItems,
   humanAiRuleBlocks,
   humanAiRuleBlocksFor,
   humanAiComprehensionQuestions,

@@ -13,6 +13,8 @@ const study1 = require("../config/study1-dice");
 assert.deepStrictEqual(protocol.PEER_IDENTITIES, ["human", "ai"]);
 assert.strictEqual(protocol.supportedCells().length, 14);
 assert.strictEqual(protocol.activeCells().length, 12);
+assert.strictEqual(protocol.IDENTITY_MANIPULATION_VERSION, "identity-v1");
+assert.strictEqual(protocol.CONDITION_MAP_VERSION, "human-ai-2x7-v1");
 assert(!protocol.ACTIVE_HUMAN_AI_CONDITIONS.includes("dishonest_escalating"));
 assert(protocol.SUPPORTED_CONDITIONS.includes("dishonest_escalating"));
 assert(!protocol.SUPPORTED_CONDITIONS.some((condition) => condition.startsWith("ai_") || condition.startsWith("human_")));
@@ -25,6 +27,10 @@ assert(!humanRules.some((block) => /AI group members/.test(block.body)));
 assert(!aiRules.some((block) => /human group members/.test(block.body)));
 assert(hiddenRules.some((block) => block.body.includes("The other group members' report values are not shown in this task.")));
 assert(!hiddenRules.some((block) => block.body.includes("You will see the other four")));
+assert.deepStrictEqual(study1.humanAiPostSurveyItems.map((item) => item.section).filter((section, index, all) => index === 0 || section !== all[index - 1]), ["N", "S", "R", "M", "X", "C2", "P"]);
+assert.strictEqual(study1.humanAiDemographicsItems.at(-1).id, "open_decision_factors");
+assert.strictEqual(study1.humanAiPostSurveyItems.find((item) => item.id === "peer_influence_self_report").prompt, "The other group members influenced my reporting decisions.");
+assert.deepStrictEqual(study1.humanAiPostSurveyItems.find((item) => item.id === "identity_recall").options.map((option) => option.value), ["human", "ai", "not_sure"]);
 const humanMembers = app._internal.peerMembersForIdentity("human").slice(1);
 const aiMembers = app._internal.peerMembersForIdentity("ai").slice(1);
 assert(humanMembers.every((member) => member.name.startsWith("Human Member") && member.avatar === "👤"));
@@ -93,6 +99,7 @@ const sampleSession = {
   baseline: {}, post_survey: {}, demographics: {},
 };
 const files = prolificExport.buildFiles([sampleSession], { GIT_COMMIT: "test" });
+assert.deepStrictEqual(Object.keys(files).sort(), ["bonus_payments.csv", "cell_summary.csv", "export_metadata.json", "participants.csv", "raw_sessions.ndjson", "study1_rounds.csv", "surveys.csv"]);
 assert(files["cell_summary.csv"]);
 assert.strictEqual(files["cell_summary.csv"].trim().split(/\r?\n/).length, 13);
 const metadata = JSON.parse(files["export_metadata.json"]);

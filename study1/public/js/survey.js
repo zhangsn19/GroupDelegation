@@ -5,7 +5,15 @@
     C: "你对同事认为“应该/可接受”的判断",
     D: "回顾自己的感受",
     E: "回顾你的决定与群聊 AI 的角色",
-    F: "补充说明（可选）"
+    F: "补充说明（可选）",
+    N: "Group Norms",
+    S: "Social Influence",
+    R: "Responsibility / Moral Response",
+    M: "Peer-count Memory",
+    X: "Identity Recognition",
+    C2: "Identity Confidence",
+    P: "Perceived Agency",
+    O: "Open-ended Feedback"
   };
 
   const SECTION_SUBTITLES = {

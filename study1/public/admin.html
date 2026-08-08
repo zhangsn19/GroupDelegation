@@ -40,6 +40,10 @@
         <select id="filter-peer-identity" class="text-input">
           <option value="all">All</option><option value="human">Human</option><option value="ai">AI</option><option value="human_legacy">Legacy / History</option>
         </select>
+        <label class="field-label" for="filter-protocol">protocol_version</label>
+        <select id="filter-protocol" class="text-input"><option value="all">All</option><option value="study1-human-ai-v1">study1-human-ai-v1</option><option value="peer-reporting-v2">Legacy peer-reporting-v2</option></select>
+        <label class="field-label" for="filter-scope">scope</label>
+        <select id="filter-scope" class="text-input"><option value="all">All</option><option value="formal">Formal</option><option value="preview">Preview</option><option value="qa">QA</option><option value="team_review">Team Review</option><option value="legacy">Legacy</option></select>
         <label class="field-label" for="record-status">Prolific status</label>
         <select id="record-status" class="text-input">
           <option value="all">All statuses</option>
@@ -68,6 +72,10 @@
       <section class="panel">
         <h2>汇总</h2>
         <pre id="summary-output" class="code-output">尚未加载。</pre>
+        <h2>Active Human-AI 2×6 Matrix</h2>
+        <pre id="matrix-output" class="code-output">Not loaded.</pre>
+        <h2>Participants by selected scope</h2>
+        <pre id="all-records-output" class="code-output">Not loaded.</pre>
         <h2 id="formal-heading">Formal Records</h2>
         <pre id="formal-output" class="code-output">Not loaded.</pre>
         <h2 id="preview-heading">Preview Records</h2>
@@ -81,6 +89,8 @@
       const formalOutput = document.querySelector("#formal-output");
       const previewOutput = document.querySelector("#preview-output");
       const links = document.querySelector("#export-links");
+      const matrixOutput = document.querySelector("#matrix-output");
+      const allRecordsOutput = document.querySelector("#all-records-output");
       let prolificSummary = null;
       const exportsList = [
         ["JSON 原始数据", "/api/admin/export/json"],
@@ -113,7 +123,11 @@
           headers: { "x-admin-token": token }
         });
         prolificSummary = await prolificResponse.json();
+        const recordsResponse = await fetch(`/api/admin/records?${queryString()}`, { headers: { "x-admin-token": token } });
+        const recordsData = await recordsResponse.json();
         summaryOutput.textContent = JSON.stringify({ current: data, preview_mode_enabled: prolificSummary.preview_mode_enabled, formal: prolificSummary.formal, preview: prolificSummary.preview }, null, 2);
+        matrixOutput.textContent = JSON.stringify(prolificSummary.formal?.active_matrix || [], null, 2);
+        allRecordsOutput.textContent = JSON.stringify(recordsData.participants || [], null, 2);
         renderProlificRecords();
         links.innerHTML = exportsList.map(([label, href]) => (
           `<button class="secondary-button" data-export="${href}">${label}</button>`
@@ -169,6 +183,8 @@
         const params = new URLSearchParams();
         params.set("condition", document.querySelector("#filter-condition").value);
         params.set("peer_identity", document.querySelector("#filter-peer-identity").value);
+        params.set("protocol_version", document.querySelector("#filter-protocol").value);
+        params.set("scope", document.querySelector("#filter-scope").value);
         if (document.querySelector("#include-test").checked) params.set("include_test", "true");
         if (document.querySelector("#start-date").value) params.set("start_date", document.querySelector("#start-date").value);
         if (document.querySelector("#end-date").value) params.set("end_date", document.querySelector("#end-date").value);

@@ -20,8 +20,8 @@ const ACTIVE_HUMAN_AI_CONDITIONS = Object.freeze([
 ]);
 
 const PROTOCOL_VERSION = "study1-human-ai-v1";
-const IDENTITY_MANIPULATION_VERSION = "peer-identity-v1";
-const CONDITION_MAP_VERSION = "human-ai-2x6-v1";
+const IDENTITY_MANIPULATION_VERSION = "identity-v1";
+const CONDITION_MAP_VERSION = "human-ai-2x7-v1";
 
 function isPeerIdentity(value) {
   return PEER_IDENTITIES.includes(value);

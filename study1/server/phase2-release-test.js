@@ -80,11 +80,12 @@ async function exercise(peerIdentity, condition) {
   const postItems = restored.data.session.post_survey_items;
   const post = await request(`/api/session/${id}/post-survey`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ responses: answers(postItems) }) });
   assert.strictEqual(post.response.status, 200);
-  const demo = await request(`/api/session/${id}/demographics`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ responses: answers(config.data.demographicsItems) }) });
+  const demo = await request(`/api/session/${id}/demographics`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ responses: answers(restored.data.session.demographics_items) }) });
   assert.strictEqual(demo.response.status, 200);
   await request(`/api/session/${id}/debrief-viewed`, { method: "POST" });
   const complete = await request(`/api/session/${id}/complete`, { method: "POST" });
   assert.strictEqual(complete.data.session.status, "completed");
+  return id;
 }
 
 (async () => {
@@ -104,14 +105,34 @@ async function exercise(peerIdentity, condition) {
     assert(review.response.ok && review.text.includes("Start Fresh Review Session") && !review.text.includes("dishonest_escalating"));
     const escalatingReview = await request("/api/review/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ peer_identity: "human", condition: "dishonest_escalating" }) });
     assert.strictEqual(escalatingReview.response.status, 400);
-    for (const peerIdentity of ["human", "ai"]) for (const condition of ["hidden", "honest", "dishonest"]) await exercise(peerIdentity, condition);
+    const reviewIds = [];
+    for (const peerIdentity of ["human", "ai"]) for (const condition of ["hidden", "honest", "dishonest"]) reviewIds.push(await exercise(peerIdentity, condition));
+    for (const peerIdentity of ["human", "ai"]) for (const condition of ["dishonest_fixed_1", "dishonest_fixed_2", "dishonest_fixed_3"]) {
+      const created = await request("/api/review/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ peer_identity: peerIdentity, condition }) });
+      assert.strictEqual(created.response.status, 200);
+      assert.strictEqual(created.data.session.assignment_mode, "team_review");
+    }
+    const protocol = require("../config/human-ai-protocol");
+    for (const cell of protocol.supportedCells()) {
+      const created = await request("/api/admin/qa/session", { method: "POST", headers: { "content-type": "application/json", "x-admin-token": adminToken }, body: JSON.stringify(cell) });
+      assert.strictEqual(created.response.status, 200);
+      assert.strictEqual(created.data.session.peer_identity, cell.peer_identity);
+    }
     const prolificSummary = await request("/api/admin/prolific-summary?include_test=true", { headers: { "x-admin-token": adminToken } });
     assert.strictEqual(prolificSummary.data.formal.arrived, 0);
     assert.strictEqual(prolificSummary.data.preview.arrived, 0);
+    const reviewRecords = await request("/api/admin/records?include_test=true&scope=team_review", { headers: { "x-admin-token": adminToken } });
+    assert.strictEqual(reviewRecords.data.participants.length, 12);
+    assert(reviewRecords.data.participants.every((record) => record.scope === "team_review" && record.peer_identity && "data_complete" in record));
+    const qaRecords = await request("/api/admin/records?include_test=true&scope=qa", { headers: { "x-admin-token": adminToken } });
+    assert.strictEqual(qaRecords.data.participants.length, 14);
+    const detail = await request(`/api/admin/session/${reviewIds[0]}`, { headers: { "x-admin-token": adminToken } });
+    assert.strictEqual(detail.data.rounds.length, 10);
+    assert(detail.data.survey.post_survey.identity_recall);
     const qaBundle = await request("/api/admin/export/qa-bundle.zip", { headers: { "x-admin-token": adminToken } });
     assert.strictEqual(qaBundle.response.status, 200);
     const qaFiles = fs.readdirSync(path.join(dataRoot, "sessions")).filter((name) => name.endsWith(".json"));
-    assert.strictEqual(qaFiles.length, 6);
+    assert.strictEqual(qaFiles.length, 26);
     console.log("Phase 2 API/render acceptance passed: authenticated /qa-preview and six complete team-review flows.");
   } finally {
     child.kill();

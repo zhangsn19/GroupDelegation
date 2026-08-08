@@ -138,7 +138,7 @@ function surveyColumns() {
   return [
     "record_key", "prolific_pid", "prolific_session_id",
     ...study1.baselineItems.map((item) => `pre_${item.id}`),
-    ...new Set([...study1.postSurveyItems, ...(study1.humanAiPostSurveyItems || [])].map((item) => `post_${item.id}`)),
+    ...new Set([...study1.postSurveyItems, ...(study1.humanAiPostSurveyItems || []), { id: "open_decision_factors" }].map((item) => `post_${item.id}`)),
     ...study1.demographicsItems.map((item) => `demo_${item.id}`)
   ];
 }
@@ -260,6 +260,7 @@ function zip(files) {
 
 function adminRows(sessions) {
   return sessions.map((session) => ({
+    record_id: session.id,
     prolific_pid: session.prolific_pid ? `${session.prolific_pid.slice(0, 4)}…${session.prolific_pid.slice(-4)}` : "",
     session_id: session.id ? session.id.slice(-8) : "",
     primary_session_id: (session.primary_prolific_session_id || session.prolific_session_id || "").slice(-8),
@@ -271,15 +272,24 @@ function adminRows(sessions) {
     condition: session.condition,
     peer_identity: session.peer_identity || (session.protocol_version === HUMAN_AI_PROTOCOL_VERSION ? "" : "human_legacy"),
     protocol_version: session.protocol_version || "",
+    scope: sessionScope(session),
     status: session.status,
     started_at: session.started_at,
     completed_at: session.completed_at,
     total_duration_ms: session.completed_at && session.started_at ? new Date(session.completed_at) - new Date(session.started_at) : null,
     rounds_completed: (session.dice_rounds || []).length,
+    data_complete: isDataComplete(session),
     mean_decision_time_ms: session.dice_rounds?.length ? Math.round(session.dice_rounds.reduce((sum, round) => sum + Number(round.decision_time_ms || 0), 0) / session.dice_rounds.length) : null,
     completion_redirect_initiated: Boolean(session.completion_redirect_initiated_at),
     quality_flags: qualityFlags(session)
   }));
 }
 
-module.exports = { SCHEMA_VERSION, buildFiles, zip, adminRows, qualityFlags, isDataComplete };
+function sessionScope(session) {
+  if (session.is_qa) return "qa";
+  if (session.is_team_review) return "team_review";
+  if (session.assignment_mode === "prolific_taskflow") return session.is_preview ? "preview" : "formal";
+  return "legacy";
+}
+
+module.exports = { SCHEMA_VERSION, buildFiles, zip, adminRows, qualityFlags, isDataComplete, sessionScope };
