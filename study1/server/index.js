@@ -131,8 +131,8 @@ function loadParticipantAllowlist(filePath) {
 }
 
 function validateAssignmentConfig() {
-  if (!["block", "controlled_link", "prolific_taskflow"].includes(ASSIGNMENT_MODE)) {
-    throw new Error("ASSIGNMENT_MODE must be block, controlled_link, or prolific_taskflow");
+  if (!["block", "controlled_link", "prolific_taskflow", "review_only"].includes(ASSIGNMENT_MODE)) {
+    throw new Error("ASSIGNMENT_MODE must be block, controlled_link, prolific_taskflow, or review_only");
   }
   if (!["open", "allowlist"].includes(PARTICIPANT_ID_POLICY)) {
     throw new Error("PARTICIPANT_ID_POLICY must be open or allowlist");
@@ -1143,6 +1143,7 @@ app.get("/health", (req, res) => {
 });
 
 app.post("/api/session", asyncHandler(async (req, res) => {
+  if (ASSIGNMENT_MODE === "review_only") return res.status(404).json({ error: "Formal participant entry is not configured for this review deployment." });
   const session = await createSession({
     study: "study1",
     participantId: req.body.participant_id || req.body.participantId || req.body.PROLIFIC_PID || req.body.pid || req.body.prolific_id,

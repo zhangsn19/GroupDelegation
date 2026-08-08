@@ -10,7 +10,7 @@ const adminToken = "phase2-synthetic-admin-token";
 const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "study1-phase2-"));
 const child = spawn(process.execPath, [path.join(__dirname, "index.js")], {
   cwd: path.join(__dirname, ".."),
-  env: { ...process.env, PORT: String(port), DATA_DIR: path.join(dataRoot, "sessions"), ASSIGNMENT_MODE: "block", PARTICIPANT_ID_POLICY: "open", REQUIRE_PARTICIPANT_ID: "false", DEBUG_LINKS: "false", ALLOW_QA_PREVIEW: "true", ALLOW_TEAM_REVIEW: "true", ADMIN_TOKEN: adminToken, NODE_ENV: "development" },
+  env: { ...process.env, PORT: String(port), DATA_DIR: path.join(dataRoot, "sessions"), ASSIGNMENT_MODE: "review_only", PARTICIPANT_ID_POLICY: "open", REQUIRE_PARTICIPANT_ID: "false", DEBUG_LINKS: "false", ALLOW_QA_PREVIEW: "true", ALLOW_TEAM_REVIEW: "true", ADMIN_TOKEN: adminToken, NODE_ENV: "development" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let stderr = "";
@@ -91,6 +91,8 @@ async function exercise(peerIdentity, condition) {
 (async () => {
   try {
     await waitForHealth();
+    const formalEntry = await request("/api/session", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    assert.strictEqual(formalEntry.response.status, 404);
     const unauthenticated = await request("/qa-preview");
     assert.strictEqual(unauthenticated.response.status, 200);
     assert(unauthenticated.text.includes("Authenticate") && !unauthenticated.text.includes('id="condition"'));
