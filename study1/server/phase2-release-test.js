@@ -5,16 +5,18 @@ const path = require("path");
 const { spawn } = require("child_process");
 
 const port = 3411;
-const origin = `http://127.0.0.1:${port}`;
-const adminToken = "phase2-synthetic-admin-token";
+const externalOrigin = String(process.env.EXTERNAL_ORIGIN || "").replace(/\/$/, "");
+const origin = externalOrigin || `http://127.0.0.1:${port}`;
+const adminToken = externalOrigin ? String(process.env.TEST_ADMIN_TOKEN || "") : "phase2-synthetic-admin-token";
+if (externalOrigin && !adminToken) throw new Error("TEST_ADMIN_TOKEN is required with EXTERNAL_ORIGIN");
 const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "study1-phase2-"));
-const child = spawn(process.execPath, [path.join(__dirname, "index.js")], {
+const child = externalOrigin ? null : spawn(process.execPath, [path.join(__dirname, "index.js")], {
   cwd: path.join(__dirname, ".."),
   env: { ...process.env, PORT: String(port), DATA_DIR: path.join(dataRoot, "sessions"), ASSIGNMENT_MODE: "review_only", PARTICIPANT_ID_POLICY: "open", REQUIRE_PARTICIPANT_ID: "false", DEBUG_LINKS: "false", ALLOW_QA_PREVIEW: "true", ALLOW_TEAM_REVIEW: "true", ADMIN_TOKEN: adminToken, NODE_ENV: "development" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let stderr = "";
-child.stderr.on("data", (chunk) => { stderr += chunk; });
+child?.stderr.on("data", (chunk) => { stderr += chunk; });
 
 async function request(url, options = {}) {
   const response = await fetch(`${origin}${url}`, options);
@@ -133,11 +135,13 @@ async function exercise(peerIdentity, condition) {
     assert(detail.data.survey.post_survey.identity_recall);
     const qaBundle = await request("/api/admin/export/qa-bundle.zip", { headers: { "x-admin-token": adminToken } });
     assert.strictEqual(qaBundle.response.status, 200);
-    const qaFiles = fs.readdirSync(path.join(dataRoot, "sessions")).filter((name) => name.endsWith(".json"));
-    assert.strictEqual(qaFiles.length, 26);
+    if (!externalOrigin) {
+      const qaFiles = fs.readdirSync(path.join(dataRoot, "sessions")).filter((name) => name.endsWith(".json"));
+      assert.strictEqual(qaFiles.length, 26);
+    }
     console.log("Phase 2 API/render acceptance passed: authenticated /qa-preview and six complete team-review flows.");
   } finally {
-    child.kill();
+    child?.kill();
     fs.rmSync(dataRoot, { recursive: true, force: true });
   }
 })().catch((error) => { console.error(error); process.exitCode = 1; });
