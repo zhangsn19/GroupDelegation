@@ -10,9 +10,14 @@ const origin = externalOrigin || `http://127.0.0.1:${port}`;
 const adminToken = externalOrigin ? String(process.env.TEST_ADMIN_TOKEN || "") : "phase2-synthetic-admin-token";
 if (externalOrigin && !adminToken) throw new Error("TEST_ADMIN_TOKEN is required with EXTERNAL_ORIGIN");
 const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "study1-phase2-"));
+const legacyRoot = path.join(dataRoot, "legacy-sessions");
+fs.mkdirSync(legacyRoot, { recursive: true });
+const legacyFixturePath = path.join(legacyRoot, "legacy_readonly_fixture.json");
+fs.writeFileSync(legacyFixturePath, `${JSON.stringify({ id: "legacy_readonly_fixture", study: "study1", condition: "honest", status: "completed", created_at: "2024-01-01T00:00:00.000Z", dice_rounds: [] }, null, 2)}\n`);
+const legacyHashBefore = fs.readFileSync(legacyFixturePath, "utf8");
 const child = externalOrigin ? null : spawn(process.execPath, [path.join(__dirname, "index.js")], {
   cwd: path.join(__dirname, ".."),
-  env: { ...process.env, PORT: String(port), DATA_DIR: path.join(dataRoot, "sessions"), ASSIGNMENT_MODE: "review_only", PARTICIPANT_ID_POLICY: "open", REQUIRE_PARTICIPANT_ID: "false", DEBUG_LINKS: "false", ALLOW_QA_PREVIEW: "true", ALLOW_TEAM_REVIEW: "true", ADMIN_TOKEN: adminToken, NODE_ENV: "development" },
+  env: { ...process.env, PORT: String(port), DATA_DIR: path.join(dataRoot, "sessions"), LEGACY_STUDY1_DATA_DIR: legacyRoot, ASSIGNMENT_MODE: "review_only", PARTICIPANT_ID_POLICY: "open", REQUIRE_PARTICIPANT_ID: "false", DEBUG_LINKS: "false", ALLOW_QA_PREVIEW: "true", ALLOW_TEAM_REVIEW: "true", ADMIN_TOKEN: adminToken, NODE_ENV: "development" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let stderr = "";
@@ -30,7 +35,7 @@ function answers(items) {
   return Object.fromEntries(items.map((item) => {
     if (item.type === "select") return [item.id, typeof item.options[0] === "object" ? item.options[0].value : item.options[0]];
     if (item.type === "number") return [item.id, item.min || 18];
-    if (item.type === "text") return [item.id, "Synthetic Phase 2 acceptance response."];
+    if (item.type === "text") return [item.id, item.required === false ? "" : "Synthetic Phase 2 acceptance response."];
     return [item.id, 4];
   }));
 }
@@ -49,6 +54,8 @@ async function exercise(peerIdentity, condition) {
   const id = created.data.session.id;
   assert.strictEqual(created.data.session.peer_identity, peerIdentity);
   assert.strictEqual(created.data.session.assignment_mode, "team_review");
+  const createdDetail = await request(`/api/admin/session/${id}`, { headers: { "x-admin-token": adminToken } });
+  assert.strictEqual(createdDetail.data.metadata.assignment_source, "team_review");
   assert(created.data.session.peer_members.slice(1).every((member) => member.name.startsWith(peerIdentity === "ai" ? "AI Member" : "Human Member")));
   assert(created.data.session.peer_members.slice(1).every((member) => member.avatar === (peerIdentity === "ai" ? "◈" : "👤")));
   const introText = created.data.session.rule_blocks.find((block) => block.title === "Your group").body;
@@ -60,6 +67,10 @@ async function exercise(peerIdentity, condition) {
   const baseline = await request(`/api/session/${id}/baseline`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ responses: answers(config.data.baselineItems) }) });
   assert.strictEqual(baseline.response.status, 200);
   await request(`/api/session/${id}/rules-viewed`, { method: "POST" });
+  const wrongComprehension = await request(`/api/session/${id}/comprehension`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ answers: { reported_object: "private_preference", private_submission: "no", reward_direction: "higher_reward" } }) });
+  assert.strictEqual(wrongComprehension.data.passed, false);
+  assert.strictEqual(wrongComprehension.data.wrong_items[0].review, "Members report a value for the shared die result.");
+  assert(!/[\u3400-\u9fff]/.test(JSON.stringify(wrongComprehension.data.wrong_items)));
   const comprehension = await request(`/api/session/${id}/comprehension`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ answers: { reported_object: "common_die", private_submission: "no", reward_direction: "higher_reward" } }) });
   assert.strictEqual(comprehension.data.passed, true);
   let current = (await request(`/api/session/${id}/dice/start`, { method: "POST" })).data.current;
@@ -93,6 +104,11 @@ async function exercise(peerIdentity, condition) {
 (async () => {
   try {
     await waitForHealth();
+    const root = await request("/");
+    assert.strictEqual(root.response.status, 403);
+    assert.strictEqual(root.text, "Study access requires a valid study link.");
+    const bareEnglish = await request("/en/");
+    assert.strictEqual(bareEnglish.response.status, 403);
     const formalEntry = await request("/api/session", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     assert.strictEqual(formalEntry.response.status, 404);
     const unauthenticated = await request("/qa-preview");
@@ -117,24 +133,46 @@ async function exercise(peerIdentity, condition) {
       assert.strictEqual(created.data.session.assignment_mode, "team_review");
     }
     const protocol = require("../config/human-ai-protocol");
+    let firstQaId = "";
     for (const cell of protocol.supportedCells()) {
       const created = await request("/api/admin/qa/session", { method: "POST", headers: { "content-type": "application/json", "x-admin-token": adminToken }, body: JSON.stringify(cell) });
       assert.strictEqual(created.response.status, 200);
       assert.strictEqual(created.data.session.peer_identity, cell.peer_identity);
+      assert.strictEqual((await request(`/api/admin/session/${created.data.session.id}`, { headers: { "x-admin-token": adminToken } })).data.metadata.assignment_source, "qa_preview");
+      firstQaId ||= created.data.session.id;
     }
+    assert.strictEqual((await request(`/api/qa/session/${firstQaId}`)).response.status, 401);
+    const resumedQa = await request(`/api/qa/session/${firstQaId}`, { headers: { cookie } });
+    assert.strictEqual(resumedQa.response.status, 200);
+    assert.strictEqual(resumedQa.data.session.id, firstQaId);
     const prolificSummary = await request("/api/admin/prolific-summary?include_test=true", { headers: { "x-admin-token": adminToken } });
+    assert.strictEqual(prolificSummary.data.active_matrix.length, 12);
     assert.strictEqual(prolificSummary.data.formal.arrived, 0);
     assert.strictEqual(prolificSummary.data.preview.arrived, 0);
-    const reviewRecords = await request("/api/admin/records?include_test=true&scope=team_review", { headers: { "x-admin-token": adminToken } });
+    const reviewRecords = await request("/api/admin/records?scope=team_review", { headers: { "x-admin-token": adminToken } });
     assert.strictEqual(reviewRecords.data.participants.length, 12);
     assert(reviewRecords.data.participants.every((record) => record.scope === "team_review" && record.peer_identity && "data_complete" in record));
-    const qaRecords = await request("/api/admin/records?include_test=true&scope=qa", { headers: { "x-admin-token": adminToken } });
+    const qaRecords = await request("/api/admin/records?scope=qa", { headers: { "x-admin-token": adminToken } });
     assert.strictEqual(qaRecords.data.participants.length, 14);
+    assert([...reviewRecords.data.participants, ...qaRecords.data.participants].every((record) => !(record.quality_flags || []).includes("missing_required_fields") && !(record.quality_flags || []).includes("completion_not_confirmed")));
     const detail = await request(`/api/admin/session/${reviewIds[0]}`, { headers: { "x-admin-token": adminToken } });
     assert.strictEqual(detail.data.rounds.length, 10);
     assert(detail.data.survey.post_survey.identity_recall);
     const qaBundle = await request("/api/admin/export/qa-bundle.zip", { headers: { "x-admin-token": adminToken } });
     assert.strictEqual(qaBundle.response.status, 200);
+    const reviewBundle = await request("/api/admin/export/team-review-bundle.zip", { headers: { "x-admin-token": adminToken } });
+    assert.strictEqual(reviewBundle.response.status, 200);
+    const emptyFormalBundle = await request("/api/admin/export/prolific-bundle.zip", { headers: { "x-admin-token": adminToken } });
+    assert.strictEqual(emptyFormalBundle.response.status, 200);
+    const legacySummary = await request("/api/admin/legacy/summary?include_test=true", { headers: { "x-admin-token": adminToken } });
+    assert.strictEqual(legacySummary.response.status, 200);
+    assert.strictEqual(legacySummary.data.read_only, true);
+    if (!externalOrigin) {
+      assert.strictEqual(legacySummary.data.record_count, 1);
+      const legacyDetail = await request("/api/admin/legacy/session/legacy_readonly_fixture", { headers: { "x-admin-token": adminToken } });
+      assert.strictEqual(legacyDetail.data.read_only, true);
+      assert.strictEqual(fs.readFileSync(legacyFixturePath, "utf8"), legacyHashBefore);
+    }
     if (!externalOrigin) {
       const qaFiles = fs.readdirSync(path.join(dataRoot, "sessions")).filter((name) => name.endsWith(".json"));
       assert.strictEqual(qaFiles.length, 26);

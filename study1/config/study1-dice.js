@@ -24,7 +24,7 @@ const humanAiPostSurveyItems = [
 
 const humanAiDemographicsItems = [
   ...demographicsItems,
-  { section: "O", id: "open_decision_factors", prompt: "What, if anything, influenced your reporting decisions during the task?", type: "text" },
+  { section: "O", id: "open_decision_factors", prompt: "What factors, if any, did you consider when deciding what to report during the task?", type: "text", required: false },
 ];
 
 const humanAiRuleBlocks = [

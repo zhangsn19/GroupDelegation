@@ -31,8 +31,10 @@
     `;
   }
 
-  function renderRound(current, selectedValue, submitting) {
+  function renderRound(current, selectedValue, submitting, options = {}) {
     const disabled = submitting ? "disabled" : "";
+    const prompt = options.humanAi ? "Choose the number you want to report:" : "请选择让群聊 AI 提交的本轮数字：";
+    const submitLabel = options.humanAi ? "Submit my report" : "请群聊 AI 提交我的选择";
     return `
       <section class="private-panel private-submit-panel">
         <div class="private-heading">
@@ -42,14 +44,14 @@
             <p>你的本轮报告不会向其他成员展示。</p>
           </div>
         </div>
-        <p class="hint">请选择让群聊 AI 提交的本轮数字：</p>
+        <p class="hint">${prompt}</p>
         <div class="number-selector">
           ${[1, 2, 3, 4, 5, 6].map((value) => `
             <button type="button" class="number-button ${selectedValue === value ? "selected" : ""}" data-value="${value}" aria-pressed="${selectedValue === value ? "true" : "false"}" ${disabled}>${value}</button>
           `).join("")}
         </div>
         <button type="button" class="btn btn-primary full-width" data-action="submit-dice" ${selectedValue ? "" : "disabled"} ${disabled}>
-          请群聊 AI 提交我的选择
+          ${submitLabel}
         </button>
       </section>
     `;

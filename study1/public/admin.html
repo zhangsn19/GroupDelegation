@@ -5,6 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Group Deception v2 管理端</title>
     <link rel="stylesheet" href="/css/style.css">
+    <style>
+      .admin-table-wrap { overflow-x: auto; margin: 0.75rem 0 1.5rem; }
+      .admin-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+      .admin-table th, .admin-table td { border: 1px solid #d9dee8; padding: 0.45rem; text-align: left; vertical-align: top; }
+      .admin-table th { background: #f4f6fa; white-space: nowrap; }
+      .admin-table .numeric { text-align: right; }
+    </style>
   </head>
   <body>
     <main class="admin-page">
@@ -52,35 +59,44 @@
         </select>
         <label class="consent-check"><input id="resumed-only" type="checkbox"><span>Resumed records only</span></label>
         <label class="consent-check"><input id="aliases-only" type="checkbox"><span>Session alias count greater than 1</span></label>
-        <label class="field-label" for="record-conflict">Recovery flags</label>
+        <label class="field-label" for="record-conflict">Quality / recovery flags</label>
         <select id="record-conflict" class="text-input">
           <option value="all">All records</option>
-          <option value="recovery_conflict">Recovery conflict</option>
-          <option value="identity_conflict">Identity conflict</option>
+           <option value="recovery_conflict">Recovery conflict</option>
+           <option value="identity_conflict">Identity conflict</option>
+          <option value="missing_required_fields">Missing Prolific fields</option>
+          <option value="incomplete_rounds">Incomplete rounds</option>
+          <option value="comprehension_failed">Comprehension failed</option>
+          <option value="invalid_decision_time">Invalid decision time</option>
+          <option value="excessive_page_hidden_time">Excessive hidden time</option>
+          <option value="incomplete_survey_data">Incomplete survey data</option>
+          <option value="completion_not_confirmed">Completion not confirmed</option>
         </select>
         <div class="action-row">
           <button id="load-summary" class="primary-button">查看汇总</button>
         </div>
-        <h2>Human-AI v1 QA Preview</h2>
-        <select id="qa-peer-identity" class="text-input"><option value="human">Human</option><option value="ai">AI</option></select>
-        <select id="qa-condition" class="text-input">
-          <option value="hidden">Hidden</option><option value="honest">Honest</option><option value="dishonest_fixed_1">Fixed 1</option><option value="dishonest_fixed_2">Fixed 2</option><option value="dishonest_fixed_3">Fixed 3</option><option value="dishonest">All-Dishonest</option><option value="dishonest_escalating">Escalating (QA/legacy)</option>
-        </select>
-        <button id="create-qa" class="secondary-button">Create authenticated QA session</button>
-        <pre id="qa-output" class="code-output">Default-off: ALLOW_QA_PREVIEW=false</pre>
+        <p class="muted">Create researcher QA sessions through <a href="/qa-preview">/qa-preview</a>.</p>
       </section>
       <section class="panel">
         <h2>汇总</h2>
         <pre id="summary-output" class="code-output">尚未加载。</pre>
         <h2>Active Human-AI 2×6 Matrix</h2>
-        <pre id="matrix-output" class="code-output">Not loaded.</pre>
+        <div id="matrix-output" class="admin-table-wrap">Not loaded.</div>
         <h2>Participants by selected scope</h2>
-        <pre id="all-records-output" class="code-output">Not loaded.</pre>
+        <div id="all-records-output" class="admin-table-wrap">Not loaded.</div>
+        <pre id="record-detail-output" class="code-output">Select Inspect to view a current record.</pre>
         <h2 id="formal-heading">Formal Records</h2>
         <pre id="formal-output" class="code-output">Not loaded.</pre>
         <h2 id="preview-heading">Preview Records</h2>
         <pre id="preview-output" class="code-output">Not loaded.</pre>
         <div id="export-links" class="export-grid"></div>
+      </section>
+      <section class="panel">
+        <h2>Legacy / Historical Study1</h2>
+        <p class="muted">Read-only access to the physically separate historical Study1 data source.</p>
+        <pre id="legacy-summary-output" class="code-output">Not loaded.</pre>
+        <div id="legacy-records-output" class="admin-table-wrap">Not loaded.</div>
+        <pre id="legacy-detail-output" class="code-output">Select Inspect to view a historical record.</pre>
       </section>
     </main>
     <script>
@@ -91,28 +107,42 @@
       const links = document.querySelector("#export-links");
       const matrixOutput = document.querySelector("#matrix-output");
       const allRecordsOutput = document.querySelector("#all-records-output");
+      const recordDetailOutput = document.querySelector("#record-detail-output");
+      const legacySummaryOutput = document.querySelector("#legacy-summary-output");
+      const legacyRecordsOutput = document.querySelector("#legacy-records-output");
+      const legacyDetailOutput = document.querySelector("#legacy-detail-output");
       let prolificSummary = null;
       const exportsList = [
         ["JSON 原始数据", "/api/admin/export/json"],
         ["participants.csv", "/api/admin/export/participants.csv"],
         ["study1_dice_rounds.csv", "/api/admin/export/study1_dice_rounds.csv"],
-        ["study2_effort_rounds.csv", "/api/admin/export/study2_effort_rounds.csv"],
-        ["study2_income_reports.csv", "/api/admin/export/study2_income_reports.csv"],
         ["Download formal Prolific export bundle", "/api/admin/export/prolific-bundle.zip"],
-        ["Download Preview records bundle", "/api/admin/export/prolific-preview-bundle.zip"]
-        ,["Download isolated QA bundle", "/api/admin/export/qa-bundle.zip"]
+        ["Download Preview records bundle", "/api/admin/export/prolific-preview-bundle.zip"],
+        ["Download isolated QA bundle", "/api/admin/export/qa-bundle.zip"],
+        ["Download Team Review bundle", "/api/admin/export/team-review-bundle.zip"],
+        ["Download historical Study1 bundle", "/api/admin/export/legacy-study1-bundle.zip"]
       ];
-      document.querySelector("#create-qa").addEventListener("click", async () => {
-        const response = await fetch("/api/admin/qa/session", {
-          method: "POST",
-          headers: { "content-type": "application/json", "x-admin-token": tokenInput.value.trim() },
-          body: JSON.stringify({ peer_identity: document.querySelector("#qa-peer-identity").value, condition: document.querySelector("#qa-condition").value })
-        });
-        const data = await response.json();
-        document.querySelector("#qa-output").textContent = response.ok
-          ? `Created ${data.session.peer_identity}/${data.session.id}. Open /en/?qa_session=${encodeURIComponent(data.session.id)}`
-          : (data.error || "QA unavailable");
-      });
+      const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
+      function renderMatrix(rows) {
+        const cells = new Map((rows || []).map((row) => [`${row.peer_identity}:${row.condition}`, row]));
+        const conditions = ["hidden", "honest", "dishonest_fixed_1", "dishonest_fixed_2", "dishonest_fixed_3", "dishonest"];
+        const header = conditions.map((condition) => `<th>${escapeHtml(condition)}</th>`).join("");
+        const body = ["human", "ai"].map((identity) => `<tr><th>${identity === "human" ? "Human" : "AI"}</th>${conditions.map((condition) => {
+          const row = cells.get(`${identity}:${condition}`) || {};
+          return `<td>Arrived: ${row.arrived || 0}<br>Started: ${row.started || 0}<br>Completed: ${row.completed || 0}<br>Data Complete: ${row.data_complete || 0}<br>Quality Flags: ${row.quality_flagged || 0}</td>`;
+        }).join("")}</tr>`).join("");
+        return `<table class="admin-table"><thead><tr><th>Identity</th>${header}</tr></thead><tbody>${body}</tbody></table>`;
+      }
+      function renderRecords(rows, legacy = false) {
+        const body = (rows || []).map((record) => `<tr>
+          <td>${escapeHtml(record.prolific_pid || record.session_id || record.record_id)}</td><td>${escapeHtml(record.scope)}</td>
+          <td>${escapeHtml(record.peer_identity)}</td><td>${escapeHtml(record.condition)}</td><td>${escapeHtml(record.protocol_version)}</td>
+          <td>${escapeHtml(record.status)}</td><td class="numeric">${record.rounds_completed || 0}</td><td>${escapeHtml(record.started_at)}</td>
+          <td>${escapeHtml(record.completed_at)}</td><td>${record.data_complete ? "Yes" : "No"}</td><td>${escapeHtml((record.quality_flags || []).join(", "))}</td>
+          <td><button class="secondary-button" data-inspect="${escapeHtml(record.record_id)}" data-legacy="${legacy ? "true" : "false"}">Inspect</button></td>
+        </tr>`).join("");
+        return `<table class="admin-table"><thead><tr><th>Masked ID</th><th>Scope</th><th>Identity</th><th>Condition</th><th>Protocol</th><th>Status</th><th>Rounds</th><th>Started</th><th>Completed</th><th>Complete</th><th>Quality</th><th>Detail</th></tr></thead><tbody>${body || '<tr><td colspan="12">No records</td></tr>'}</tbody></table>`;
+      }
       async function loadSummary() {
         const token = tokenInput.value.trim();
         const response = await fetch(`/api/admin/summary?${queryString()}`, {
@@ -125,9 +155,15 @@
         prolificSummary = await prolificResponse.json();
         const recordsResponse = await fetch(`/api/admin/records?${queryString()}`, { headers: { "x-admin-token": token } });
         const recordsData = await recordsResponse.json();
+        const legacySummaryResponse = await fetch(`/api/admin/legacy/summary?${queryString()}`, { headers: { "x-admin-token": token } });
+        const legacyRecordsResponse = await fetch(`/api/admin/legacy/records?${queryString()}`, { headers: { "x-admin-token": token } });
+        const legacySummary = await legacySummaryResponse.json();
+        const legacyRecords = await legacyRecordsResponse.json();
         summaryOutput.textContent = JSON.stringify({ current: data, preview_mode_enabled: prolificSummary.preview_mode_enabled, formal: prolificSummary.formal, preview: prolificSummary.preview }, null, 2);
-        matrixOutput.textContent = JSON.stringify(prolificSummary.formal?.active_matrix || [], null, 2);
-        allRecordsOutput.textContent = JSON.stringify(recordsData.participants || [], null, 2);
+        matrixOutput.innerHTML = renderMatrix(prolificSummary.active_matrix || []);
+        allRecordsOutput.innerHTML = renderRecords(recordsData.participants || []);
+        legacySummaryOutput.textContent = JSON.stringify(legacySummary, null, 2);
+        legacyRecordsOutput.innerHTML = renderRecords(legacyRecords.participants || [], true);
         renderProlificRecords();
         links.innerHTML = exportsList.map(([label, href]) => (
           `<button class="secondary-button" data-export="${href}">${label}</button>`
@@ -178,6 +214,15 @@
         a.download = href.split("/").pop();
         a.click();
         URL.revokeObjectURL(url);
+      });
+      document.addEventListener("click", async (event) => {
+        const button = event.target.closest("[data-inspect]");
+        if (!button) return;
+        const legacy = button.dataset.legacy === "true";
+        const endpoint = legacy ? "/api/admin/legacy/session/" : "/api/admin/session/";
+        const response = await fetch(`${endpoint}${encodeURIComponent(button.dataset.inspect)}`, { headers: { "x-admin-token": tokenInput.value.trim() } });
+        const data = await response.json();
+        (legacy ? legacyDetailOutput : recordDetailOutput).textContent = JSON.stringify(data, null, 2);
       });
       function queryString() {
         const params = new URLSearchParams();

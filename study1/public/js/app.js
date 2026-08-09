@@ -12,7 +12,9 @@
   const phaseIndicator = document.querySelector("#phase-indicator");
   const prolificQueryPresent = ["PROLIFIC_PID", "STUDY_ID", "SESSION_ID", "variant"]
     .some((key) => Boolean((params.get(key) || "").trim()));
-  const SAVE_ERROR_MESSAGE = prolificQueryPresent
+  const isEnglishFlow = prolificQueryPresent || Boolean(qaSessionId || reviewSessionId) ||
+    document.documentElement.lang.toLowerCase().startsWith("en") || window.location.pathname.startsWith("/en/");
+  const SAVE_ERROR_MESSAGE = isEnglishFlow
     ? "This action could not be saved. Refresh the page and try again. If the problem continues, contact the research team."
     : "\u5f53\u524d\u64cd\u4f5c\u6682\u65f6\u672a\u80fd\u4fdd\u5b58\uff0c\u8bf7\u5237\u65b0\u9875\u9762\u540e\u91cd\u8bd5\uff1b\u82e5\u95ee\u9898\u6301\u7eed\uff0c\u8bf7\u8054\u7cfb\u7814\u7a76\u56e2\u961f\u3002";
   const SAFE_SERVER_MESSAGES = new Set([
@@ -143,7 +145,7 @@
 
   function toParticipantMessage(data = {}) {
     const candidate = data.message || data.error || "";
-    if (isProlificEntry && candidate && !/[\u3400-\u9fff]/.test(candidate)) return candidate;
+    if (isEnglishFlow) return candidate && !/[\u3400-\u9fff]/.test(candidate) ? candidate : SAVE_ERROR_MESSAGE;
     return SAFE_SERVER_MESSAGES.has(candidate) ? candidate : SAVE_ERROR_MESSAGE;
   }
 
@@ -162,14 +164,19 @@
 
   function setSession(session) {
     state.session = session;
+    const participantConfig = (value) => isEnglishFlow && window.EnglishLocale
+      ? window.EnglishLocale.deepTranslate(value)
+      : value;
     if (Array.isArray(session.peer_members)) state.members = session.peer_members;
-    if (Array.isArray(session.post_survey_items)) state.config.postSurveyItems = session.post_survey_items;
-    if (Array.isArray(session.demographics_items)) state.config.demographicsItems = session.demographics_items;
-    if (Array.isArray(session.rule_blocks)) state.config.ruleBlocks = session.rule_blocks;
-    if (Array.isArray(session.comprehension_questions)) state.config.comprehensionQuestions = session.comprehension_questions;
+    if (Array.isArray(session.post_survey_items)) state.config.postSurveyItems = participantConfig(session.post_survey_items);
+    if (Array.isArray(session.demographics_items)) state.config.demographicsItems = participantConfig(session.demographics_items);
+    if (Array.isArray(session.rule_blocks)) state.config.ruleBlocks = participantConfig(session.rule_blocks);
+    if (Array.isArray(session.comprehension_questions)) state.config.comprehensionQuestions = participantConfig(session.comprehension_questions);
     if (isHumanAiProtocol()) {
       const consentIntro = screens.consent.querySelector(".consent-text p");
-      if (consentIntro) consentIntro.textContent = "You will complete an individual reporting task with four other group members using a neutral Submission System.";
+      if (consentIntro) consentIntro.textContent = session.peer_identity === "ai"
+        ? "You will complete this task with four AI group members."
+        : "You will complete this task with four other human group members.";
     }
   }
 
@@ -284,6 +291,8 @@
     setPhase("群体介绍");
     content.innerHTML = "";
     const chat = window.ChatView.createReadOnlyChat(content, state.members, {
+      sidebarTitle: isHumanAiProtocol() ? "Work group" : undefined,
+      sidebarNote: isHumanAiProtocol() ? "The Submission System records each member's report." : undefined,
       footerText: isHumanAiProtocol() ? "The Submission System records each member's report." : "群聊 AI 负责接收并提交成员报告。"
     });
     const introMessages = isHumanAiProtocol()
@@ -376,14 +385,25 @@
     content.insertAdjacentHTML("beforeend", window.Study1Dice.renderCommonDie(state.diceCurrent));
     content.insertAdjacentHTML("beforeend", `<p class="status-hint">正在展示成员提交记录</p>`);
     const chat = window.ChatView.createReadOnlyChat(content, state.members, {
-      footerText: isHumanAiProtocol() ? "Submission System" : "群聊 AI 负责接收并提交成员报告。"
+      sidebarTitle: isHumanAiProtocol() ? "Work group" : undefined,
+      sidebarNote: isHumanAiProtocol() ? "The Submission System records each member's report." : undefined,
+      footerText: isHumanAiProtocol() ? "The Submission System records each member's report." : "群聊 AI 负责接收并提交成员报告。"
     });
-    const ai = { name: "群聊 AI", avatar: "AI" };
-    const roundMessages = [
-      { sender: ai, text: `第 ${state.diceCurrent.round_index} / ${state.diceCurrent.total_rounds} 轮开始` },
-      { sender: ai, text: "骰子结果已出，请大家在各自的个人面板中完成本轮报告。" },
+    const systemSender = isHumanAiProtocol()
+      ? { name: "Submission System", avatar: "S" }
+      : { name: "群聊 AI", avatar: "AI" };
+    const roundMessages = isHumanAiProtocol() ? [
+      { sender: systemSender, text: `Round ${state.diceCurrent.round_index} of ${state.diceCurrent.total_rounds} begins` },
+      { sender: systemSender, text: "The die outcome is available. Each group member can now complete this round's report." },
       ...window.ChatView.peerRecordMessages(state.members, state.diceCurrent.peer_records || []),
-      { sender: ai, text: "四位同事的本轮提交已显示完毕。现在请在下方私密面板完成你的个人提交。" }
+      { sender: systemSender, text: state.diceCurrent.peer_records?.every((record) => record.visibility === "hidden")
+        ? "The other group members' report values are not shown in this task. Complete your private report below."
+        : "The other group members' reports have been displayed. Complete your private report below." }
+    ] : [
+      { sender: systemSender, text: `第 ${state.diceCurrent.round_index} / ${state.diceCurrent.total_rounds} 轮开始` },
+      { sender: systemSender, text: "骰子结果已出，请大家在各自的个人面板中完成本轮报告。" },
+      ...window.ChatView.peerRecordMessages(state.members, state.diceCurrent.peer_records || []),
+      { sender: systemSender, text: "四位同事的本轮提交已显示完毕。现在请在下方私密面板完成你的个人提交。" }
     ];
     if (resetRoundView) {
       await chat.addMessagesSequentially(roundMessages, 320);
@@ -398,7 +418,7 @@
     state.diceCurrent = presented.current;
     const task = document.createElement("div");
     task.className = "embedded-task dice-private-zone";
-    task.innerHTML = window.Study1Dice.renderRound(state.diceCurrent, state.diceSelected, state.diceSubmitting);
+    task.innerHTML = window.Study1Dice.renderRound(state.diceCurrent, state.diceSelected, state.diceSubmitting, { humanAi: isHumanAiProtocol() });
     content.appendChild(task);
     beginDecisionTimer(resumedAfterReload, {
       activeMs: state.diceCurrent.decision_timing_accumulated_ms,
@@ -526,7 +546,7 @@
         const status = content.querySelector("#debrief-save-status");
         if (status) status.textContent = "";
         completeButton.disabled = false;
-        completeButton.textContent = "完成";
+        completeButton.textContent = isHumanAiProtocol() ? "Complete" : "完成";
       }).catch(() => {
         const status = content.querySelector("#debrief-save-status");
         if (status) status.textContent = "当前页面信息尚未保存，请稍后重试。";
@@ -554,6 +574,21 @@
       ${completion.completion_code ? `<p class="completion-code">你的完成码：${completion.completion_code}</p>` : ""}
       ${completion.completion_redirect_url ? `<div class="step-nav"><a class="btn btn-primary" href="${completion.completion_redirect_url}" rel="noreferrer">返回招募平台</a></div>` : ""}
     `;
+    if (isHumanAiProtocol()) {
+      screens.complete.innerHTML = `
+        <div class="card">
+          <p class="eyebrow">Complete</p>
+          <h2>Study complete</h2>
+          <p class="thank-you">Your responses have been saved.</p>
+        </div>
+        ${participantInfoCard(pid, contact)}
+        <div class="card">
+          <p class="thank-you">Keep your participant ID if you may need to contact the research team about this record.</p>
+          ${extra}
+        </div>
+      `;
+      return;
+    }
     screens.complete.innerHTML = `
       <div class="card">
         <p class="eyebrow">完成</p>

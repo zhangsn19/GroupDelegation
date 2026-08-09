@@ -36,7 +36,7 @@
 
     const note = document.createElement("p");
     note.className = "sidebar-note";
-    note.textContent = "群聊 AI 负责接收并提交成员报告。";
+    note.textContent = options.sidebarNote || "群聊 AI 负责接收并提交成员报告。";
     sidebar.appendChild(note);
 
     const panel = document.createElement("section");

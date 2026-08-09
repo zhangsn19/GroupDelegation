@@ -45,6 +45,8 @@ function loadDotEnv() {
 loadDotEnv();
 
 const store = require("./store");
+const { createReadOnlyLegacyStore } = require("./legacy-store");
+const legacyStore = createReadOnlyLegacyStore(process.env.LEGACY_STUDY1_DATA_DIR || "");
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "dev-admin-token";
@@ -77,8 +79,15 @@ const STUDY1_DICE_MULTISET = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5];
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false, limit: "16kb" }));
 app.get(["/", "/index.html"], (req, res, next) => {
+  if (ASSIGNMENT_MODE === "review_only") return res.status(403).type("text/plain").send("Study access requires a valid study link.");
   if (ASSIGNMENT_MODE !== "prolific_taskflow") return next();
   res.sendFile(path.join(__dirname, "..", "public", "en", "index.html"));
+});
+app.get(["/en", "/en/", "/en/index.html"], (req, res, next) => {
+  if (ASSIGNMENT_MODE === "review_only" && !req.query.qa_session && !req.query.review_session) {
+    return res.status(403).type("text/plain").send("Study access requires a valid study link.");
+  }
+  next();
 });
 app.use(express.static(path.join(__dirname, "..", "public")));
 
@@ -267,6 +276,12 @@ function demographicsItemsForSession(session) {
   return session?.protocol_version === HUMAN_AI_PROTOCOL_VERSION
     ? study1.humanAiDemographicsItems
     : study1.demographicsItems;
+}
+
+function comprehensionQuestionsForSession(session) {
+  return session?.protocol_version === HUMAN_AI_PROTOCOL_VERSION
+    ? study1.humanAiComprehensionQuestions
+    : study1.comprehensionQuestions;
 }
 
 function normalizeProlificTracking(session) {
@@ -753,7 +768,7 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     };
   } else if (qaIdentity) {
     condition = qaIdentity.condition;
-    assignmentSource = "qa_preview";
+    assignmentSource = qaIdentity.team_review ? "team_review" : "qa_preview";
     allocation = { assigned_at: now(), randomization_block: null, randomization_position: null };
   } else if (ASSIGNMENT_MODE === "controlled_link") {
     condition = entryAssignment.condition;
@@ -996,11 +1011,12 @@ function asyncHandler(fn) {
 }
 
 function filterSessions(sessions, query = {}) {
-  const includeTest = String(query.include_test || query.includeTest || "").toLowerCase() === "true";
+  const scope = query.scope || "all";
+  const explicitSyntheticScope = scope === "qa" || scope === "team_review";
+  const includeTest = explicitSyntheticScope || String(query.include_test || query.includeTest || "").toLowerCase() === "true";
   const condition = query.condition || "all";
   const peerIdentity = query.peer_identity || "all";
   const protocolVersion = query.protocol_version || "all";
-  const scope = query.scope || "all";
   const status = query.status || "all";
   const resumedOnly = String(query.resumed_only || "").toLowerCase() === "true";
   const aliasesOnly = String(query.aliases_only || "").toLowerCase() === "true";
@@ -1189,6 +1205,9 @@ app.post("/api/prolific/session", asyncHandler(async (req, res) => {
 
 app.get("/api/session/:id", asyncHandler(async (req, res) => {
   const session = await store.readSession(req.params.id);
+  if (session.is_qa && req.get("x-admin-token") !== ADMIN_TOKEN && !hasQaAuth(req)) {
+    return res.status(401).json({ error: "Admin authentication required" });
+  }
   res.json({ session: publicSession(session) });
 }));
 
@@ -1228,11 +1247,13 @@ app.post("/api/session/:id/rules-viewed", asyncHandler(async (req, res) => {
 
 app.post("/api/session/:id/comprehension", asyncHandler(async (req, res) => {
   const answers = req.body.answers || {};
-  const missing = study1.comprehensionQuestions.filter((question) => !answers[question.id]);
+  const existingSession = await store.readSession(req.params.id);
+  const questions = comprehensionQuestionsForSession(existingSession);
+  const missing = questions.filter((question) => !answers[question.id]);
   if (missing.length) return res.status(400).json({ error: "All comprehension questions must be answered" });
   const session = await store.updateSession(req.params.id, (draft) => {
     if (draft.status !== "rules_viewed") throw new Error("Comprehension requires rules_viewed status");
-    const wrong = study1.comprehensionQuestions
+    const wrong = comprehensionQuestionsForSession(draft)
       .filter((question) => answers[question.id] !== question.correctValue)
       .map((question) => ({ id: question.id, review: question.review }));
     const attempt = {
@@ -1294,7 +1315,7 @@ app.post("/api/session/:id/dice/presented", asyncHandler(async (req, res) => {
   res.json({ session: publicSession(session), current: currentDicePayload(session) });
 }));
 
-app.get("/api/qa/session/:id", asyncHandler(async (req, res) => {
+app.get("/api/qa/session/:id", requireQaAdmin, asyncHandler(async (req, res) => {
   if (!ALLOW_QA_PREVIEW) return res.status(404).json({ error: "QA Preview is not enabled." });
   const session = await store.readSession(req.params.id);
   if (!session.is_qa) return res.status(404).json({ error: "QA session not found." });
@@ -1500,19 +1521,42 @@ app.get("/api/admin/records", requireAdmin, asyncHandler(async (req, res) => {
   res.json({ participants: prolificExport.adminRows(sessions) });
 }));
 
+app.get("/api/admin/legacy/summary", requireAdmin, asyncHandler(async (req, res) => {
+  const sessions = filterSessions(await legacyStore.listSessions(), { ...req.query, scope: "all" });
+  res.json({ read_only: true, record_count: sessions.length, data_dir: legacyStore.DATA_DIR, summary: exporters.summary(sessions) });
+}));
+
+app.get("/api/admin/legacy/records", requireAdmin, asyncHandler(async (req, res) => {
+  const sessions = filterSessions(await legacyStore.listSessions(), { ...req.query, scope: "all" });
+  res.json({ read_only: true, participants: prolificExport.adminRows(sessions) });
+}));
+
+app.get("/api/admin/legacy/session/:id", requireAdmin, asyncHandler(async (req, res) => {
+  const session = await legacyStore.readSession(req.params.id);
+  res.json({
+    read_only: true,
+    metadata: prolificExport.adminRows([session])[0],
+    rounds: session.dice_rounds || [],
+    survey: { baseline: session.baseline || {}, post_survey: session.post_survey || {}, demographics: session.demographics || {} },
+    quality_flags: prolificExport.qualityFlags(session),
+    completion: { status: session.status, completed_at: session.completed_at || null }
+  });
+}));
+
 app.get("/api/admin/prolific-summary", requireAdmin, asyncHandler(async (req, res) => {
-  const allSessions = filterSessions(await store.listSessions(), req.query).filter((session) => session.assignment_mode === "prolific_taskflow");
+  const filteredSessions = filterSessions(await store.listSessions(), req.query);
+  const allSessions = filteredSessions.filter((session) => session.assignment_mode === "prolific_taskflow");
   const recordKind = req.query.record_kind || "all";
   const sessions = recordKind === "preview" ? [] : allSessions.filter((session) => !session.is_preview);
   const previewSessions = recordKind === "formal" ? [] : allSessions.filter((session) => session.is_preview);
   const formal = prolificAdminSummary(sessions);
   const preview = prolificAdminSummary(previewSessions);
-  res.json({ preview_mode_enabled: prolificSupport.previewMode, formal, preview, conditions: formal.conditions, preview_conditions: preview.conditions, participants: prolificExport.adminRows(sessions), preview_participants: prolificExport.adminRows(previewSessions) });
+  res.json({ preview_mode_enabled: prolificSupport.previewMode, active_matrix: prolificAdminSummary(filteredSessions).active_matrix, formal, preview, conditions: formal.conditions, preview_conditions: preview.conditions, participants: prolificExport.adminRows(sessions), preview_participants: prolificExport.adminRows(previewSessions) });
 }));
 
 app.get("/api/admin/export/prolific-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
   const sessions = filterSessions(await store.listSessions(), req.query).filter((session) => session.assignment_mode === "prolific_taskflow" && !session.is_preview);
-  const archive = prolificExport.zip(prolificExport.buildFiles(sessions));
+  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
   res.set("content-disposition", `attachment; filename="study1-prolific-export-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
@@ -1520,17 +1564,33 @@ app.get("/api/admin/export/prolific-bundle.zip", requireAdmin, asyncHandler(asyn
 
 app.get("/api/admin/export/prolific-preview-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
   const sessions = filterSessions(await store.listSessions(), req.query).filter((session) => session.assignment_mode === "prolific_taskflow" && session.is_preview);
-  const archive = prolificExport.zip(prolificExport.buildFiles(sessions));
+  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
   res.set("content-disposition", `attachment; filename="study1-prolific-preview-export-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
 app.get("/api/admin/export/qa-bundle.zip", requireQaAdmin, asyncHandler(async (req, res) => {
-  const sessions = filterSessions(await store.listSessions(), { ...req.query, include_test: "true" }).filter((session) => session.is_qa === true);
-  const archive = prolificExport.zip(prolificExport.buildFiles(sessions));
+  const sessions = filterSessions(await store.listSessions(), { ...req.query, scope: "qa" }).filter((session) => session.is_qa === true);
+  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
   res.set("content-disposition", `attachment; filename="study1-qa-export-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.send(archive);
+}));
+
+app.get("/api/admin/export/team-review-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
+  const sessions = filterSessions(await store.listSessions(), { ...req.query, scope: "team_review" }).filter((session) => session.is_team_review === true);
+  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
+  res.set("content-type", "application/zip");
+  res.set("content-disposition", `attachment; filename="study1-team-review-export-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.send(archive);
+}));
+
+app.get("/api/admin/export/legacy-study1-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
+  const sessions = filterSessions(await legacyStore.listSessions(), { ...req.query, scope: "all" });
+  const archive = prolificExport.zip(prolificExport.buildFiles(sessions));
+  res.set("content-type", "application/zip");
+  res.set("content-disposition", `attachment; filename="study1-historical-readonly-export-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
@@ -1541,14 +1601,6 @@ app.get("/api/admin/export/participants.csv", requireAdmin, asyncHandler(async (
 app.get("/api/admin/export/study1_dice_rounds.csv", requireAdmin, asyncHandler(async (req, res) => {
   res.type("text/csv").send(exporters.study1DiceRoundsCsv(filterSessions(await store.listSessions(), req.query)));
 }));
-
-app.get("/api/admin/export/study2_effort_rounds.csv", requireAdmin, (req, res) => {
-  res.type("text/csv").send(exporters.emptyCsv(["session_id", "condition", "round_index", "correct_count", "duration_ms", "income"]));
-});
-
-app.get("/api/admin/export/study2_income_reports.csv", requireAdmin, (req, res) => {
-  res.type("text/csv").send(exporters.emptyCsv(["session_id", "condition", "actual_income", "reported_income", "underreport_amount", "underreport_ratio", "decision_duration_ms"]));
-});
 
 app.use("/api", (req, res) => {
   res.status(404).json({ error: "API endpoint not found" });
@@ -1577,8 +1629,12 @@ async function validateRuntime() {
     throw new Error("ADMIN_TOKEN must be set to a non-development value in production");
   }
   if (!process.env.DATA_DIR) throw new Error("DATA_DIR must be set in production");
+  if (!process.env.LEGACY_STUDY1_DATA_DIR) throw new Error("LEGACY_STUDY1_DATA_DIR must be set in production");
   if (!STUDY_CONTACT_EMAIL) throw new Error("STUDY_CONTACT_EMAIL must be set in production");
   if (!path.isAbsolute(process.env.DATA_DIR)) throw new Error("DATA_DIR must be an absolute path in production");
+  if (!path.isAbsolute(process.env.LEGACY_STUDY1_DATA_DIR)) throw new Error("LEGACY_STUDY1_DATA_DIR must be an absolute path in production");
+  if (path.resolve(process.env.DATA_DIR) === path.resolve(process.env.LEGACY_STUDY1_DATA_DIR)) throw new Error("Current and historical Study1 data directories must remain separate");
+  await fs.promises.access(process.env.LEGACY_STUDY1_DATA_DIR, fs.constants.R_OK);
   await store.ensureDataDir();
   const parent = path.dirname(store.DATA_DIR);
   await fs.promises.mkdir(parent, { recursive: true });
@@ -1602,6 +1658,8 @@ app._internal = {
   createStudy1Stimuli,
   publicStudy1PeerRecords,
   peerMembersForIdentity,
+  comprehensionQuestionsForSession,
+  filterSessions,
 };
 
 module.exports = app;
