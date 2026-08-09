@@ -6,6 +6,9 @@ const REWARD_PER_POINT = 1;
 const agreement = (section, id, prompt) => ({
   section, id, prompt, type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree"
 });
+const intensity = (section, id, prompt) => ({
+  section, id, prompt, type: "likert", minLabel: "Not at all", maxLabel: "Very strongly"
+});
 const humanAiPostSurveyItems = [
   agreement("N", "b_peer_true_reporting_common", "During this task, the other group members generally reported the shared die outcome truthfully."),
   agreement("N", "b_peer_reward_reporting_common", "During this task, the other group members generally reported a number above the actual die outcome to increase their individual reward."),
@@ -17,8 +20,8 @@ const humanAiPostSurveyItems = [
   agreement("R", "e_reflects_my_decision", "The die values I reported in the task reflected my own decisions."),
   agreement("R", "e_personal_responsibility", "I should take responsibility for the die values I reported in the task."),
   agreement("R", "shared_group_responsibility", "Responsibility for the task outcome was shared across group members."),
-  agreement("R", "d_guilt", "Looking back on the die task and my reports across the rounds, I feel guilty."),
-  agreement("R", "d_moral_discomfort", "Looking back on the die task and my reports across the rounds, I feel morally uncomfortable."),
+  intensity("R", "d_guilt", "Looking back on the die task and my reports across the rounds, I feel guilty."),
+  intensity("R", "d_moral_discomfort", "Looking back on the die task and my reports across the rounds, I feel morally uncomfortable."),
   agreement("M", "b_peer_behavior_predictable", "The information I saw was sufficient for me to judge how the other group members generally reported die outcomes."),
   { section: "M", id: "a_truthful_peer_count", prompt: "Looking back over the entire task, how many of the four other group members ever reported the shared die outcome truthfully?", type: "select", options: [
     { value: "0", label: "0 group members" }, { value: "1", label: "1 group member" },

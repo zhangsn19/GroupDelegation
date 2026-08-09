@@ -49,9 +49,6 @@ const { createReadOnlyLegacyStore } = require("./legacy-store");
 const legacyStore = createReadOnlyLegacyStore(process.env.LEGACY_STUDY1_DATA_DIR || "");
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "dev-admin-token";
-const ADMIN_COOKIE_NAME = "study1_researcher_admin";
-const ADMIN_COOKIE_MAX_AGE = 7 * 24 * 60 * 60;
 const DEBUG_LINKS = String(process.env.DEBUG_LINKS).toLowerCase() === "true";
 const ALLOW_QA_PREVIEW = String(process.env.ALLOW_QA_PREVIEW || "").toLowerCase() === "true";
 const ALLOW_TEAM_REVIEW = String(process.env.ALLOW_TEAM_REVIEW || "").toLowerCase() === "true";
@@ -1003,11 +1000,6 @@ function validateItems(items, responses) {
   return { ok: true };
 }
 
-function requireAdmin(req, res, next) {
-  if (!hasAdminAuth(req)) return res.status(401).json({ error: "Admin authentication required" });
-  next();
-}
-
 function asyncHandler(fn) {
   return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 }
@@ -1043,66 +1035,14 @@ function filterSessions(sessions, query = {}) {
   });
 }
 
-function cookieValues(req) {
-  return Object.fromEntries(String(req.get("cookie") || "").split(";").map((part) => {
-    const index = part.indexOf("=");
-    return index < 1 ? [] : [part.slice(0, index).trim(), part.slice(index + 1).trim()];
-  }).filter(([key, value]) => key && value));
-}
-
-function safeEqual(left, right) {
-  const a = Buffer.from(String(left || ""));
-  const b = Buffer.from(String(right || ""));
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-
-function adminAuthCookieValue() {
-  return crypto.createHmac("sha256", ADMIN_TOKEN).update("study1-researcher-admin-v1").digest("hex");
-}
-
-function hasAdminAuth(req) {
-  return safeEqual(req.get("x-admin-token"), ADMIN_TOKEN)
-    || safeEqual(cookieValues(req)[ADMIN_COOKIE_NAME], adminAuthCookieValue());
-}
-
-app.post("/api/admin/auth", (req, res) => {
-  if (!safeEqual(req.body?.token, ADMIN_TOKEN)) return res.status(401).json({ error: "Invalid administrator credentials." });
-  res.set("set-cookie", `${ADMIN_COOKIE_NAME}=${adminAuthCookieValue()}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${ADMIN_COOKIE_MAX_AGE}${IS_PRODUCTION ? "; Secure" : ""}`);
-  return res.redirect(303, "/admin.html");
-});
-
-function qaAuthCookieValue() {
-  return crypto.createHmac("sha256", ADMIN_TOKEN).update("study1-qa-preview-v1").digest("hex");
-}
-
-function hasQaAuth(req) {
-  const cookies = cookieValues(req);
-  const supplied = cookies.study1_qa_auth || "";
-  const expected = qaAuthCookieValue();
-  return supplied.length === expected.length && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
-}
-
-function requireQaAdmin(req, res, next) {
-  if (!ALLOW_QA_PREVIEW) return res.status(404).json({ error: "QA Preview is not enabled." });
-  if (hasAdminAuth(req) || hasQaAuth(req)) return next();
-  return res.status(401).json({ error: "Admin authentication required" });
-}
-
 app.get("/qa-preview", (req, res) => {
   if (!ALLOW_QA_PREVIEW) return res.status(404).send("QA Preview is not enabled.");
-  return res.sendFile(path.join(__dirname, "..", "public", hasQaAuth(req) || hasAdminAuth(req) ? "qa-preview.html" : "qa-login.html"));
+  return res.sendFile(path.join(__dirname, "..", "public", "qa-preview.html"));
 });
 
 app.get("/review", (req, res) => {
   if (!ALLOW_TEAM_REVIEW) return res.status(404).send("Team Review is not enabled.");
   return res.sendFile(path.join(__dirname, "..", "public", "review.html"));
-});
-
-app.post("/api/qa/auth", (req, res) => {
-  if (!ALLOW_QA_PREVIEW) return res.status(404).json({ error: "QA Preview is not enabled." });
-  if (!req.body?.token || req.body.token !== ADMIN_TOKEN) return res.status(401).json({ error: "Invalid administrator credentials." });
-  res.set("set-cookie", `study1_qa_auth=${qaAuthCookieValue()}; HttpOnly; SameSite=Strict; Path=/; Max-Age=14400${IS_PRODUCTION ? "; Secure" : ""}`);
-  return res.json({ ok: true });
 });
 
 function prolificAdminSummary(sessions) {
@@ -1139,7 +1079,7 @@ function prolificAdminSummary(sessions) {
   };
 }
 
-app.post("/api/admin/qa/session", requireQaAdmin, asyncHandler(async (req, res) => {
+app.post("/api/admin/qa/session", asyncHandler(async (req, res) => {
   if (!ALLOW_QA_PREVIEW) return res.status(404).json({ error: "QA Preview is not enabled." });
   const peerIdentity = String(req.body.peer_identity || "").trim();
   const condition = String(req.body.condition || "").trim();
@@ -1235,9 +1175,6 @@ app.post("/api/prolific/session", asyncHandler(async (req, res) => {
 
 app.get("/api/session/:id", asyncHandler(async (req, res) => {
   const session = await store.readSession(req.params.id);
-  if (session.is_qa && req.get("x-admin-token") !== ADMIN_TOKEN && !hasQaAuth(req)) {
-    return res.status(401).json({ error: "Admin authentication required" });
-  }
   res.json({ session: publicSession(session) });
 }));
 
@@ -1345,7 +1282,7 @@ app.post("/api/session/:id/dice/presented", asyncHandler(async (req, res) => {
   res.json({ session: publicSession(session), current: currentDicePayload(session) });
 }));
 
-app.get("/api/qa/session/:id", requireQaAdmin, asyncHandler(async (req, res) => {
+app.get("/api/qa/session/:id", asyncHandler(async (req, res) => {
   if (!ALLOW_QA_PREVIEW) return res.status(404).json({ error: "QA Preview is not enabled." });
   const session = await store.readSession(req.params.id);
   if (!session.is_qa) return res.status(404).json({ error: "QA session not found." });
@@ -1525,17 +1462,17 @@ app.post("/api/session/:id/completion-redirect-initiated", asyncHandler(async (r
   res.json({ session: publicSession(session) });
 }));
 
-app.get("/api/admin/summary", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/summary", asyncHandler(async (req, res) => {
   let sessions = filterSessions(await store.listSessions(), req.query);
   if (ASSIGNMENT_MODE === "prolific_taskflow") sessions = sessions.filter((session) => !session.is_preview);
   res.json({ version: VERSION, summary: exporters.summary(sessions), data_dir: store.DATA_DIR });
 }));
 
-app.get("/api/admin/export/json", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/export/json", asyncHandler(async (req, res) => {
   res.json({ version: VERSION, sessions: filterSessions(await store.listSessions(), req.query) });
 }));
 
-app.get("/api/admin/session/:id", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/session/:id", asyncHandler(async (req, res) => {
   const session = await store.readSession(req.params.id);
   res.json({
     metadata: prolificExport.adminRows([session])[0],
@@ -1546,47 +1483,68 @@ app.get("/api/admin/session/:id", requireAdmin, asyncHandler(async (req, res) =>
   });
 }));
 
-app.get("/api/admin/records", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/records", asyncHandler(async (req, res) => {
   const sessions = filterSessions(await store.listSessions(), req.query);
   res.json({ participants: prolificExport.adminRows(sessions) });
 }));
 
-app.get("/api/admin/integrity", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/integrity", asyncHandler(async (req, res) => {
   const sessions = await store.listSessions();
-  const idsFor = (scope) => new Set(sessions
-    .filter((session) => prolificExport.sessionScope(session) === scope)
-    .map((session) => session.record_key || session.id));
+  const sessionsFor = (scope) => sessions.filter((session) => prolificExport.sessionScope(session) === scope);
+  const idsFor = (scope) => new Set(sessionsFor(scope).map((session) => session.record_key || session.id));
   const overlapCount = (left, right) => [...left].filter((id) => right.has(id)).length;
-  const formal = idsFor("formal");
-  const preview = idsFor("preview");
-  const qa = idsFor("qa");
-  const teamReview = idsFor("team_review");
+  const scopeNames = ["formal", "preview", "qa", "team_review"];
+  const scopeSessions = Object.fromEntries(scopeNames.map((scope) => [scope, sessionsFor(scope)]));
+  const [formal, preview, qa, teamReview] = scopeNames.map(idsFor);
   const check = (id, label, overlap) => ({ id, label, status: overlap === 0 ? "PASS" : "WARNING", detail: overlap === 0 ? "No overlapping records." : `${overlap} overlapping record(s).` });
+  const predicateCheck = (id, label, matching, total) => ({ id, label, status: matching === total ? "PASS" : "WARNING", detail: `${matching} of ${total} record(s) satisfy the requirement.` });
+  const countCheck = (id, label, bundleCount, scopeCount) => ({ id, label, status: bundleCount === scopeCount ? "PASS" : "WARNING", detail: `Bundle selector: ${bundleCount}; scope: ${scopeCount}.` });
   const directoriesSeparate = path.resolve(store.DATA_DIR) !== path.resolve(legacyStore.DATA_DIR);
+  const formalContamination = {
+    qa: scopeSessions.formal.filter((session) => session.is_qa === true).length,
+    team_review: scopeSessions.formal.filter((session) => session.is_team_review === true).length,
+    preview: scopeSessions.formal.filter((session) => session.is_preview === true).length,
+  };
+  const keyScopes = new Map();
+  for (const scope of scopeNames) for (const session of scopeSessions[scope]) {
+    const key = session.record_key || session.id;
+    if (!keyScopes.has(key)) keyScopes.set(key, new Set());
+    keyScopes.get(key).add(scope);
+  }
+  const crossScopeDuplicates = [...keyScopes.values()].filter((scopes) => scopes.size > 1).length;
   res.json({
     checks: [
       check("formal_qa_overlap", "Formal / QA overlap", overlapCount(formal, qa)),
       check("formal_team_review_overlap", "Formal / Team Review overlap", overlapCount(formal, teamReview)),
       check("formal_preview_separation", "Formal / Preview separation", overlapCount(formal, preview)),
+      predicateCheck("qa_identity", "QA records satisfy is_qa=true", scopeSessions.qa.filter((session) => session.is_qa === true).length, scopeSessions.qa.length),
+      predicateCheck("team_review_identity", "Team Review records satisfy is_team_review=true", scopeSessions.team_review.filter((session) => session.is_team_review === true).length, scopeSessions.team_review.length),
+      { id: "formal_contamination", label: "Formal contains no QA / Team Review / Preview", status: Object.values(formalContamination).every((count) => count === 0) ? "PASS" : "WARNING", detail: `QA: ${formalContamination.qa}; Team Review: ${formalContamination.team_review}; Preview: ${formalContamination.preview}.` },
+      predicateCheck("preview_identity", "Preview records satisfy is_preview=true", scopeSessions.preview.filter((session) => session.is_preview === true).length, scopeSessions.preview.length),
+      { id: "cross_scope_duplicates", label: "No duplicate record key across scopes", status: crossScopeDuplicates === 0 ? "PASS" : "WARNING", detail: `${crossScopeDuplicates} record key(s) occur in multiple scopes.` },
       { id: "historical_read_only", label: "Historical source read-only", status: "PASS", detail: "Historical access uses the read-only legacy store." },
       { id: "data_directories_separate", label: "Current DATA_DIR vs Historical DATA_DIR separate", status: directoriesSeparate ? "PASS" : "WARNING", detail: directoriesSeparate ? "Physical data directories are distinct." : "Current and historical data directories resolve to the same path." },
+      countCheck("formal_bundle_count", "Formal bundle count equals Formal scope", sessions.filter((session) => prolificExport.sessionScope(session) === "formal").length, scopeSessions.formal.length),
+      countCheck("preview_bundle_count", "Preview bundle count equals Preview scope", sessions.filter((session) => prolificExport.sessionScope(session) === "preview").length, scopeSessions.preview.length),
+      countCheck("qa_bundle_count", "QA bundle count equals QA scope", sessions.filter((session) => prolificExport.sessionScope(session) === "qa" && session.is_qa === true).length, scopeSessions.qa.length),
+      countCheck("team_review_bundle_count", "Team Review bundle count equals Team Review scope", sessions.filter((session) => prolificExport.sessionScope(session) === "team_review" && session.is_team_review === true).length, scopeSessions.team_review.length),
     ],
     current_data_dir: store.DATA_DIR,
     historical_data_dir: legacyStore.DATA_DIR,
   });
 }));
 
-app.get("/api/admin/legacy/summary", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/legacy/summary", asyncHandler(async (req, res) => {
   const sessions = filterSessions(await legacyStore.listSessions(), { ...req.query, scope: "all" });
   res.json({ read_only: true, record_count: sessions.length, data_dir: legacyStore.DATA_DIR, summary: exporters.summary(sessions) });
 }));
 
-app.get("/api/admin/legacy/records", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/legacy/records", asyncHandler(async (req, res) => {
   const sessions = filterSessions(await legacyStore.listSessions(), { ...req.query, scope: "all" });
   res.json({ read_only: true, participants: prolificExport.adminRows(sessions) });
 }));
 
-app.get("/api/admin/legacy/session/:id", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/legacy/session/:id", asyncHandler(async (req, res) => {
   const session = await legacyStore.readSession(req.params.id);
   res.json({
     read_only: true,
@@ -1598,7 +1556,7 @@ app.get("/api/admin/legacy/session/:id", requireAdmin, asyncHandler(async (req, 
   });
 }));
 
-app.get("/api/admin/prolific-summary", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/prolific-summary", asyncHandler(async (req, res) => {
   const filteredSessions = filterSessions(await store.listSessions(), req.query);
   const allSessions = filteredSessions.filter((session) => session.assignment_mode === "prolific_taskflow");
   const recordKind = req.query.record_kind || "all";
@@ -1609,51 +1567,51 @@ app.get("/api/admin/prolific-summary", requireAdmin, asyncHandler(async (req, re
   res.json({ preview_mode_enabled: prolificSupport.previewMode, active_matrix: prolificAdminSummary(filteredSessions).active_matrix, formal, preview, conditions: formal.conditions, preview_conditions: preview.conditions, participants: prolificExport.adminRows(sessions), preview_participants: prolificExport.adminRows(previewSessions) });
 }));
 
-app.get("/api/admin/export/prolific-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
-  const sessions = filterSessions(await store.listSessions(), req.query).filter((session) => session.assignment_mode === "prolific_taskflow" && !session.is_preview);
+app.get("/api/admin/export/prolific-bundle.zip", asyncHandler(async (req, res) => {
+  const sessions = (await store.listSessions()).filter((session) => prolificExport.sessionScope(session) === "formal");
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
   res.set("content-disposition", `attachment; filename="study1-prolific-export-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
-app.get("/api/admin/export/prolific-preview-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
-  const sessions = filterSessions(await store.listSessions(), req.query).filter((session) => session.assignment_mode === "prolific_taskflow" && session.is_preview);
+app.get("/api/admin/export/prolific-preview-bundle.zip", asyncHandler(async (req, res) => {
+  const sessions = (await store.listSessions()).filter((session) => prolificExport.sessionScope(session) === "preview");
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
   res.set("content-disposition", `attachment; filename="study1-prolific-preview-export-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
-app.get("/api/admin/export/qa-bundle.zip", requireQaAdmin, asyncHandler(async (req, res) => {
-  const sessions = filterSessions(await store.listSessions(), { ...req.query, scope: "qa" }).filter((session) => session.is_qa === true);
+app.get("/api/admin/export/qa-bundle.zip", asyncHandler(async (req, res) => {
+  const sessions = (await store.listSessions()).filter((session) => prolificExport.sessionScope(session) === "qa" && session.is_qa === true);
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
   res.set("content-disposition", `attachment; filename="study1-qa-export-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
-app.get("/api/admin/export/team-review-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
-  const sessions = filterSessions(await store.listSessions(), { ...req.query, scope: "team_review" }).filter((session) => session.is_team_review === true);
+app.get("/api/admin/export/team-review-bundle.zip", asyncHandler(async (req, res) => {
+  const sessions = (await store.listSessions()).filter((session) => prolificExport.sessionScope(session) === "team_review" && session.is_team_review === true);
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
   res.set("content-disposition", `attachment; filename="study1-team-review-export-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
-app.get("/api/admin/export/legacy-study1-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
-  const sessions = filterSessions(await legacyStore.listSessions(), { ...req.query, scope: "all" });
+app.get("/api/admin/export/legacy-study1-bundle.zip", asyncHandler(async (req, res) => {
+  const sessions = await legacyStore.listSessions();
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions));
   res.set("content-type", "application/zip");
   res.set("content-disposition", `attachment; filename="study1-historical-readonly-export-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
-app.get("/api/admin/export/participants.csv", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/export/participants.csv", asyncHandler(async (req, res) => {
   res.type("text/csv").send(exporters.participantsCsv(filterSessions(await store.listSessions(), req.query)));
 }));
 
-app.get("/api/admin/export/study1_dice_rounds.csv", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/export/study1_dice_rounds.csv", asyncHandler(async (req, res) => {
   res.type("text/csv").send(exporters.study1DiceRoundsCsv(filterSessions(await store.listSessions(), req.query)));
 }));
 
@@ -1679,9 +1637,6 @@ async function validateRuntime() {
   if (!IS_PRODUCTION) {
     await store.ensureDataDir();
     return;
-  }
-  if (!process.env.ADMIN_TOKEN || process.env.ADMIN_TOKEN === "dev-admin-token") {
-    throw new Error("ADMIN_TOKEN must be set to a non-development value in production");
   }
   if (!process.env.DATA_DIR) throw new Error("DATA_DIR must be set in production");
   if (!process.env.LEGACY_STUDY1_DATA_DIR) throw new Error("LEGACY_STUDY1_DATA_DIR must be set in production");

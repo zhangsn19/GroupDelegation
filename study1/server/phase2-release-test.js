@@ -7,8 +7,6 @@ const { spawn } = require("child_process");
 const port = 3411;
 const externalOrigin = String(process.env.EXTERNAL_ORIGIN || "").replace(/\/$/, "");
 const origin = externalOrigin || `http://127.0.0.1:${port}`;
-const adminToken = externalOrigin ? String(process.env.TEST_ADMIN_TOKEN || "") : "phase2-synthetic-admin-token";
-if (externalOrigin && !adminToken) throw new Error("TEST_ADMIN_TOKEN is required with EXTERNAL_ORIGIN");
 const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "study1-phase2-"));
 const legacyRoot = path.join(dataRoot, "legacy-sessions");
 fs.mkdirSync(legacyRoot, { recursive: true });
@@ -17,7 +15,7 @@ fs.writeFileSync(legacyFixturePath, `${JSON.stringify({ id: "legacy_readonly_fix
 const legacyHashBefore = fs.readFileSync(legacyFixturePath, "utf8");
 const child = externalOrigin ? null : spawn(process.execPath, [path.join(__dirname, "index.js")], {
   cwd: path.join(__dirname, ".."),
-  env: { ...process.env, PORT: String(port), DATA_DIR: path.join(dataRoot, "sessions"), LEGACY_STUDY1_DATA_DIR: legacyRoot, ASSIGNMENT_MODE: "review_only", PARTICIPANT_ID_POLICY: "open", REQUIRE_PARTICIPANT_ID: "false", DEBUG_LINKS: "false", ALLOW_QA_PREVIEW: "true", ALLOW_TEAM_REVIEW: "true", ADMIN_TOKEN: adminToken, NODE_ENV: "development" },
+  env: { ...process.env, PORT: String(port), DATA_DIR: path.join(dataRoot, "sessions"), LEGACY_STUDY1_DATA_DIR: legacyRoot, ASSIGNMENT_MODE: "review_only", PARTICIPANT_ID_POLICY: "open", REQUIRE_PARTICIPANT_ID: "false", DEBUG_LINKS: "false", ALLOW_QA_PREVIEW: "true", ALLOW_TEAM_REVIEW: "true", NODE_ENV: "development" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 let stderr = "";
@@ -54,7 +52,7 @@ async function exercise(peerIdentity, condition) {
   const id = created.data.session.id;
   assert.strictEqual(created.data.session.peer_identity, peerIdentity);
   assert.strictEqual(created.data.session.assignment_mode, "team_review");
-  const createdDetail = await request(`/api/admin/session/${id}`, { headers: { "x-admin-token": adminToken } });
+  const createdDetail = await request(`/api/admin/session/${id}`);
   assert.strictEqual(createdDetail.data.metadata.assignment_source, "team_review");
   assert(created.data.session.peer_members.slice(1).every((member) => member.name.startsWith(peerIdentity === "ai" ? "AI Member" : "Human Member")));
   assert(created.data.session.peer_members.slice(1).every((member) => member.avatar === (peerIdentity === "ai" ? "🤖" : "👤")));
@@ -111,38 +109,17 @@ async function exercise(peerIdentity, condition) {
     assert.strictEqual(bareEnglish.response.status, 403);
     const formalEntry = await request("/api/session", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
     assert.strictEqual(formalEntry.response.status, 404);
-    const deniedAdmin = await request("/api/admin/summary");
-    assert.strictEqual(deniedAdmin.response.status, 401);
-    const invalidAdminCookie = await request("/api/admin/summary", { headers: { cookie: "study1_researcher_admin=invalid" } });
-    assert.strictEqual(invalidAdminCookie.response.status, 401);
-    const headerAdmin = await request("/api/admin/summary", { headers: { "x-admin-token": adminToken } });
-    assert.strictEqual(headerAdmin.response.status, 200);
-    const invalidAdminAuth = await request("/api/admin/auth", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: "token=wrong", redirect: "manual" });
-    assert.strictEqual(invalidAdminAuth.response.status, 401);
-    const adminAuth = await request("/api/admin/auth", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `token=${encodeURIComponent(adminToken)}`, redirect: "manual" });
-    assert.strictEqual(adminAuth.response.status, 303);
-    assert.strictEqual(adminAuth.response.headers.get("location"), "/admin.html");
-    const adminSetCookie = adminAuth.response.headers.get("set-cookie");
-    assert(adminSetCookie.includes("HttpOnly") && adminSetCookie.includes("SameSite=Strict") && adminSetCookie.includes("Max-Age=604800"));
-    if (externalOrigin) assert(adminSetCookie.includes("Secure"));
-    assert(!adminSetCookie.includes(adminToken));
-    const adminCookie = adminSetCookie.split(";")[0];
-    assert.strictEqual((await request("/api/admin/summary", { headers: { cookie: adminCookie } })).response.status, 200);
-    const adminPage = await request("/admin.html", { headers: { cookie: adminCookie } });
+    assert.strictEqual((await request("/api/admin/summary")).response.status, 200);
+    assert.strictEqual((await request("/api/admin/records")).response.status, 200);
+    assert.strictEqual((await request("/api/admin/integrity")).response.status, 200);
+    const adminPage = await request("/admin.html");
     for (const marker of ["Study1 Human–AI Admin", "count-formal", "export-groups", "matrix-output", "filter-scope", "all-records-output", "integrity-output", "technical-details"]) assert(adminPage.text.includes(marker));
     assert(!adminPage.text.includes('id="admin-token"'));
-    const unauthenticated = await request("/qa-preview");
-    assert.strictEqual(unauthenticated.response.status, 200);
-    assert(unauthenticated.text.includes("Authenticate") && !unauthenticated.text.includes('id="condition"'));
-    const denied = await request("/api/admin/qa/session", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
-    assert.strictEqual(denied.response.status, 401);
-    const auth = await request("/api/qa/auth", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: adminToken }) });
-    assert.strictEqual(auth.response.status, 200);
-    const cookie = auth.response.headers.get("set-cookie").split(";")[0];
-    const selector = await request("/qa-preview", { headers: { cookie } });
+    const selector = await request("/qa-preview");
+    assert.strictEqual(selector.response.status, 200);
     assert(selector.text.includes("LEGACY / NOT RECRUITED") && selector.text.includes('value="human"') && selector.text.includes('value="ai"'));
-    const initialReviewRecords = await request("/api/admin/records?scope=team_review", { headers: { "x-admin-token": adminToken } });
-    const initialQaRecords = await request("/api/admin/records?scope=qa", { headers: { "x-admin-token": adminToken } });
+    const initialReviewRecords = await request("/api/admin/records?scope=team_review");
+    const initialQaRecords = await request("/api/admin/records?scope=qa");
     const initialReviewCount = initialReviewRecords.data.participants.length;
     const initialQaCount = initialQaRecords.data.participants.length;
     const review = await request("/review");
@@ -159,52 +136,51 @@ async function exercise(peerIdentity, condition) {
     const protocol = require("../config/human-ai-protocol");
     let firstQaId = "";
     for (const cell of protocol.supportedCells()) {
-      const created = await request("/api/admin/qa/session", { method: "POST", headers: { "content-type": "application/json", "x-admin-token": adminToken }, body: JSON.stringify(cell) });
+      const created = await request("/api/admin/qa/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(cell) });
       assert.strictEqual(created.response.status, 200);
       assert.strictEqual(created.data.session.peer_identity, cell.peer_identity);
-      assert.strictEqual((await request(`/api/admin/session/${created.data.session.id}`, { headers: { "x-admin-token": adminToken } })).data.metadata.assignment_source, "qa_preview");
+      assert.strictEqual((await request(`/api/admin/session/${created.data.session.id}`)).data.metadata.assignment_source, "qa_preview");
       firstQaId ||= created.data.session.id;
     }
-    assert.strictEqual((await request(`/api/qa/session/${firstQaId}`)).response.status, 401);
-    const resumedQa = await request(`/api/qa/session/${firstQaId}`, { headers: { cookie } });
+    const resumedQa = await request(`/api/qa/session/${firstQaId}`);
     assert.strictEqual(resumedQa.response.status, 200);
     assert.strictEqual(resumedQa.data.session.id, firstQaId);
-    const prolificSummary = await request("/api/admin/prolific-summary?include_test=true", { headers: { "x-admin-token": adminToken } });
+    const prolificSummary = await request("/api/admin/prolific-summary?include_test=true");
     assert.strictEqual(prolificSummary.data.active_matrix.length, 12);
     assert.strictEqual(prolificSummary.data.formal.arrived, 0);
     assert.strictEqual(prolificSummary.data.preview.arrived, 0);
-    const reviewRecords = await request("/api/admin/records?scope=team_review", { headers: { "x-admin-token": adminToken } });
+    const reviewRecords = await request("/api/admin/records?scope=team_review");
     assert.strictEqual(reviewRecords.data.participants.length, initialReviewCount + 12);
     assert(reviewRecords.data.participants.every((record) => record.scope === "team_review" && record.peer_identity && "data_complete" in record));
-    const filteredRecords = await request("/api/admin/records?scope=team_review&peer_identity=human&condition=hidden&status=completed", { headers: { cookie: adminCookie } });
+    const filteredRecords = await request("/api/admin/records?scope=team_review&peer_identity=human&condition=hidden&status=completed");
     assert(filteredRecords.data.participants.length >= 1);
     assert(filteredRecords.data.participants.every((record) => record.scope === "team_review" && record.peer_identity === "human" && record.condition === "hidden" && record.status === "completed"));
-    const qaRecords = await request("/api/admin/records?scope=qa", { headers: { "x-admin-token": adminToken } });
+    const qaRecords = await request("/api/admin/records?scope=qa");
     assert.strictEqual(qaRecords.data.participants.length, initialQaCount + 14);
     assert([...reviewRecords.data.participants, ...qaRecords.data.participants].every((record) => !(record.quality_flags || []).includes("missing_required_fields") && !(record.quality_flags || []).includes("completion_not_confirmed")));
-    const detail = await request(`/api/admin/session/${reviewIds[0]}`, { headers: { cookie: adminCookie } });
+    const detail = await request(`/api/admin/session/${reviewIds[0]}`);
     assert.strictEqual(detail.data.rounds.length, 10);
     assert(detail.data.survey.post_survey.identity_recall);
-    const qaBundle = await request("/api/admin/export/qa-bundle.zip", { headers: { "x-admin-token": adminToken } });
+    const qaBundle = await request("/api/admin/export/qa-bundle.zip");
     assert.strictEqual(qaBundle.response.status, 200);
-    const reviewBundle = await request("/api/admin/export/team-review-bundle.zip", { headers: { "x-admin-token": adminToken } });
+    const reviewBundle = await request("/api/admin/export/team-review-bundle.zip");
     assert.strictEqual(reviewBundle.response.status, 200);
-    const emptyFormalBundle = await request("/api/admin/export/prolific-bundle.zip", { headers: { "x-admin-token": adminToken } });
+    const emptyFormalBundle = await request("/api/admin/export/prolific-bundle.zip");
     assert.strictEqual(emptyFormalBundle.response.status, 200);
-    assert.strictEqual((await request("/api/admin/export/prolific-preview-bundle.zip", { headers: { cookie: adminCookie } })).response.status, 200);
-    assert.strictEqual((await request("/api/admin/export/participants.csv", { headers: { cookie: adminCookie } })).response.status, 200);
-    assert.strictEqual((await request("/api/admin/export/study1_dice_rounds.csv", { headers: { cookie: adminCookie } })).response.status, 200);
-    assert.strictEqual((await request("/api/admin/export/json", { headers: { cookie: adminCookie } })).response.status, 200);
-    const integrity = await request("/api/admin/integrity", { headers: { cookie: adminCookie } });
+    assert.strictEqual((await request("/api/admin/export/prolific-preview-bundle.zip")).response.status, 200);
+    assert.strictEqual((await request("/api/admin/export/participants.csv")).response.status, 200);
+    assert.strictEqual((await request("/api/admin/export/study1_dice_rounds.csv")).response.status, 200);
+    assert.strictEqual((await request("/api/admin/export/json")).response.status, 200);
+    const integrity = await request("/api/admin/integrity");
     assert.strictEqual(integrity.response.status, 200);
-    assert.strictEqual(integrity.data.checks.length, 5);
+    assert(integrity.data.checks.length >= 14);
     assert(integrity.data.checks.every((check) => ["PASS", "WARNING", "NOT VERIFIED"].includes(check.status)));
-    const legacySummary = await request("/api/admin/legacy/summary?include_test=true", { headers: { "x-admin-token": adminToken } });
+    const legacySummary = await request("/api/admin/legacy/summary?include_test=true");
     assert.strictEqual(legacySummary.response.status, 200);
     assert.strictEqual(legacySummary.data.read_only, true);
     if (!externalOrigin) {
       assert.strictEqual(legacySummary.data.record_count, 1);
-      const legacyDetail = await request("/api/admin/legacy/session/legacy_readonly_fixture", { headers: { "x-admin-token": adminToken } });
+      const legacyDetail = await request("/api/admin/legacy/session/legacy_readonly_fixture");
       assert.strictEqual(legacyDetail.data.read_only, true);
       assert.strictEqual(fs.readFileSync(legacyFixturePath, "utf8"), legacyHashBefore);
     }
@@ -212,7 +188,7 @@ async function exercise(peerIdentity, condition) {
       const qaFiles = fs.readdirSync(path.join(dataRoot, "sessions")).filter((name) => name.endsWith(".json"));
       assert.strictEqual(qaFiles.length, initialReviewCount + initialQaCount + 26);
     }
-    console.log("Phase 2 API/render acceptance passed: authenticated /qa-preview and six complete team-review flows.");
+    console.log("Phase 2 API/render acceptance passed: direct-access /qa-preview and six complete team-review flows.");
   } finally {
     child?.kill();
     fs.rmSync(dataRoot, { recursive: true, force: true });
