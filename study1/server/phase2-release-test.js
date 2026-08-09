@@ -121,6 +121,10 @@ async function exercise(peerIdentity, condition) {
     const cookie = auth.response.headers.get("set-cookie").split(";")[0];
     const selector = await request("/qa-preview", { headers: { cookie } });
     assert(selector.text.includes("LEGACY / NOT RECRUITED") && selector.text.includes('value="human"') && selector.text.includes('value="ai"'));
+    const initialReviewRecords = await request("/api/admin/records?scope=team_review", { headers: { "x-admin-token": adminToken } });
+    const initialQaRecords = await request("/api/admin/records?scope=qa", { headers: { "x-admin-token": adminToken } });
+    const initialReviewCount = initialReviewRecords.data.participants.length;
+    const initialQaCount = initialQaRecords.data.participants.length;
     const review = await request("/review");
     assert(review.response.ok && review.text.includes("Start Fresh Review Session") && !review.text.includes("dishonest_escalating"));
     const escalatingReview = await request("/api/review/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ peer_identity: "human", condition: "dishonest_escalating" }) });
@@ -150,10 +154,10 @@ async function exercise(peerIdentity, condition) {
     assert.strictEqual(prolificSummary.data.formal.arrived, 0);
     assert.strictEqual(prolificSummary.data.preview.arrived, 0);
     const reviewRecords = await request("/api/admin/records?scope=team_review", { headers: { "x-admin-token": adminToken } });
-    assert.strictEqual(reviewRecords.data.participants.length, 12);
+    assert.strictEqual(reviewRecords.data.participants.length, initialReviewCount + 12);
     assert(reviewRecords.data.participants.every((record) => record.scope === "team_review" && record.peer_identity && "data_complete" in record));
     const qaRecords = await request("/api/admin/records?scope=qa", { headers: { "x-admin-token": adminToken } });
-    assert.strictEqual(qaRecords.data.participants.length, 14);
+    assert.strictEqual(qaRecords.data.participants.length, initialQaCount + 14);
     assert([...reviewRecords.data.participants, ...qaRecords.data.participants].every((record) => !(record.quality_flags || []).includes("missing_required_fields") && !(record.quality_flags || []).includes("completion_not_confirmed")));
     const detail = await request(`/api/admin/session/${reviewIds[0]}`, { headers: { "x-admin-token": adminToken } });
     assert.strictEqual(detail.data.rounds.length, 10);
@@ -175,7 +179,7 @@ async function exercise(peerIdentity, condition) {
     }
     if (!externalOrigin) {
       const qaFiles = fs.readdirSync(path.join(dataRoot, "sessions")).filter((name) => name.endsWith(".json"));
-      assert.strictEqual(qaFiles.length, 26);
+      assert.strictEqual(qaFiles.length, initialReviewCount + initialQaCount + 26);
     }
     console.log("Phase 2 API/render acceptance passed: authenticated /qa-preview and six complete team-review flows.");
   } finally {
