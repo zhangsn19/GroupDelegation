@@ -163,7 +163,10 @@
     if (typeof value === "string") return translateCore(value);
     if (Array.isArray(value)) return value.map(deepTranslate);
     if (value && typeof value === "object") {
-      const english = value.id && itemEnglish[value.id];
+      const participantCopy = [value.prompt, value.review]
+        .concat(Array.isArray(value.options) ? value.options.map((option) => option?.label ?? option) : [])
+        .filter(Boolean).join(" ");
+      const english = value.id && cjk.test(participantCopy) ? itemEnglish[value.id] : null;
       const translated = Object.fromEntries(Object.entries(value).map(([key, item]) => [
         key,
         english && Object.prototype.hasOwnProperty.call(english, key) ? item : deepTranslate(item)

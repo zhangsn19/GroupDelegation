@@ -57,7 +57,7 @@ async function exercise(peerIdentity, condition) {
   const createdDetail = await request(`/api/admin/session/${id}`, { headers: { "x-admin-token": adminToken } });
   assert.strictEqual(createdDetail.data.metadata.assignment_source, "team_review");
   assert(created.data.session.peer_members.slice(1).every((member) => member.name.startsWith(peerIdentity === "ai" ? "AI Member" : "Human Member")));
-  assert(created.data.session.peer_members.slice(1).every((member) => member.avatar === (peerIdentity === "ai" ? "◈" : "👤")));
+  assert(created.data.session.peer_members.slice(1).every((member) => member.avatar === (peerIdentity === "ai" ? "🤖" : "👤")));
   const introText = created.data.session.rule_blocks.find((block) => block.title === "Your group").body;
   assert.strictEqual(introText, peerIdentity === "ai" ? "You will complete this task with four AI group members." : "You will complete this task with four other human group members.");
   const visibilityText = created.data.session.rule_blocks.find((block) => block.title === "Private reports").body;

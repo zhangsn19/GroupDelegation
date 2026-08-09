@@ -293,7 +293,7 @@
     const chat = window.ChatView.createReadOnlyChat(content, state.members, {
       sidebarTitle: isHumanAiProtocol() ? "Work group" : undefined,
       sidebarNote: isHumanAiProtocol() ? "The Submission System records each member's report." : undefined,
-      footerText: isHumanAiProtocol() ? "The Submission System records each member's report." : "群聊 AI 负责接收并提交成员报告。"
+      footerText: isHumanAiProtocol() ? false : "群聊 AI 负责接收并提交成员报告。"
     });
     const introMessages = isHumanAiProtocol()
       ? window.ChatView.identityIntroMessages(state.members)
@@ -387,16 +387,14 @@
     const chat = window.ChatView.createReadOnlyChat(content, state.members, {
       sidebarTitle: isHumanAiProtocol() ? "Work group" : undefined,
       sidebarNote: isHumanAiProtocol() ? "The Submission System records each member's report." : undefined,
-      footerText: isHumanAiProtocol() ? "The Submission System records each member's report." : "群聊 AI 负责接收并提交成员报告。"
+      footerText: isHumanAiProtocol() ? false : "群聊 AI 负责接收并提交成员报告。"
     });
-    const systemSender = isHumanAiProtocol()
-      ? { name: "Submission System", avatar: "S" }
-      : { name: "群聊 AI", avatar: "AI" };
+    const systemSender = { name: "群聊 AI", avatar: "AI" };
     const roundMessages = isHumanAiProtocol() ? [
-      { sender: systemSender, text: `Round ${state.diceCurrent.round_index} of ${state.diceCurrent.total_rounds} begins` },
-      { sender: systemSender, text: "The die outcome is available. Each group member can now complete this round's report." },
+      { kind: "notice", text: `Round ${state.diceCurrent.round_index} of ${state.diceCurrent.total_rounds} begins.` },
+      { kind: "notice", text: "The die outcome is available. Each group member can now complete this round's report." },
       ...window.ChatView.peerRecordMessages(state.members, state.diceCurrent.peer_records || []),
-      { sender: systemSender, text: state.diceCurrent.peer_records?.every((record) => record.visibility === "hidden")
+      { kind: "notice", text: state.diceCurrent.peer_records?.every((record) => record.visibility === "hidden")
         ? "The other group members' report values are not shown in this task. Complete your private report below."
         : "The other group members' reports have been displayed. Complete your private report below." }
     ] : [
@@ -409,7 +407,10 @@
       await chat.addMessagesSequentially(roundMessages, 320);
       if (token !== state.renderToken) return;
     } else {
-      for (const item of roundMessages) chat.addMessage(item.sender, item.text);
+      for (const item of roundMessages) {
+        if (item.kind === "notice") chat.addSystemNotice(item.text);
+        else chat.addMessage(item.sender, item.text);
+      }
     }
     const resumedAfterReload = Boolean(state.diceCurrent.selection_started_at);
     const presented = await api(`/api/session/${state.session.id}/dice/presented`, { method: "POST" });

@@ -32,15 +32,25 @@ assert(!aiRules.some((block) => /human group members/.test(block.body)));
 assert(hiddenRules.some((block) => block.body.includes("The other group members' report values are not shown in this task.")));
 assert(!hiddenRules.some((block) => block.body.includes("You will see the other four")));
 assert.deepStrictEqual(study1.humanAiPostSurveyItems.map((item) => item.section).filter((section, index, all) => index === 0 || section !== all[index - 1]), ["N", "S", "R", "M", "X", "C2", "P"]);
+assert.deepStrictEqual(study1.humanAiPostSurveyItems.filter((item) => item.section === "N").map((item) => item.id), ["b_peer_true_reporting_common", "b_peer_reward_reporting_common", "c_true_reporting_acceptable", "c_reward_reporting_acceptable"]);
+assert.deepStrictEqual(study1.humanAiPostSurveyItems.filter((item) => item.section === "R").map((item) => item.id), ["e_reflects_my_decision", "e_personal_responsibility", "shared_group_responsibility", "d_guilt", "d_moral_discomfort"]);
+assert(study1.humanAiPostSurveyItems.some((item) => item.section === "M" && item.id === "b_peer_behavior_predictable"));
+assert(study1.humanAiPostSurveyItems.some((item) => item.id === "peer_behavior_appropriateness_influence"));
+assert(!study1.humanAiPostSurveyItems.some((item) => item.id === "a_peer_behavior_change"));
+assert(study1.postSurveyItems.some((item) => item.id === "a_peer_behavior_change"));
+assert.deepStrictEqual(study1.humanAiPostSurveyItems.find((item) => item.id === "a_truthful_peer_count").options.map((option) => option.value), ["0", "1", "2", "3", "4", "not_visible", "not_sure"]);
 assert.strictEqual(study1.humanAiDemographicsItems.at(-1).id, "open_decision_factors");
 assert.strictEqual(study1.humanAiDemographicsItems.at(-1).prompt, "What factors, if any, did you consider when deciding what to report during the task?");
 assert.strictEqual(study1.humanAiDemographicsItems.at(-1).required, false);
 assert.strictEqual(study1.humanAiPostSurveyItems.find((item) => item.id === "peer_influence_self_report").prompt, "The other group members influenced my reporting decisions.");
+assert(app._internal.postSurveyItemsForSession({ protocol_version: protocol.PROTOCOL_VERSION, condition: "honest" }).some((item) => item.id === "peer_reports_considered"));
+assert(!app._internal.postSurveyItemsForSession({ protocol_version: protocol.PROTOCOL_VERSION, condition: "hidden" }).some((item) => item.id === "peer_reports_considered"));
 assert.deepStrictEqual(study1.humanAiPostSurveyItems.find((item) => item.id === "identity_recall").options.map((option) => option.value), ["human", "ai", "not_sure"]);
 const humanMembers = app._internal.peerMembersForIdentity("human").slice(1);
 const aiMembers = app._internal.peerMembersForIdentity("ai").slice(1);
 assert(humanMembers.every((member) => member.name.startsWith("Human Member") && member.avatar === "👤"));
-assert(aiMembers.every((member) => member.name.startsWith("AI Member") && member.avatar === "◈"));
+assert(aiMembers.every((member) => member.name.startsWith("AI Member") && member.avatar === "🤖" && member.role === "AI group member"));
+assert(humanMembers.every((member) => member.role === "Human group member"));
 assert.notStrictEqual(humanMembers[0].avatar, aiMembers[0].avatar);
 assert.strictEqual(app._internal.comprehensionQuestionsForSession({ protocol_version: protocol.PROTOCOL_VERSION }), study1.humanAiComprehensionQuestions);
 assert.strictEqual(app._internal.comprehensionQuestionsForSession({ protocol_version: "peer-reporting-v2" }), study1.comprehensionQuestions);
@@ -65,6 +75,7 @@ vm.runInNewContext(fs.readFileSync(path.join(__dirname, "..", "public", "js", "l
 const translatedItems = localeContext.window.EnglishLocale.deepTranslate([...study1.humanAiPostSurveyItems, ...study1.humanAiDemographicsItems]);
 const translatedText = JSON.stringify(translatedItems);
 assert(!translatedText.includes("This information could not be displayed in English."));
+for (const forbidden of ["In this group chat", "coworker", "coworkers", "group-chat AI"]) assert(!translatedText.includes(forbidden));
 for (const item of translatedItems) {
   for (const key of ["prompt", "review", "minLabel", "midLabel", "maxLabel"]) {
     if (item[key]) assert(!/[\u3400-\u9fff]/.test(item[key]), `${item.id}.${key} was not translated`);
@@ -76,7 +87,12 @@ for (const item of translatedItems) {
 }
 const appSource = fs.readFileSync(path.join(__dirname, "..", "public", "js", "app.js"), "utf8");
 assert(appSource.includes('sidebarTitle: isHumanAiProtocol() ? "Work group"'));
-assert(appSource.includes('{ name: "Submission System", avatar: "S" }'));
+assert(!appSource.includes('{ name: "Submission System", avatar: "S" }'));
+assert(appSource.includes('{ kind: "notice"'));
+assert(appSource.includes('footerText: isHumanAiProtocol() ? false'));
+const chatSource = fs.readFileSync(path.join(__dirname, "..", "public", "js", "chat.js"), "utf8");
+assert(chatSource.includes("addSystemNotice(text)"));
+assert(!chatSource.includes('options.footerText ||'));
 assert(appSource.includes('window.EnglishLocale.deepTranslate(value)'));
 const englishLanding = fs.readFileSync(path.join(__dirname, "..", "public", "en", "index.html"), "utf8");
 assert(englishLanding.includes("Enter the study"));
@@ -146,6 +162,13 @@ const sampleSession = {
 const files = prolificExport.buildFiles([sampleSession], { GIT_COMMIT: "test" });
 assert.deepStrictEqual(Object.keys(files).sort(), ["bonus_payments.csv", "cell_summary.csv", "export_metadata.json", "participants.csv", "raw_sessions.ndjson", "study1_rounds.csv", "surveys.csv"]);
 assert(files["cell_summary.csv"]);
+const surveysLines = files["surveys.csv"].trimEnd().split(/\r?\n/);
+const surveyHeader = surveysLines[0].split(",");
+const surveyRow = surveysLines[1].split(",");
+assert(surveyHeader.includes("post_peer_reports_considered"));
+assert(surveyHeader.includes("post_a_peer_behavior_change"));
+assert.strictEqual(surveyRow[surveyHeader.indexOf("post_peer_reports_considered")], "");
+assert.strictEqual(surveyRow[surveyHeader.indexOf("post_a_peer_behavior_change")], "");
 assert.strictEqual(files["cell_summary.csv"].trim().split(/\r?\n/).length, 13);
 const metadata = JSON.parse(files["export_metadata.json"]);
 assert.strictEqual(metadata.supported_cell_count, 14);
@@ -157,6 +180,24 @@ assert.deepStrictEqual(Object.keys(emptyFiles).sort(), ["bonus_payments.csv", "c
 assert.strictEqual(emptyFiles["cell_summary.csv"].trim().split(/\r?\n/).length, 13);
 assert(emptyFiles["cell_summary.csv"].trim().split(/\r?\n/).slice(1).every((line) => /,0,0,0,0,0$/.test(line)));
 assert.strictEqual(JSON.parse(emptyFiles["export_metadata.json"]).protocol_version, protocol.PROTOCOL_VERSION);
+
+if (process.env.TASKFLOW_CSV_PATH || process.env.TASKFLOW_MAPPING_PATH) {
+  assert(process.env.TASKFLOW_CSV_PATH && process.env.TASKFLOW_MAPPING_PATH, "Both Taskflow paths are required");
+  const rows = fs.readFileSync(process.env.TASKFLOW_CSV_PATH, "utf8").trim().split(/\r?\n/);
+  assert.strictEqual(rows.length, 12);
+  const tokens = rows.map((row) => {
+    const match = row.match(/^https:\/\/study1\.8-216-54-76\.sslip\.io\/\?variant=([A-Za-z0-9_-]{32,}),1$/);
+    assert(match, `Invalid Taskflow row: ${row}`);
+    assert(!/(?:human|ai|hidden|honest|dishonest|fixed|condition)/i.test(row));
+    assert(!/(?:PROLIFIC_PID|STUDY_ID|SESSION_ID)/.test(row));
+    return match[1];
+  });
+  assert.strictEqual(new Set(tokens).size, 12);
+  const mapping = JSON.parse(fs.readFileSync(process.env.TASKFLOW_MAPPING_PATH, "utf8"));
+  assert.deepStrictEqual(Object.keys(mapping).sort(), [...tokens].sort());
+  assert.deepStrictEqual(new Set(Object.values(mapping).map((cell) => `${cell.peer_identity}:${cell.condition}`)), new Set(protocol.activeCells().map((cell) => `${cell.peer_identity}:${cell.condition}`)));
+  assert(Object.values(mapping).every((cell) => cell.variant_id && cell.condition !== "dishonest_escalating"));
+}
 
 function isolatedFixture(id, scope) {
   return {

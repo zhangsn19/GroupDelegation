@@ -244,7 +244,7 @@ h3 {
 /* Survey */
 .survey-list {
   display: grid;
-  gap: 1rem;
+  gap: .85rem;
 }
 
 .question-card,
@@ -253,10 +253,10 @@ h3 {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 1.25rem;
+  padding: 1.1rem;
   margin-bottom: 0;
   display: grid;
-  gap: .75rem;
+  gap: .6rem;
 }
 
 fieldset.question-card {
@@ -432,6 +432,28 @@ fieldset.question-card {
   gap: .55rem;
   margin-bottom: .75rem;
   animation: fadeIn .25s ease;
+}
+
+.system-notice {
+  display: flex;
+  align-items: baseline;
+  gap: .55rem;
+  margin: 0 0 .75rem;
+  padding: .55rem .7rem;
+  border: 1px solid #dbe3ec;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: .88rem;
+  line-height: 1.45;
+}
+
+.system-notice-label {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: .65rem;
+  font-weight: 700;
+  letter-spacing: .08em;
 }
 
 @keyframes fadeIn {

@@ -267,9 +267,9 @@ function addEvent(session, type, data = {}) {
 }
 
 function postSurveyItemsForSession(session) {
-  return session?.protocol_version === HUMAN_AI_PROTOCOL_VERSION
-    ? study1.humanAiPostSurveyItems
-    : study1.postSurveyItems;
+  if (session?.protocol_version !== HUMAN_AI_PROTOCOL_VERSION) return study1.postSurveyItems;
+  if (session.condition !== "hidden") return study1.humanAiPostSurveyItems;
+  return study1.humanAiPostSurveyItems.filter((item) => item.id !== "peer_reports_considered");
 }
 
 function demographicsItemsForSession(session) {
@@ -478,10 +478,11 @@ const STABLE_MEMBER_IDS = ["member_1", "member_2", "member_3", "member_4"];
 function peerMembersForIdentity(peerIdentity) {
   if (!PEER_IDENTITIES.includes(peerIdentity)) return MEMBERS;
   const label = peerIdentity === "ai" ? "AI Member" : "Human Member";
-  const identityIcon = peerIdentity === "ai" ? "◈" : "👤";
+  const identityIcon = peerIdentity === "ai" ? "🤖" : "👤";
+  const role = peerIdentity === "ai" ? "AI group member" : "Human group member";
   return [
     { id: "participant", name: "You", role: "Participant", avatar: "You" },
-    ...STABLE_MEMBER_IDS.map((id, index) => ({ id, name: `${label} ${index + 1}`, role: label, avatar: identityIcon })),
+    ...STABLE_MEMBER_IDS.map((id, index) => ({ id, name: `${label} ${index + 1}`, role, avatar: identityIcon })),
   ];
 }
 
@@ -1658,6 +1659,7 @@ app._internal = {
   createStudy1Stimuli,
   publicStudy1PeerRecords,
   peerMembersForIdentity,
+  postSurveyItemsForSession,
   comprehensionQuestionsForSession,
   filterSessions,
 };

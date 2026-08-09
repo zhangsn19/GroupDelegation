@@ -44,10 +44,15 @@
     const messages = document.createElement("div");
     messages.className = "chat-messages";
     panel.appendChild(messages);
-    const footer = document.createElement("div");
-    footer.className = "read-only-footer";
-    footer.textContent = options.footerText || "群聊 AI 负责接收并提交成员报告。";
-    panel.appendChild(footer);
+    const footerText = Object.prototype.hasOwnProperty.call(options, "footerText")
+      ? options.footerText
+      : "群聊 AI 负责接收并提交成员报告。";
+    if (footerText) {
+      const footer = document.createElement("div");
+      footer.className = "read-only-footer";
+      footer.textContent = footerText;
+      panel.appendChild(footer);
+    }
 
     layout.appendChild(sidebar);
     layout.appendChild(panel);
@@ -70,10 +75,24 @@
         messages.scrollTop = messages.scrollHeight;
         return msg;
       },
+      addSystemNotice(text) {
+        const notice = document.createElement("div");
+        notice.className = "system-notice";
+        const label = document.createElement("span");
+        label.className = "system-notice-label";
+        label.textContent = "SYSTEM";
+        const body = document.createElement("span");
+        body.textContent = text;
+        notice.append(label, body);
+        messages.appendChild(notice);
+        messages.scrollTop = messages.scrollHeight;
+        return notice;
+      },
       async addMessagesSequentially(items, gapMs = 650) {
         for (const item of items) {
           await delay(gapMs);
-          this.addMessage(item.sender, item.text, item.tone || "bot");
+          if (item.kind === "notice") this.addSystemNotice(item.text);
+          else this.addMessage(item.sender, item.text, item.tone || "bot");
         }
       }
     };

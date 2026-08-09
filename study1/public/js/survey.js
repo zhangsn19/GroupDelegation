@@ -9,7 +9,7 @@
     N: "Group Norms",
     S: "Social Influence",
     R: "Responsibility / Moral Response",
-    M: "Peer-count Memory",
+    M: "Information / Task Checks",
     X: "Identity Recognition",
     C2: "Identity Confidence",
     P: "Perceived Agency",
@@ -96,15 +96,15 @@
           const points = item.scalePoints || 7;
           return `
             ${header}
-            <fieldset class="question-card survey-card" data-question-id="${item.id}">
-              <legend class="question-text">${promptText(item)}</legend>
+            <div class="question-card survey-card" data-question-id="${item.id}" role="group" aria-labelledby="survey-prompt-${item.id}">
+              <div class="question-text" id="survey-prompt-${item.id}">${promptText(item)}</div>
               <div class="likert-scale likert-scale--${points}" data-scale-points="${points}">${likertButtons(item, values[item.id])}</div>
               <div class="scale-labels">
                 <span>1 = ${item.minLabel}</span>
                 ${item.midLabel ? `<span>${Math.ceil(points / 2)} = ${item.midLabel}</span>` : ""}
                 <span>${points} = ${item.maxLabel}</span>
               </div>
-            </fieldset>
+            </div>
           `;
         }).join("")}
       </div>

@@ -3,20 +3,31 @@ const { baselineItems, postSurveyStudy1, demographicsItems } = require("./measur
 const FIXED_DICE_SEQUENCE = [3, 5, 2, 4, 1, 3, 2, 5, 4, 1];
 const REWARD_PER_POINT = 1;
 
-const postById = Object.fromEntries(postSurveyStudy1.map((item) => [item.id, item]));
-const withSection = (id, section) => ({ ...postById[id], section });
+const agreement = (section, id, prompt) => ({
+  section, id, prompt, type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree"
+});
 const humanAiPostSurveyItems = [
-  withSection("b_peer_true_reporting_common", "N"), withSection("b_peer_reward_reporting_common", "N"),
-  withSection("b_peer_behavior_predictable", "N"), withSection("c_true_reporting_acceptable", "N"),
-  withSection("c_reward_reporting_acceptable", "N"),
-  { section: "S", id: "peer_influence_self_report", prompt: "The other group members influenced my reporting decisions.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
-  { section: "S", id: "peer_reports_considered", prompt: "I considered the other group members' reports when deciding what to report.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
-  { section: "S", id: "peer_behavior_appropriateness_influence", prompt: "The behavior of the other group members affected what I considered appropriate to report.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
-  withSection("e_reflects_my_decision", "R"), withSection("e_personal_responsibility", "R"),
-  { section: "R", id: "shared_group_responsibility", prompt: "Responsibility for the task outcome was shared across group members.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },
-  withSection("d_guilt", "R"), withSection("d_moral_discomfort", "R"),
-  withSection("a_truthful_peer_count", "M"), withSection("a_peer_behavior_change", "M"),
-  withSection("a_private_submission_understood", "M"), withSection("a_independent_reward_understood", "M"),
+  agreement("N", "b_peer_true_reporting_common", "During this task, the other group members generally reported the shared die outcome truthfully."),
+  agreement("N", "b_peer_reward_reporting_common", "During this task, the other group members generally reported a number above the actual die outcome to increase their individual reward."),
+  agreement("N", "c_true_reporting_acceptable", "During this task, the other group members considered reporting the shared die outcome truthfully to be appropriate."),
+  agreement("N", "c_reward_reporting_acceptable", "During this task, the other group members considered reporting a number above the actual die outcome to increase one's reward to be acceptable."),
+  agreement("S", "peer_influence_self_report", "The other group members influenced my reporting decisions."),
+  agreement("S", "peer_reports_considered", "I considered the other group members' reports when deciding what to report."),
+  agreement("S", "peer_behavior_appropriateness_influence", "The behavior of the other group members affected what I considered appropriate to report."),
+  agreement("R", "e_reflects_my_decision", "The die values I reported in the task reflected my own decisions."),
+  agreement("R", "e_personal_responsibility", "I should take responsibility for the die values I reported in the task."),
+  agreement("R", "shared_group_responsibility", "Responsibility for the task outcome was shared across group members."),
+  agreement("R", "d_guilt", "Looking back on the die task and my reports across the rounds, I feel guilty."),
+  agreement("R", "d_moral_discomfort", "Looking back on the die task and my reports across the rounds, I feel morally uncomfortable."),
+  agreement("M", "b_peer_behavior_predictable", "The information I saw was sufficient for me to judge how the other group members generally reported die outcomes."),
+  { section: "M", id: "a_truthful_peer_count", prompt: "Looking back over the entire task, how many of the four other group members ever reported the shared die outcome truthfully?", type: "select", options: [
+    { value: "0", label: "0 group members" }, { value: "1", label: "1 group member" },
+    { value: "2", label: "2 group members" }, { value: "3", label: "3 group members" },
+    { value: "4", label: "4 group members" }, { value: "not_visible", label: "I did not see specific report values" },
+    { value: "not_sure", label: "I do not remember" }
+  ] },
+  agreement("M", "a_private_submission_understood", "I understood that my reports were not shown to the other group members."),
+  agreement("M", "a_independent_reward_understood", "I understood that the other group members' reports did not affect my individual reward."),
   { section: "X", id: "identity_recall", prompt: "The other four group members were:", type: "select", options: [{ value: "human", label: "Human participants" }, { value: "ai", label: "AI agents" }, { value: "not_sure", label: "Not sure" }] },
   { section: "C2", id: "identity_confidence", prompt: "How confident are you about your answer above?", type: "likert", minLabel: "Not at all confident", maxLabel: "Very confident" },
   { section: "P", id: "perceived_peer_agency", prompt: "The other group members seemed to make their own reporting decisions.", type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" },

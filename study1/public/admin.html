@@ -11,6 +11,10 @@
       .admin-table th, .admin-table td { border: 1px solid #d9dee8; padding: 0.45rem; text-align: left; vertical-align: top; }
       .admin-table th { background: #f4f6fa; white-space: nowrap; }
       .admin-table .numeric { text-align: right; }
+      .export-group { display: grid; gap: .5rem; padding: .8rem; border: 1px solid #d9dee8; border-radius: 8px; }
+      .export-group h3 { margin: 0; font-size: .75rem; letter-spacing: .08em; color: #64748b; }
+      .export-group-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+      .auth-error { color: #b91c1c; }
     </style>
   </head>
   <body>
@@ -18,7 +22,7 @@
       <section class="panel">
         <div class="section-kicker">Admin</div>
         <h1>管理端导出</h1>
-        <p class="muted">输入 `ADMIN_TOKEN` 后查看计数并下载导出表。</p>
+        <p id="auth-status" class="muted">Enter ADMIN_TOKEN to load study data.</p>
         <label class="field-label" for="admin-token">管理员 token</label>
         <input id="admin-token" class="text-input" type="password" autocomplete="off">
         <label class="consent-check"><input id="include-test" type="checkbox"><span>包含测试 / 调试数据</span></label>
@@ -77,7 +81,7 @@
         </div>
         <p class="muted">Create researcher QA sessions through <a href="/qa-preview">/qa-preview</a>.</p>
       </section>
-      <section class="panel">
+      <section id="admin-results" class="panel" hidden>
         <h2>汇总</h2>
         <pre id="summary-output" class="code-output">尚未加载。</pre>
         <h2>Active Human-AI 2×6 Matrix</h2>
@@ -91,7 +95,7 @@
         <pre id="preview-output" class="code-output">Not loaded.</pre>
         <div id="export-links" class="export-grid"></div>
       </section>
-      <section class="panel">
+      <section id="admin-legacy" class="panel" hidden>
         <h2>Legacy / Historical Study1</h2>
         <p class="muted">Read-only access to the physically separate historical Study1 data source.</p>
         <pre id="legacy-summary-output" class="code-output">Not loaded.</pre>
@@ -111,22 +115,21 @@
       const legacySummaryOutput = document.querySelector("#legacy-summary-output");
       const legacyRecordsOutput = document.querySelector("#legacy-records-output");
       const legacyDetailOutput = document.querySelector("#legacy-detail-output");
+      const authStatus = document.querySelector("#auth-status");
+      const resultsPanel = document.querySelector("#admin-results");
+      const legacyPanel = document.querySelector("#admin-legacy");
       let prolificSummary = null;
-      const exportsList = [
-        ["JSON 原始数据", "/api/admin/export/json"],
-        ["participants.csv", "/api/admin/export/participants.csv"],
-        ["study1_dice_rounds.csv", "/api/admin/export/study1_dice_rounds.csv"],
-        ["Download formal Prolific export bundle", "/api/admin/export/prolific-bundle.zip"],
-        ["Download Preview records bundle", "/api/admin/export/prolific-preview-bundle.zip"],
-        ["Download isolated QA bundle", "/api/admin/export/qa-bundle.zip"],
-        ["Download Team Review bundle", "/api/admin/export/team-review-bundle.zip"],
-        ["Download historical Study1 bundle", "/api/admin/export/legacy-study1-bundle.zip"]
+      const exportGroups = [
+        ["CURRENT HUMAN–AI", [["Formal", "/api/admin/export/prolific-bundle.zip"], ["Preview", "/api/admin/export/prolific-preview-bundle.zip"], ["QA", "/api/admin/export/qa-bundle.zip"], ["Team Review", "/api/admin/export/team-review-bundle.zip"]]],
+        ["HISTORICAL", [["Historical Study1", "/api/admin/export/legacy-study1-bundle.zip"]]],
+        ["ADDITIONAL / RAW", [["JSON", "/api/admin/export/json"], ["participants.csv", "/api/admin/export/participants.csv"], ["study1_dice_rounds.csv", "/api/admin/export/study1_dice_rounds.csv"]]]
       ];
       const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
       function renderMatrix(rows) {
         const cells = new Map((rows || []).map((row) => [`${row.peer_identity}:${row.condition}`, row]));
         const conditions = ["hidden", "honest", "dishonest_fixed_1", "dishonest_fixed_2", "dishonest_fixed_3", "dishonest"];
-        const header = conditions.map((condition) => `<th>${escapeHtml(condition)}</th>`).join("");
+        const labels = { hidden: "Hidden", honest: "0 Dishonest", dishonest_fixed_1: "1 Dishonest", dishonest_fixed_2: "2 Dishonest", dishonest_fixed_3: "3 Dishonest", dishonest: "4 Dishonest" };
+        const header = conditions.map((condition) => `<th>${escapeHtml(labels[condition])}</th>`).join("");
         const body = ["human", "ai"].map((identity) => `<tr><th>${identity === "human" ? "Human" : "AI"}</th>${conditions.map((condition) => {
           const row = cells.get(`${identity}:${condition}`) || {};
           return `<td>Arrived: ${row.arrived || 0}<br>Started: ${row.started || 0}<br>Completed: ${row.completed || 0}<br>Data Complete: ${row.data_complete || 0}<br>Quality Flags: ${row.quality_flagged || 0}</td>`;
@@ -145,29 +148,39 @@
       }
       async function loadSummary() {
         const token = tokenInput.value.trim();
-        const response = await fetch(`/api/admin/summary?${queryString()}`, {
-          headers: { "x-admin-token": token }
-        });
-        const data = await response.json();
-        const prolificResponse = await fetch(`/api/admin/prolific-summary?${queryString()}`, {
-          headers: { "x-admin-token": token }
-        });
-        prolificSummary = await prolificResponse.json();
-        const recordsResponse = await fetch(`/api/admin/records?${queryString()}`, { headers: { "x-admin-token": token } });
-        const recordsData = await recordsResponse.json();
-        const legacySummaryResponse = await fetch(`/api/admin/legacy/summary?${queryString()}`, { headers: { "x-admin-token": token } });
-        const legacyRecordsResponse = await fetch(`/api/admin/legacy/records?${queryString()}`, { headers: { "x-admin-token": token } });
-        const legacySummary = await legacySummaryResponse.json();
-        const legacyRecords = await legacyRecordsResponse.json();
+        authStatus.classList.remove("auth-error");
+        if (!token) return showAuthenticationError("Enter ADMIN_TOKEN to load study data.");
+        const headers = { "x-admin-token": token };
+        let responses;
+        try {
+          responses = await Promise.all(["summary", "prolific-summary", "records", "legacy/summary", "legacy/records"]
+            .map((path) => fetch(`/api/admin/${path}?${queryString()}`, { headers })));
+        } catch {
+          return showAuthenticationError("Unable to load admin data. Check the connection and try again.");
+        }
+        if (responses.some((response) => response.status === 401 || response.status === 403)) {
+          return showAuthenticationError("Authentication failed. Check ADMIN_TOKEN and try again.");
+        }
+        if (responses.some((response) => !response.ok)) return showAuthenticationError("Admin data could not be loaded.");
+        const [data, loadedProlificSummary, recordsData, legacySummary, legacyRecords] = await Promise.all(responses.map((response) => response.json()));
+        prolificSummary = loadedProlificSummary;
+        authStatus.textContent = "Authenticated study data loaded.";
+        resultsPanel.hidden = false;
+        legacyPanel.hidden = false;
         summaryOutput.textContent = JSON.stringify({ current: data, preview_mode_enabled: prolificSummary.preview_mode_enabled, formal: prolificSummary.formal, preview: prolificSummary.preview }, null, 2);
         matrixOutput.innerHTML = renderMatrix(prolificSummary.active_matrix || []);
         allRecordsOutput.innerHTML = renderRecords(recordsData.participants || []);
         legacySummaryOutput.textContent = JSON.stringify(legacySummary, null, 2);
         legacyRecordsOutput.innerHTML = renderRecords(legacyRecords.participants || [], true);
         renderProlificRecords();
-        links.innerHTML = exportsList.map(([label, href]) => (
-          `<button class="secondary-button" data-export="${href}">${label}</button>`
-        )).join("");
+        links.innerHTML = exportGroups.map(([title, items]) => `<section class="export-group"><h3>${title}</h3><div class="export-group-actions">${items.map(([label, href]) => `<button class="secondary-button" data-export="${href}">${label}</button>`).join("")}</div></section>`).join("");
+      }
+      function showAuthenticationError(message) {
+        prolificSummary = null;
+        resultsPanel.hidden = true;
+        legacyPanel.hidden = true;
+        authStatus.textContent = message;
+        authStatus.classList.add("auth-error");
       }
       document.querySelector("#load-summary").addEventListener("click", loadSummary);
       ["record-kind", "record-status", "record-conflict", "resumed-only", "aliases-only"].forEach((id) => {
@@ -207,6 +220,11 @@
         const response = await fetch(`${href}?${queryString()}`, {
           headers: { "x-admin-token": token }
         });
+        if (!response.ok) {
+          authStatus.textContent = response.status === 401 || response.status === 403 ? "Authentication failed. Check ADMIN_TOKEN and try again." : "Export failed. No file was downloaded.";
+          authStatus.classList.add("auth-error");
+          return;
+        }
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
@@ -221,8 +239,12 @@
         const legacy = button.dataset.legacy === "true";
         const endpoint = legacy ? "/api/admin/legacy/session/" : "/api/admin/session/";
         const response = await fetch(`${endpoint}${encodeURIComponent(button.dataset.inspect)}`, { headers: { "x-admin-token": tokenInput.value.trim() } });
-        const data = await response.json();
-        (legacy ? legacyDetailOutput : recordDetailOutput).textContent = JSON.stringify(data, null, 2);
+        const output = legacy ? legacyDetailOutput : recordDetailOutput;
+        if (!response.ok) {
+          output.textContent = response.status === 401 || response.status === 403 ? "Authentication failed. Check ADMIN_TOKEN and try again." : `Unable to inspect record (HTTP ${response.status}).`;
+          return;
+        }
+        output.textContent = JSON.stringify(await response.json(), null, 2);
       });
       function queryString() {
         const params = new URLSearchParams();
