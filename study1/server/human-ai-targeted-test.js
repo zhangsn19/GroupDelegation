@@ -162,6 +162,7 @@ function isolatedFixture(id, scope) {
   return {
     ...sampleSession,
     id,
+    participant_id: `${id}_participant`,
     record_key: `${id}_record`,
     assignment_mode: scope === "formal" || scope === "preview" ? "prolific_taskflow" : (scope === "qa" ? "qa_preview" : "team_review"),
     assignment_source: scope === "formal" || scope === "preview" ? "prolific_taskflow" : (scope === "qa" ? "qa_preview" : "team_review"),
@@ -183,6 +184,8 @@ assert(!isolationContents.formal.includes("team_fixture_xyz") && !isolationConte
 assert.strictEqual((isolationContents.team_review.match(/team_fixture_xyz/g) || []).length > 0, true);
 assert(!isolationContents.formal.includes("qa_fixture_xyz") && !isolationContents.preview.includes("qa_fixture_xyz") && !isolationContents.team_review.includes("qa_fixture_xyz"));
 assert.strictEqual((isolationContents.qa.match(/qa_fixture_xyz/g) || []).length > 0, true);
+assert(isolationContents.team_review.includes("team_fixture_xyz_participant"));
+assert(isolationContents.qa.includes("qa_fixture_xyz_participant"));
 
 const completedSynthetic = { ...sampleSession, assignment_mode: "team_review", is_team_review: true, record_key: null, prolific_pid: null, prolific_study_id: null, prolific_session_id: null, status: "completed", post_survey: { ok: true }, demographics: { ok: true }, comprehension_attempts: [{ passed: true }], dice_rounds: Array.from({ length: 10 }, () => ({ decision_time_ms: 1, page_hidden_duration_ms: 0 })) };
 assert(!prolificExport.qualityFlags(completedSynthetic).includes("missing_required_fields"));

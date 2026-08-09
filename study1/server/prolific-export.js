@@ -53,6 +53,7 @@ function participants(sessions, env) {
     const flags = qualityFlags(session);
     return {
       session_id: session.id,
+      participant_id: session.participant_id || session.prolific_pid || "",
       record_key: session.record_key,
       prolific_pid: session.prolific_pid,
       prolific_study_id: session.prolific_study_id,
@@ -95,6 +96,7 @@ function participants(sessions, env) {
 function rounds(sessions) {
   return sessions.flatMap((session) => (session.dice_rounds || []).map((round) => ({
     session_id: session.id,
+    participant_id: session.participant_id || session.prolific_pid || "",
     record_key: session.record_key,
     prolific_pid: session.prolific_pid,
     prolific_session_id: session.prolific_session_id,
@@ -132,6 +134,7 @@ function rounds(sessions) {
 function surveys(sessions) {
   return sessions.map((session) => ({
     session_id: session.id,
+    participant_id: session.participant_id || session.prolific_pid || "",
     record_key: session.record_key,
     prolific_pid: session.prolific_pid,
     prolific_session_id: session.prolific_session_id,
@@ -143,7 +146,7 @@ function surveys(sessions) {
 
 function surveyColumns() {
   return [
-    "session_id", "record_key", "prolific_pid", "prolific_session_id",
+    "session_id", "participant_id", "record_key", "prolific_pid", "prolific_session_id",
     ...study1.baselineItems.map((item) => `pre_${item.id}`),
     ...new Set([...study1.postSurveyItems, ...(study1.humanAiPostSurveyItems || []), { id: "open_decision_factors" }].map((item) => `post_${item.id}`)),
     ...study1.demographicsItems.map((item) => `demo_${item.id}`)
@@ -153,6 +156,7 @@ function surveyColumns() {
 function bonuses(sessions, env) {
   return sessions.map((session) => ({
     session_id: session.id,
+    participant_id: session.participant_id || session.prolific_pid || "",
     prolific_pid: session.prolific_pid,
     prolific_session_id: session.prolific_session_id,
     bonus_amount: session.dice_rounds?.at(-1)?.cumulative_reward ?? "",
@@ -209,10 +213,10 @@ function buildFiles(sessions, env = process.env, options = {}) {
     round_count: roundRows.length
   };
   return {
-    "participants.csv": csv(participantRows, columns(participantRows, ["session_id", "record_key", "prolific_pid", "prolific_study_id", "prolific_session_id", "primary_prolific_session_id", "current_prolific_session_id", "prolific_session_aliases", "prolific_session_aliases_json", "resume_count", "last_resumed_at", "is_preview", "is_qa", "is_team_review", "taskflow_variant_id", "peer_identity", "condition", "assignment_mode", "locale", "status", "consented_at", "started_at", "completed_at", "total_duration_ms", "rounds_completed", "data_complete", "comprehension_pass", "quality_flags", "completion_ready_at", "completion_redirect_initiated_at", "bonus_amount", "bonus_currency", "study_version", "protocol_version", "identity_manipulation_version", "condition_map_version"])),
-    "study1_rounds.csv": csv(roundRows, ["session_id", "record_key", "prolific_pid", "prolific_session_id", "peer_identity", "protocol_version", "condition", "round_index", "true_die_value", "reported_die_value", "misreport_amount", "is_misreport", "peer_display_order_json", "peer_records_json", "n_peers_misreporting", "misreporting_peer_names_json", "misreporting_peer_ids_json", "decision_time_ms", "page_hidden_duration_ms", "decision_started_at_client", "decision_submitted_at_client", "server_received_at", "saved_at"]),
+    "participants.csv": csv(participantRows, columns(participantRows, ["session_id", "participant_id", "record_key", "prolific_pid", "prolific_study_id", "prolific_session_id", "primary_prolific_session_id", "current_prolific_session_id", "prolific_session_aliases", "prolific_session_aliases_json", "resume_count", "last_resumed_at", "is_preview", "is_qa", "is_team_review", "taskflow_variant_id", "peer_identity", "condition", "assignment_mode", "locale", "status", "consented_at", "started_at", "completed_at", "total_duration_ms", "rounds_completed", "data_complete", "comprehension_pass", "quality_flags", "completion_ready_at", "completion_redirect_initiated_at", "bonus_amount", "bonus_currency", "study_version", "protocol_version", "identity_manipulation_version", "condition_map_version"])),
+    "study1_rounds.csv": csv(roundRows, ["session_id", "participant_id", "record_key", "prolific_pid", "prolific_session_id", "peer_identity", "protocol_version", "condition", "round_index", "true_die_value", "reported_die_value", "misreport_amount", "is_misreport", "peer_display_order_json", "peer_records_json", "n_peers_misreporting", "misreporting_peer_names_json", "misreporting_peer_ids_json", "decision_time_ms", "page_hidden_duration_ms", "decision_started_at_client", "decision_submitted_at_client", "server_received_at", "saved_at"]),
     "surveys.csv": csv(surveyRows, surveyColumns()),
-    "bonus_payments.csv": csv(bonusRows, ["session_id", "prolific_pid", "prolific_session_id", "bonus_amount", "bonus_currency", "bonus_eligible", "bonus_reason"]),
+    "bonus_payments.csv": csv(bonusRows, ["session_id", "participant_id", "prolific_pid", "prolific_session_id", "bonus_amount", "bonus_currency", "bonus_eligible", "bonus_reason"]),
     "raw_sessions.ndjson": `${sessions.map((session) => JSON.stringify(session)).join("\n")}\n`,
     ...(hasHumanAi ? { "cell_summary.csv": csv(cellRows, ["peer_identity", "condition", "arrived", "started", "completed", "data_complete", "quality_flagged"]) } : {}),
     "export_metadata.json": `${JSON.stringify(metadata, null, 2)}\n`
