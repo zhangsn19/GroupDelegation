@@ -1080,12 +1080,12 @@ function staticChecks() {
   assert(serverJs.includes('ASSIGNMENT_MODE') && serverJs.includes('controlled_link') && serverJs.includes('ENTRY_CODE_HIDDEN') && serverJs.includes('ENTRY_CODE_DISHONEST_ESCALATING') && serverJs.includes('ENTRY_CODE_DISHONEST_FIXED_1') && serverJs.includes('ENTRY_CODE_DISHONEST_FIXED_2') && serverJs.includes('ENTRY_CODE_DISHONEST_FIXED_3'), "seven-condition controlled_link assignment source missing");
   for (const option of [
     '<option value="hidden">Hidden</option>',
-    '<option value="honest">Honest / Fixed 0</option>',
-    '<option value="dishonest_fixed_1">Fixed 1</option>',
-    '<option value="dishonest_fixed_2">Fixed 2</option>',
-    '<option value="dishonest_fixed_3">Fixed 3</option>',
-    '<option value="dishonest">Dishonest Static / Fixed 4</option>',
-    '<option value="dishonest_escalating">Dishonest Escalating</option>'
+    '<option value="honest">0 Dishonest</option>',
+    '<option value="dishonest_fixed_1">1 Dishonest</option>',
+    '<option value="dishonest_fixed_2">2 Dishonest</option>',
+    '<option value="dishonest_fixed_3">3 Dishonest</option>',
+    '<option value="dishonest">4 Dishonest</option>',
+    '<option value="dishonest_escalating">Legacy Escalating</option>'
   ]) {
     assert(adminHtml.includes(option), `admin condition option missing: ${option}`);
   }

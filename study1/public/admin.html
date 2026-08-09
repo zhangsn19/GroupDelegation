@@ -1,267 +1,286 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Group Deception v2 管理端</title>
+    <title>Study1 Human–AI Admin</title>
     <link rel="stylesheet" href="/css/style.css">
     <style>
-      .admin-table-wrap { overflow-x: auto; margin: 0.75rem 0 1.5rem; }
-      .admin-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
-      .admin-table th, .admin-table td { border: 1px solid #d9dee8; padding: 0.45rem; text-align: left; vertical-align: top; }
-      .admin-table th { background: #f4f6fa; white-space: nowrap; }
-      .admin-table .numeric { text-align: right; }
-      .export-group { display: grid; gap: .5rem; padding: .8rem; border: 1px solid #d9dee8; border-radius: 8px; }
-      .export-group h3 { margin: 0; font-size: .75rem; letter-spacing: .08em; color: #64748b; }
-      .export-group-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
-      .auth-error { color: #b91c1c; }
+      :root { --admin-border:#dbe3ee; --admin-muted:#64748b; --admin-soft:#f8fafc; --admin-blue:#1d4ed8; }
+      body { background:#f4f7fb; }
+      .admin-shell { width:min(1440px, calc(100% - 2rem)); margin:1rem auto 2rem; display:grid; gap:.85rem; }
+      .admin-card { background:#fff; border:1px solid var(--admin-border); border-radius:8px; padding:.9rem 1rem; box-shadow:0 1px 2px rgb(15 23 42 / .04); }
+      .dashboard-header { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.85rem 1rem; }
+      .dashboard-header h1 { margin:.1rem 0 0; font-size:1.35rem; }
+      .header-meta,.toolbar-actions,.badge-row,.export-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.45rem; }
+      .eyebrow,.section-title,.export-group h3 { margin:0; color:var(--admin-muted); font-size:.7rem; font-weight:800; letter-spacing:.09em; text-transform:uppercase; }
+      .badge { display:inline-flex; align-items:center; border:1px solid var(--admin-border); border-radius:999px; padding:.2rem .5rem; background:var(--admin-soft); font-size:.72rem; font-weight:700; color:#334155; }
+      .badge.blue { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
+      .badge.pass,.integrity-status.pass { background:#ecfdf5; border-color:#a7f3d0; color:#047857; }
+      .badge.warning,.integrity-status.warning { background:#fff7ed; border-color:#fed7aa; color:#c2410c; }
+      .badge.human { color:#1e40af; }.badge.ai { color:#5b21b6; }
+      .summary-grid { display:grid; grid-template-columns:repeat(5,minmax(120px,1fr)); gap:.65rem; }
+      .summary-card { padding:.75rem .85rem; border:1px solid var(--admin-border); border-radius:7px; background:#fff; }
+      .summary-label { color:var(--admin-muted); font-size:.76rem; font-weight:700; }
+      .summary-count { margin-top:.15rem; font-size:1.65rem; line-height:1; font-weight:800; color:#0f172a; }
+      .section-head { display:flex; justify-content:space-between; align-items:baseline; gap:1rem; margin-bottom:.7rem; }
+      .section-head h2 { margin:0; font-size:1rem; }
+      .section-note { color:var(--admin-muted); font-size:.76rem; }
+      .exports-grid { display:grid; grid-template-columns:1.3fr .8fr 1fr; gap:.65rem; }
+      .export-group { border:1px solid var(--admin-border); border-radius:7px; padding:.7rem; background:var(--admin-soft); }
+      .export-group h3 { margin-bottom:.5rem; }
+      .export-item { display:flex; align-items:center; justify-content:space-between; gap:.7rem; padding:.42rem 0; border-top:1px solid #e8edf4; }
+      .export-item:first-of-type { border-top:0; padding-top:0; }
+      .export-copy strong { display:block; font-size:.8rem; }.export-copy span { display:block; color:var(--admin-muted); font-size:.68rem; }
+      .compact-button { min-height:32px; padding:.35rem .65rem; border-radius:6px; font-size:.75rem; white-space:nowrap; }
+      .matrix-wrap,.table-wrap { overflow:auto; }
+      .admin-table { width:100%; border-collapse:collapse; font-size:.76rem; }
+      .admin-table th,.admin-table td { border:1px solid var(--admin-border); padding:.48rem; text-align:left; vertical-align:middle; }
+      .admin-table th { background:var(--admin-soft); color:#334155; font-weight:750; white-space:nowrap; }
+      .matrix-table td { min-width:128px; }
+      .matrix-completed { font-size:1.25rem; font-weight:800; color:#0f172a; }
+      .matrix-label { color:var(--admin-muted); font-size:.66rem; }
+      .matrix-meta { display:grid; grid-template-columns:1fr 1fr; gap:.15rem .5rem; margin-top:.3rem; color:#475569; font-size:.66rem; }
+      .filter-grid { display:grid; grid-template-columns:1.05fr .9fr 1.2fr .9fr 1fr 1fr auto; gap:.55rem; align-items:end; }
+      .filter-field { display:grid; gap:.22rem; min-width:0; }.filter-field label { color:#475569; font-size:.68rem; font-weight:700; }
+      .filter-field .text-input { min-height:35px; padding:.38rem .5rem; font-size:.76rem; }
+      .advanced-filters { margin-top:.65rem; border-top:1px solid var(--admin-border); padding-top:.6rem; }
+      .advanced-filters summary,.technical-details summary,.historical-details summary { cursor:pointer; color:#334155; font-size:.78rem; font-weight:750; }
+      .advanced-grid { display:grid; grid-template-columns:1.2fr 1.25fr repeat(3,auto); gap:.65rem; align-items:end; margin-top:.6rem; }
+      .check-field { display:flex; align-items:center; gap:.35rem; min-height:35px; font-size:.72rem; color:#334155; }
+      .participants-empty { padding:1rem; text-align:center; color:var(--admin-muted); }
+      .quality-list { display:flex; flex-wrap:wrap; gap:.25rem; }
+      .integrity-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:.55rem; }
+      .integrity-item { border:1px solid var(--admin-border); border-radius:7px; padding:.65rem; }
+      .integrity-name { min-height:2.1em; font-size:.73rem; font-weight:750; }.integrity-detail { margin-top:.35rem; color:var(--admin-muted); font-size:.65rem; }
+      .integrity-status { display:inline-block; margin-top:.4rem; border:1px solid; border-radius:999px; padding:.15rem .4rem; font-size:.64rem; font-weight:800; }
+      .technical-grid { display:grid; grid-template-columns:1fr 1fr; gap:.65rem; margin-top:.65rem; }
+      .code-output { max-height:330px; overflow:auto; margin:.35rem 0 0; padding:.65rem; font-size:.68rem; white-space:pre-wrap; background:#f8fafc; color:#1e293b; border:1px solid var(--admin-border); border-radius:6px; }
+      .auth-gate { max-width:560px; margin:5rem auto; text-align:center; }.auth-gate h1 { font-size:1.2rem; }
+      .auth-error { color:#b91c1c; }.hidden { display:none !important; }
+      @media(max-width:1000px){.summary-grid{grid-template-columns:repeat(3,1fr)}.exports-grid{grid-template-columns:1fr}.filter-grid{grid-template-columns:repeat(3,1fr)}.advanced-grid{grid-template-columns:1fr 1fr}.integrity-grid{grid-template-columns:repeat(2,1fr)}}
+      @media(max-width:640px){.admin-shell{width:min(100% - 1rem,1440px)}.dashboard-header{align-items:flex-start;flex-direction:column}.summary-grid,.filter-grid,.advanced-grid,.integrity-grid,.technical-grid{grid-template-columns:1fr 1fr}.filter-grid .toolbar-actions{grid-column:1/-1}}
     </style>
   </head>
   <body>
-    <main class="admin-page">
-      <section class="panel">
-        <div class="section-kicker">Admin</div>
-        <h1>管理端导出</h1>
-        <p id="auth-status" class="muted">Enter ADMIN_TOKEN to load study data.</p>
-        <label class="field-label" for="admin-token">管理员 token</label>
-        <input id="admin-token" class="text-input" type="password" autocomplete="off">
-        <label class="consent-check"><input id="include-test" type="checkbox"><span>包含测试 / 调试数据</span></label>
-        <label class="field-label" for="filter-condition">condition</label>
-        <select id="filter-condition" class="text-input">
-          <option value="all">全部</option>
-          <option value="hidden">Hidden</option>
-          <option value="honest">Honest / Fixed 0</option>
-          <option value="dishonest_fixed_1">Fixed 1</option>
-          <option value="dishonest_fixed_2">Fixed 2</option>
-          <option value="dishonest_fixed_3">Fixed 3</option>
-          <option value="dishonest">Dishonest Static / Fixed 4</option>
-          <option value="dishonest_escalating">Dishonest Escalating</option>
-        </select>
-        <label class="field-label" for="start-date">开始日期</label>
-        <input id="start-date" class="text-input" type="date">
-        <label class="field-label" for="end-date">结束日期</label>
-        <input id="end-date" class="text-input" type="date">
-        <label class="field-label" for="record-kind">Prolific record type</label>
-        <select id="record-kind" class="text-input">
-          <option value="all">Formal and Preview</option>
-          <option value="formal">Formal only</option>
-          <option value="preview">Preview only</option>
-        </select>
-        <label class="field-label" for="filter-peer-identity">peer_identity / protocol</label>
-        <select id="filter-peer-identity" class="text-input">
-          <option value="all">All</option><option value="human">Human</option><option value="ai">AI</option><option value="human_legacy">Legacy / History</option>
-        </select>
-        <label class="field-label" for="filter-protocol">protocol_version</label>
-        <select id="filter-protocol" class="text-input"><option value="all">All</option><option value="study1-human-ai-v1">study1-human-ai-v1</option><option value="peer-reporting-v2">Legacy peer-reporting-v2</option></select>
-        <label class="field-label" for="filter-scope">scope</label>
-        <select id="filter-scope" class="text-input"><option value="all">All</option><option value="formal">Formal</option><option value="preview">Preview</option><option value="qa">QA</option><option value="team_review">Team Review</option><option value="legacy">Legacy</option></select>
-        <label class="field-label" for="record-status">Prolific status</label>
-        <select id="record-status" class="text-input">
-          <option value="all">All statuses</option>
-          <option value="incomplete">Incomplete</option>
-          <option value="completed">Completed</option>
-        </select>
-        <label class="consent-check"><input id="resumed-only" type="checkbox"><span>Resumed records only</span></label>
-        <label class="consent-check"><input id="aliases-only" type="checkbox"><span>Session alias count greater than 1</span></label>
-        <label class="field-label" for="record-conflict">Quality / recovery flags</label>
-        <select id="record-conflict" class="text-input">
-          <option value="all">All records</option>
-           <option value="recovery_conflict">Recovery conflict</option>
-           <option value="identity_conflict">Identity conflict</option>
-          <option value="missing_required_fields">Missing Prolific fields</option>
-          <option value="incomplete_rounds">Incomplete rounds</option>
-          <option value="comprehension_failed">Comprehension failed</option>
-          <option value="invalid_decision_time">Invalid decision time</option>
-          <option value="excessive_page_hidden_time">Excessive hidden time</option>
-          <option value="incomplete_survey_data">Incomplete survey data</option>
-          <option value="completion_not_confirmed">Completion not confirmed</option>
-        </select>
-        <div class="action-row">
-          <button id="load-summary" class="primary-button">查看汇总</button>
-        </div>
-        <p class="muted">Create researcher QA sessions through <a href="/qa-preview">/qa-preview</a>.</p>
+    <main class="admin-shell">
+      <section id="auth-gate" class="admin-card auth-gate hidden">
+        <div class="eyebrow">Private researcher access</div>
+        <h1>Admin authentication required</h1>
+        <p id="auth-message" class="section-note">Open the private <strong>00_OPEN_ME.html</strong> handoff file to authenticate this browser.</p>
       </section>
-      <section id="admin-results" class="panel" hidden>
-        <h2>汇总</h2>
-        <pre id="summary-output" class="code-output">尚未加载。</pre>
-        <h2>Active Human-AI 2×6 Matrix</h2>
-        <div id="matrix-output" class="admin-table-wrap">Not loaded.</div>
-        <h2>Participants by selected scope</h2>
-        <div id="all-records-output" class="admin-table-wrap">Not loaded.</div>
-        <pre id="record-detail-output" class="code-output">Select Inspect to view a current record.</pre>
-        <h2 id="formal-heading">Formal Records</h2>
-        <pre id="formal-output" class="code-output">Not loaded.</pre>
-        <h2 id="preview-heading">Preview Records</h2>
-        <pre id="preview-output" class="code-output">Not loaded.</pre>
-        <div id="export-links" class="export-grid"></div>
-      </section>
-      <section id="admin-legacy" class="panel" hidden>
-        <h2>Legacy / Historical Study1</h2>
-        <p class="muted">Read-only access to the physically separate historical Study1 data source.</p>
-        <pre id="legacy-summary-output" class="code-output">Not loaded.</pre>
-        <div id="legacy-records-output" class="admin-table-wrap">Not loaded.</div>
-        <pre id="legacy-detail-output" class="code-output">Select Inspect to view a historical record.</pre>
-      </section>
+
+      <div id="dashboard" class="hidden">
+        <header class="admin-card dashboard-header">
+          <div>
+            <div class="eyebrow">Researcher dashboard</div>
+            <h1>Study1 Human–AI Admin</h1>
+          </div>
+          <div class="header-meta">
+            <span class="badge blue">REVIEW DEPLOYMENT</span>
+            <span class="badge">study1-human-ai-v1</span>
+            <span id="health-badge" class="badge">Health checking</span>
+            <button id="refresh-data" class="primary-button compact-button">Refresh data</button>
+          </div>
+        </header>
+
+        <section class="summary-grid" aria-label="Study record counts">
+          <article class="summary-card"><div class="summary-label">Formal</div><div id="count-formal" class="summary-count">—</div></article>
+          <article class="summary-card"><div class="summary-label">Preview</div><div id="count-preview" class="summary-count">—</div></article>
+          <article class="summary-card"><div class="summary-label">QA</div><div id="count-qa" class="summary-count">—</div></article>
+          <article class="summary-card"><div class="summary-label">Team Review</div><div id="count-team-review" class="summary-count">—</div></article>
+          <article class="summary-card"><div class="summary-label">Historical</div><div id="count-historical" class="summary-count">—</div></article>
+        </section>
+
+        <section class="admin-card">
+          <div class="section-head"><h2>Data Exports</h2><span class="section-note">Downloads use the authenticated researcher session.</span></div>
+          <div id="export-groups" class="exports-grid"></div>
+        </section>
+
+        <section class="admin-card">
+          <div class="section-head"><h2>Active Human–AI 2×6 Matrix</h2><span class="section-note">Completed is the primary metric.</span></div>
+          <div id="matrix-output" class="matrix-wrap"></div>
+        </section>
+
+        <section class="admin-card">
+          <div class="section-head"><h2>Participants</h2><span id="participant-count" class="section-note"></span></div>
+          <div class="filter-grid">
+            <div class="filter-field"><label for="filter-scope">Scope</label><select id="filter-scope" class="text-input"><option value="all">All</option><option value="formal">Formal</option><option value="preview">Preview</option><option value="qa">QA</option><option value="team_review">Team Review</option><option value="legacy">Legacy</option></select></div>
+            <div class="filter-field"><label for="filter-peer-identity">Identity</label><select id="filter-peer-identity" class="text-input"><option value="all">All</option><option value="human">Human</option><option value="ai">AI</option><option value="human_legacy">Legacy</option></select></div>
+            <div class="filter-field"><label for="filter-condition">Condition</label><select id="filter-condition" class="text-input"><option value="all">All</option><option value="hidden">Hidden</option><option value="honest">0 Dishonest</option><option value="dishonest_fixed_1">1 Dishonest</option><option value="dishonest_fixed_2">2 Dishonest</option><option value="dishonest_fixed_3">3 Dishonest</option><option value="dishonest">4 Dishonest</option><option value="dishonest_escalating">Legacy Escalating</option></select></div>
+            <div class="filter-field"><label for="record-status">Status</label><select id="record-status" class="text-input"><option value="all">All</option><option value="completed">Completed</option><option value="incomplete">Incomplete</option></select></div>
+            <div class="filter-field"><label for="start-date">Start Date</label><input id="start-date" class="text-input" type="date"></div>
+            <div class="filter-field"><label for="end-date">End Date</label><input id="end-date" class="text-input" type="date"></div>
+            <div class="toolbar-actions"><button id="apply-filters" class="primary-button compact-button">Apply</button></div>
+          </div>
+          <details class="advanced-filters">
+            <summary>Advanced filters</summary>
+            <div class="advanced-grid">
+              <div class="filter-field"><label for="filter-protocol">Protocol</label><select id="filter-protocol" class="text-input"><option value="all">All</option><option value="study1-human-ai-v1">study1-human-ai-v1</option><option value="peer-reporting-v2">Legacy peer-reporting-v2</option></select></div>
+              <div class="filter-field"><label for="record-conflict">Quality / recovery</label><select id="record-conflict" class="text-input"><option value="all">All records</option><option value="recovery_conflict">Recovery conflict</option><option value="identity_conflict">Identity conflict</option><option value="missing_required_fields">Missing Prolific fields</option><option value="incomplete_rounds">Incomplete rounds</option><option value="comprehension_failed">Comprehension failed</option><option value="invalid_decision_time">Invalid decision time</option><option value="excessive_page_hidden_time">Excessive hidden time</option><option value="incomplete_survey_data">Incomplete survey data</option><option value="completion_not_confirmed">Completion not confirmed</option></select></div>
+              <label class="check-field"><input id="resumed-only" type="checkbox">Resumed only</label>
+              <label class="check-field"><input id="aliases-only" type="checkbox">Session alias &gt;1</label>
+              <label class="check-field"><input id="include-test" type="checkbox">Include test/debug</label>
+            </div>
+          </details>
+          <div id="all-records-output" class="table-wrap" style="margin-top:.7rem"></div>
+        </section>
+
+        <section class="admin-card">
+          <div class="section-head"><h2>Data Integrity</h2><span class="section-note">Computed from current server data and store configuration.</span></div>
+          <div id="integrity-output" class="integrity-grid"></div>
+        </section>
+
+        <details class="admin-card historical-details">
+          <summary>Legacy / Historical Study1 — read-only</summary>
+          <div id="legacy-records-output" class="table-wrap" style="margin-top:.7rem"></div>
+        </details>
+
+        <details id="technical-details" class="admin-card technical-details">
+          <summary>Technical details</summary>
+          <div class="technical-grid">
+            <div><strong>Selected record detail</strong><pre id="record-detail-output" class="code-output">Select Inspect to load technical details.</pre></div>
+            <div><strong>Historical record detail</strong><pre id="legacy-detail-output" class="code-output">Select Inspect to load historical details.</pre></div>
+            <div><strong>Summary response</strong><pre id="summary-output" class="code-output">Not loaded.</pre></div>
+            <div><strong>Formal records</strong><pre id="formal-output" class="code-output">Not loaded.</pre></div>
+            <div><strong>Preview records</strong><pre id="preview-output" class="code-output">Not loaded.</pre></div>
+            <div><strong>Historical summary</strong><pre id="legacy-summary-output" class="code-output">Not loaded.</pre></div>
+          </div>
+        </details>
+      </div>
     </main>
+
     <script>
-      const tokenInput = document.querySelector("#admin-token");
-      const summaryOutput = document.querySelector("#summary-output");
-      const formalOutput = document.querySelector("#formal-output");
-      const previewOutput = document.querySelector("#preview-output");
-      const links = document.querySelector("#export-links");
-      const matrixOutput = document.querySelector("#matrix-output");
-      const allRecordsOutput = document.querySelector("#all-records-output");
-      const recordDetailOutput = document.querySelector("#record-detail-output");
-      const legacySummaryOutput = document.querySelector("#legacy-summary-output");
-      const legacyRecordsOutput = document.querySelector("#legacy-records-output");
-      const legacyDetailOutput = document.querySelector("#legacy-detail-output");
-      const authStatus = document.querySelector("#auth-status");
-      const resultsPanel = document.querySelector("#admin-results");
-      const legacyPanel = document.querySelector("#admin-legacy");
-      let prolificSummary = null;
+      const $ = (selector) => document.querySelector(selector);
+      const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[character]));
+      const conditionLabels = { hidden:"Hidden", honest:"0 Dishonest", dishonest_fixed_1:"1 Dishonest", dishonest_fixed_2:"2 Dishonest", dishonest_fixed_3:"3 Dishonest", dishonest:"4 Dishonest", dishonest_escalating:"Legacy Escalating" };
       const exportGroups = [
-        ["CURRENT HUMAN–AI", [["Formal", "/api/admin/export/prolific-bundle.zip"], ["Preview", "/api/admin/export/prolific-preview-bundle.zip"], ["QA", "/api/admin/export/qa-bundle.zip"], ["Team Review", "/api/admin/export/team-review-bundle.zip"]]],
-        ["HISTORICAL", [["Historical Study1", "/api/admin/export/legacy-study1-bundle.zip"]]],
-        ["ADDITIONAL / RAW", [["JSON", "/api/admin/export/json"], ["participants.csv", "/api/admin/export/participants.csv"], ["study1_dice_rounds.csv", "/api/admin/export/study1_dice_rounds.csv"]]]
+        ["Current Study", [
+          ["Formal data", "Recruitment-ready formal bundle", "/api/admin/export/prolific-bundle.zip", "formal"],
+          ["Preview data", "Isolated Prolific preview bundle", "/api/admin/export/prolific-preview-bundle.zip", "preview"],
+          ["QA data", "Researcher QA sessions only", "/api/admin/export/qa-bundle.zip", "qa"],
+          ["Team Review data", "Internal review sessions only", "/api/admin/export/team-review-bundle.zip", "team_review"]
+        ]],
+        ["Historical", [["Historical Study1", "Read-only legacy Study1 bundle", "/api/admin/export/legacy-study1-bundle.zip", "legacy"]]],
+        ["Raw / Analysis", [
+          ["participants.csv", "Participant-level analysis table", "/api/admin/export/participants.csv"],
+          ["study1_dice_rounds.csv", "Round-level analysis table", "/api/admin/export/study1_dice_rounds.csv"],
+          ["JSON raw data", "Filtered current raw session export", "/api/admin/export/json"]
+        ]]
       ];
-      const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[character]));
-      function renderMatrix(rows) {
-        const cells = new Map((rows || []).map((row) => [`${row.peer_identity}:${row.condition}`, row]));
-        const conditions = ["hidden", "honest", "dishonest_fixed_1", "dishonest_fixed_2", "dishonest_fixed_3", "dishonest"];
-        const labels = { hidden: "Hidden", honest: "0 Dishonest", dishonest_fixed_1: "1 Dishonest", dishonest_fixed_2: "2 Dishonest", dishonest_fixed_3: "3 Dishonest", dishonest: "4 Dishonest" };
-        const header = conditions.map((condition) => `<th>${escapeHtml(labels[condition])}</th>`).join("");
-        const body = ["human", "ai"].map((identity) => `<tr><th>${identity === "human" ? "Human" : "AI"}</th>${conditions.map((condition) => {
-          const row = cells.get(`${identity}:${condition}`) || {};
-          return `<td>Arrived: ${row.arrived || 0}<br>Started: ${row.started || 0}<br>Completed: ${row.completed || 0}<br>Data Complete: ${row.data_complete || 0}<br>Quality Flags: ${row.quality_flagged || 0}</td>`;
-        }).join("")}</tr>`).join("");
-        return `<table class="admin-table"><thead><tr><th>Identity</th>${header}</tr></thead><tbody>${body}</tbody></table>`;
+
+      async function api(path, options = {}) {
+        const response = await fetch(path, { credentials:"same-origin", ...options });
+        if (response.status === 401 || response.status === 403) throw Object.assign(new Error("AUTH"), { auth:true });
+        if (!response.ok) throw new Error(`Request failed (HTTP ${response.status})`);
+        return response;
       }
-      function renderRecords(rows, legacy = false) {
-        const body = (rows || []).map((record) => `<tr>
-          <td>${escapeHtml(record.prolific_pid || record.session_id || record.record_id)}</td><td>${escapeHtml(record.scope)}</td>
-          <td>${escapeHtml(record.peer_identity)}</td><td>${escapeHtml(record.condition)}</td><td>${escapeHtml(record.protocol_version)}</td>
-          <td>${escapeHtml(record.status)}</td><td class="numeric">${record.rounds_completed || 0}</td><td>${escapeHtml(record.started_at)}</td>
-          <td>${escapeHtml(record.completed_at)}</td><td>${record.data_complete ? "Yes" : "No"}</td><td>${escapeHtml((record.quality_flags || []).join(", "))}</td>
-          <td><button class="secondary-button" data-inspect="${escapeHtml(record.record_id)}" data-legacy="${legacy ? "true" : "false"}">Inspect</button></td>
-        </tr>`).join("");
-        return `<table class="admin-table"><thead><tr><th>Masked ID</th><th>Scope</th><th>Identity</th><th>Condition</th><th>Protocol</th><th>Status</th><th>Rounds</th><th>Started</th><th>Completed</th><th>Complete</th><th>Quality</th><th>Detail</th></tr></thead><tbody>${body || '<tr><td colspan="12">No records</td></tr>'}</tbody></table>`;
-      }
-      async function loadSummary() {
-        const token = tokenInput.value.trim();
-        authStatus.classList.remove("auth-error");
-        if (!token) return showAuthenticationError("Enter ADMIN_TOKEN to load study data.");
-        const headers = { "x-admin-token": token };
-        let responses;
-        try {
-          responses = await Promise.all(["summary", "prolific-summary", "records", "legacy/summary", "legacy/records"]
-            .map((path) => fetch(`/api/admin/${path}?${queryString()}`, { headers })));
-        } catch {
-          return showAuthenticationError("Unable to load admin data. Check the connection and try again.");
-        }
-        if (responses.some((response) => response.status === 401 || response.status === 403)) {
-          return showAuthenticationError("Authentication failed. Check ADMIN_TOKEN and try again.");
-        }
-        if (responses.some((response) => !response.ok)) return showAuthenticationError("Admin data could not be loaded.");
-        const [data, loadedProlificSummary, recordsData, legacySummary, legacyRecords] = await Promise.all(responses.map((response) => response.json()));
-        prolificSummary = loadedProlificSummary;
-        authStatus.textContent = "Authenticated study data loaded.";
-        resultsPanel.hidden = false;
-        legacyPanel.hidden = false;
-        summaryOutput.textContent = JSON.stringify({ current: data, preview_mode_enabled: prolificSummary.preview_mode_enabled, formal: prolificSummary.formal, preview: prolificSummary.preview }, null, 2);
-        matrixOutput.innerHTML = renderMatrix(prolificSummary.active_matrix || []);
-        allRecordsOutput.innerHTML = renderRecords(recordsData.participants || []);
-        legacySummaryOutput.textContent = JSON.stringify(legacySummary, null, 2);
-        legacyRecordsOutput.innerHTML = renderRecords(legacyRecords.participants || [], true);
-        renderProlificRecords();
-        links.innerHTML = exportGroups.map(([title, items]) => `<section class="export-group"><h3>${title}</h3><div class="export-group-actions">${items.map(([label, href]) => `<button class="secondary-button" data-export="${href}">${label}</button>`).join("")}</div></section>`).join("");
-      }
-      function showAuthenticationError(message) {
-        prolificSummary = null;
-        resultsPanel.hidden = true;
-        legacyPanel.hidden = true;
-        authStatus.textContent = message;
-        authStatus.classList.add("auth-error");
-      }
-      document.querySelector("#load-summary").addEventListener("click", loadSummary);
-      ["record-kind", "record-status", "record-conflict", "resumed-only", "aliases-only"].forEach((id) => {
-        document.querySelector(`#${id}`).addEventListener("change", () => {
-          if (prolificSummary) loadSummary();
+
+      function queryString(overrides = {}) {
+        const params = new URLSearchParams({
+          scope:$("#filter-scope").value,
+          peer_identity:$("#filter-peer-identity").value,
+          condition:$("#filter-condition").value,
+          status:$("#record-status").value,
+          protocol_version:$("#filter-protocol").value,
+          recovery_flag:$("#record-conflict").value,
         });
-      });
-      function filterRecords(records) {
-        const status = document.querySelector("#record-status").value;
-        const conflict = document.querySelector("#record-conflict").value;
-        return records.filter((record) => {
-          if (status === "completed" && record.status !== "completed") return false;
-          if (status === "incomplete" && record.status === "completed") return false;
-          if (document.querySelector("#resumed-only").checked && Number(record.resume_count || 0) < 1) return false;
-          if (document.querySelector("#aliases-only").checked && Number(record.session_alias_count || 0) <= 1) return false;
-          if (conflict !== "all" && !(record.quality_flags || []).includes(conflict)) return false;
-          return true;
-        });
-      }
-      function renderProlificRecords() {
-        if (!prolificSummary) return;
-        const kind = document.querySelector("#record-kind").value;
-        const formal = filterRecords(prolificSummary.participants || []);
-        const preview = filterRecords(prolificSummary.preview_participants || []);
-        document.querySelector("#formal-heading").hidden = kind === "preview";
-        formalOutput.hidden = kind === "preview";
-        formalOutput.textContent = JSON.stringify(formal, null, 2);
-        document.querySelector("#preview-heading").hidden = kind === "formal";
-        previewOutput.hidden = kind === "formal";
-        previewOutput.textContent = JSON.stringify(preview, null, 2);
-      }
-      links.addEventListener("click", async (event) => {
-        const button = event.target.closest("[data-export]");
-        if (!button) return;
-        const token = tokenInput.value.trim();
-        const href = button.dataset.export;
-        const response = await fetch(`${href}?${queryString()}`, {
-          headers: { "x-admin-token": token }
-        });
-        if (!response.ok) {
-          authStatus.textContent = response.status === 401 || response.status === 403 ? "Authentication failed. Check ADMIN_TOKEN and try again." : "Export failed. No file was downloaded.";
-          authStatus.classList.add("auth-error");
-          return;
-        }
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = href.split("/").pop();
-        a.click();
-        URL.revokeObjectURL(url);
-      });
-      document.addEventListener("click", async (event) => {
-        const button = event.target.closest("[data-inspect]");
-        if (!button) return;
-        const legacy = button.dataset.legacy === "true";
-        const endpoint = legacy ? "/api/admin/legacy/session/" : "/api/admin/session/";
-        const response = await fetch(`${endpoint}${encodeURIComponent(button.dataset.inspect)}`, { headers: { "x-admin-token": tokenInput.value.trim() } });
-        const output = legacy ? legacyDetailOutput : recordDetailOutput;
-        if (!response.ok) {
-          output.textContent = response.status === 401 || response.status === 403 ? "Authentication failed. Check ADMIN_TOKEN and try again." : `Unable to inspect record (HTTP ${response.status}).`;
-          return;
-        }
-        output.textContent = JSON.stringify(await response.json(), null, 2);
-      });
-      function queryString() {
-        const params = new URLSearchParams();
-        params.set("condition", document.querySelector("#filter-condition").value);
-        params.set("peer_identity", document.querySelector("#filter-peer-identity").value);
-        params.set("protocol_version", document.querySelector("#filter-protocol").value);
-        params.set("scope", document.querySelector("#filter-scope").value);
-        if (document.querySelector("#include-test").checked) params.set("include_test", "true");
-        if (document.querySelector("#start-date").value) params.set("start_date", document.querySelector("#start-date").value);
-        if (document.querySelector("#end-date").value) params.set("end_date", document.querySelector("#end-date").value);
-        params.set("record_kind", document.querySelector("#record-kind").value);
-        params.set("status", document.querySelector("#record-status").value);
-        if (document.querySelector("#resumed-only").checked) params.set("resumed_only", "true");
-        if (document.querySelector("#aliases-only").checked) params.set("aliases_only", "true");
-        params.set("recovery_flag", document.querySelector("#record-conflict").value);
+        if ($("#start-date").value) params.set("start_date", $("#start-date").value);
+        if ($("#end-date").value) params.set("end_date", $("#end-date").value);
+        if ($("#resumed-only").checked) params.set("resumed_only", "true");
+        if ($("#aliases-only").checked) params.set("aliases_only", "true");
+        if ($("#include-test").checked) params.set("include_test", "true");
+        for (const [key, value] of Object.entries(overrides)) value == null ? params.delete(key) : params.set(key, value);
         return params.toString();
       }
+
+      function badge(value, kind = "") { return `<span class="badge ${kind}">${escapeHtml(value)}</span>`; }
+      function scopeBadge(scope) { const labels={formal:"Formal",preview:"Preview",qa:"QA",team_review:"Review",legacy:"Historical"}; return badge(labels[scope] || scope, scope === "formal" ? "blue" : ""); }
+      function identityBadge(identity) { return identity === "ai" ? badge("🤖 AI", "ai") : identity === "human" ? badge("👤 Human", "human") : badge(identity || "Legacy"); }
+      function statusBadge(status) { const complete=status === "completed"; return badge(complete ? "Completed" : "Incomplete", complete ? "pass" : "warning"); }
+
+      function renderMatrix(rows) {
+        const conditions=["hidden","honest","dishonest_fixed_1","dishonest_fixed_2","dishonest_fixed_3","dishonest"];
+        const cells=new Map((rows||[]).map((row)=>[`${row.peer_identity}:${row.condition}`,row]));
+        const body=["human","ai"].map((identity)=>`<tr><th>${identity === "human" ? "👤 Human" : "🤖 AI"}</th>${conditions.map((condition)=>{
+          const row=cells.get(`${identity}:${condition}`)||{};
+          return `<td><div class="matrix-label">Completed</div><div class="matrix-completed">${row.completed||0}</div><div class="matrix-meta"><span>Started</span><strong>${row.started||0}</strong><span>Data Complete</span><strong>${row.data_complete||0}</strong><span>Quality Flags</span><strong>${row.quality_flagged||0}</strong></div></td>`;
+        }).join("")}</tr>`).join("");
+        return `<table class="admin-table matrix-table"><thead><tr><th>Identity</th>${conditions.map((condition)=>`<th>${conditionLabels[condition]}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
+      }
+
+      function renderRecords(rows, legacy = false) {
+        if (!(rows||[]).length) return `<div class="participants-empty">No records match the selected filters.</div>`;
+        const body=rows.map((record)=>{
+          const flags=record.quality_flags||[];
+          return `<tr><td>${escapeHtml(record.prolific_pid||record.session_id||record.record_id)}</td><td>${scopeBadge(record.scope)}</td><td>${identityBadge(record.peer_identity)}</td><td>${escapeHtml(conditionLabels[record.condition]||record.condition)}</td><td>${statusBadge(record.status)}</td><td>${record.rounds_completed||0}</td><td>${escapeHtml(record.completed_at||"—")}</td><td><div class="quality-list">${flags.length?flags.map((flag)=>badge(flag,"warning")).join(""):badge("Clean","pass")}</div></td><td><button class="secondary-button compact-button" data-inspect="${escapeHtml(record.record_id)}" data-legacy="${legacy}">Inspect</button></td></tr>`;
+        }).join("");
+        return `<table class="admin-table"><thead><tr><th>Masked ID</th><th>Scope</th><th>Identity</th><th>Condition</th><th>Status</th><th>Rounds</th><th>Completed</th><th>Quality</th><th>Inspect</th></tr></thead><tbody>${body}</tbody></table>`;
+      }
+
+      function renderExports() {
+        $("#export-groups").innerHTML=exportGroups.map(([title,items])=>`<section class="export-group"><h3>${title}</h3>${items.map(([label,description,path,scope])=>`<div class="export-item"><div class="export-copy"><strong>${label}</strong><span>${description}</span></div><button class="secondary-button compact-button" data-export="${path}" data-export-scope="${scope||""}">Download</button></div>`).join("")}</section>`).join("");
+      }
+
+      function renderIntegrity(checks) {
+        $("#integrity-output").innerHTML=(checks||[]).map((check)=>`<article class="integrity-item"><div class="integrity-name">${escapeHtml(check.label)}</div><span class="integrity-status ${String(check.status).toLowerCase()}">${escapeHtml(check.status)}</span><div class="integrity-detail">${escapeHtml(check.detail)}</div></article>`).join("");
+      }
+
+      async function loadDashboard() {
+        $("#refresh-data").disabled=true;
+        try {
+          const selectedQuery=queryString();
+          const countScopes=["formal","preview","qa","team_review"];
+          const [summaryResponse, matrixResponse, recordsResponse, legacySummaryResponse, legacyRecordsResponse, integrityResponse, healthResponse, ...countResponses]=await Promise.all([
+            api(`/api/admin/summary?${selectedQuery}`), api("/api/admin/prolific-summary?include_test=true"), api(`/api/admin/records?${selectedQuery}`),
+            api(`/api/admin/legacy/summary?${queryString({scope:"all",include_test:"true"})}`), api(`/api/admin/legacy/records?${queryString({scope:"all"})}`), api("/api/admin/integrity"), fetch("/health"),
+            ...countScopes.map((scope)=>api(`/api/admin/records?scope=${scope}&include_test=true`))
+          ]);
+          const [summary,matrix,records,legacySummary,legacyRecords,integrity,...counts]=await Promise.all([
+            summaryResponse.json(),matrixResponse.json(),recordsResponse.json(),legacySummaryResponse.json(),legacyRecordsResponse.json(),integrityResponse.json(),...countResponses.map((response)=>response.json())
+          ]);
+          $("#auth-gate").classList.add("hidden"); $("#dashboard").classList.remove("hidden");
+          ["formal","preview","qa","team-review"].forEach((id,index)=>$("#count-"+id).textContent=(counts[index].participants||[]).length);
+          $("#count-historical").textContent=legacySummary.record_count;
+          $("#matrix-output").innerHTML=renderMatrix(matrix.active_matrix||[]);
+          const showingLegacy=$("#filter-scope").value === "legacy";
+          const displayedRecords=showingLegacy?(legacyRecords.participants||[]):(records.participants||[]);
+          $("#all-records-output").innerHTML=renderRecords(displayedRecords,showingLegacy);
+          $("#participant-count").textContent=`${displayedRecords.length} matching record(s)`;
+          $("#legacy-records-output").innerHTML=renderRecords(legacyRecords.participants||[],true);
+          renderIntegrity(integrity.checks);
+          $("#summary-output").textContent=JSON.stringify({summary,integrity},null,2);
+          $("#formal-output").textContent=JSON.stringify(matrix.participants||[],null,2);
+          $("#preview-output").textContent=JSON.stringify(matrix.preview_participants||[],null,2);
+          $("#legacy-summary-output").textContent=JSON.stringify(legacySummary,null,2);
+          const healthOk=healthResponse.ok; $("#health-badge").textContent=healthOk?"Health PASS":"Health warning"; $("#health-badge").className=`badge ${healthOk?"pass":"warning"}`;
+        } catch (error) {
+          if (error.auth) { $("#dashboard").classList.add("hidden"); $("#auth-gate").classList.remove("hidden"); }
+          else { $("#auth-message").textContent=error.message; $("#auth-message").classList.add("auth-error"); $("#auth-gate").classList.remove("hidden"); }
+        } finally { $("#refresh-data").disabled=false; }
+      }
+
+      async function downloadExport(button) {
+        button.disabled=true;
+        try {
+          const scope=button.dataset.exportScope||$("#filter-scope").value;
+          const response=await api(`${button.dataset.export}?${queryString({scope})}`);
+          const blob=await response.blob(); const url=URL.createObjectURL(blob); const link=document.createElement("a");
+          link.href=url; link.download=(response.headers.get("content-disposition")?.match(/filename="?([^";]+)"?/)||[])[1]||button.dataset.export.split("/").pop(); link.click(); URL.revokeObjectURL(url);
+        } catch(error) { alert(error.auth?"Admin authentication expired. Reopen the private access file.":`Export failed: ${error.message}`); }
+        finally { button.disabled=false; }
+      }
+
+      async function inspectRecord(button) {
+        const legacy=button.dataset.legacy === "true"; const output=legacy?$("#legacy-detail-output"):$("#record-detail-output");
+        try { output.textContent=JSON.stringify(await (await api(`${legacy?"/api/admin/legacy/session/":"/api/admin/session/"}${encodeURIComponent(button.dataset.inspect)}`)).json(),null,2); $("#technical-details").open=true; $("#technical-details").scrollIntoView({block:"start"}); }
+        catch(error) { output.textContent=`Inspect failed: ${error.message}`; }
+      }
+
+      renderExports();
+      $("#refresh-data").addEventListener("click",loadDashboard); $("#apply-filters").addEventListener("click",loadDashboard);
+      document.addEventListener("click",(event)=>{ const exportButton=event.target.closest("[data-export]"); if(exportButton) downloadExport(exportButton); const inspectButton=event.target.closest("[data-inspect]"); if(inspectButton) inspectRecord(inspectButton); });
+      loadDashboard();
     </script>
   </body>
 </html>

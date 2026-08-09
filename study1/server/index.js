@@ -50,6 +50,8 @@ const legacyStore = createReadOnlyLegacyStore(process.env.LEGACY_STUDY1_DATA_DIR
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "dev-admin-token";
+const ADMIN_COOKIE_NAME = "study1_researcher_admin";
+const ADMIN_COOKIE_MAX_AGE = 7 * 24 * 60 * 60;
 const DEBUG_LINKS = String(process.env.DEBUG_LINKS).toLowerCase() === "true";
 const ALLOW_QA_PREVIEW = String(process.env.ALLOW_QA_PREVIEW || "").toLowerCase() === "true";
 const ALLOW_TEAM_REVIEW = String(process.env.ALLOW_TEAM_REVIEW || "").toLowerCase() === "true";
@@ -1002,8 +1004,7 @@ function validateItems(items, responses) {
 }
 
 function requireAdmin(req, res, next) {
-  const token = req.get("x-admin-token");
-  if (!token || token !== ADMIN_TOKEN) return res.status(401).json({ error: "Admin token required" });
+  if (!hasAdminAuth(req)) return res.status(401).json({ error: "Admin authentication required" });
   next();
 }
 
@@ -1042,12 +1043,40 @@ function filterSessions(sessions, query = {}) {
   });
 }
 
+function cookieValues(req) {
+  return Object.fromEntries(String(req.get("cookie") || "").split(";").map((part) => {
+    const index = part.indexOf("=");
+    return index < 1 ? [] : [part.slice(0, index).trim(), part.slice(index + 1).trim()];
+  }).filter(([key, value]) => key && value));
+}
+
+function safeEqual(left, right) {
+  const a = Buffer.from(String(left || ""));
+  const b = Buffer.from(String(right || ""));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function adminAuthCookieValue() {
+  return crypto.createHmac("sha256", ADMIN_TOKEN).update("study1-researcher-admin-v1").digest("hex");
+}
+
+function hasAdminAuth(req) {
+  return safeEqual(req.get("x-admin-token"), ADMIN_TOKEN)
+    || safeEqual(cookieValues(req)[ADMIN_COOKIE_NAME], adminAuthCookieValue());
+}
+
+app.post("/api/admin/auth", (req, res) => {
+  if (!safeEqual(req.body?.token, ADMIN_TOKEN)) return res.status(401).json({ error: "Invalid administrator credentials." });
+  res.set("set-cookie", `${ADMIN_COOKIE_NAME}=${adminAuthCookieValue()}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${ADMIN_COOKIE_MAX_AGE}${IS_PRODUCTION ? "; Secure" : ""}`);
+  return res.redirect(303, "/admin.html");
+});
+
 function qaAuthCookieValue() {
   return crypto.createHmac("sha256", ADMIN_TOKEN).update("study1-qa-preview-v1").digest("hex");
 }
 
 function hasQaAuth(req) {
-  const cookies = Object.fromEntries(String(req.get("cookie") || "").split(";").map((part) => part.trim().split("=")).filter(([key, value]) => key && value));
+  const cookies = cookieValues(req);
   const supplied = cookies.study1_qa_auth || "";
   const expected = qaAuthCookieValue();
   return supplied.length === expected.length && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
@@ -1055,13 +1084,13 @@ function hasQaAuth(req) {
 
 function requireQaAdmin(req, res, next) {
   if (!ALLOW_QA_PREVIEW) return res.status(404).json({ error: "QA Preview is not enabled." });
-  if (req.get("x-admin-token") === ADMIN_TOKEN || hasQaAuth(req)) return next();
+  if (hasAdminAuth(req) || hasQaAuth(req)) return next();
   return res.status(401).json({ error: "Admin authentication required" });
 }
 
 app.get("/qa-preview", (req, res) => {
   if (!ALLOW_QA_PREVIEW) return res.status(404).send("QA Preview is not enabled.");
-  return res.sendFile(path.join(__dirname, "..", "public", hasQaAuth(req) ? "qa-preview.html" : "qa-login.html"));
+  return res.sendFile(path.join(__dirname, "..", "public", hasQaAuth(req) || hasAdminAuth(req) ? "qa-preview.html" : "qa-login.html"));
 });
 
 app.get("/review", (req, res) => {
@@ -1520,6 +1549,31 @@ app.get("/api/admin/session/:id", requireAdmin, asyncHandler(async (req, res) =>
 app.get("/api/admin/records", requireAdmin, asyncHandler(async (req, res) => {
   const sessions = filterSessions(await store.listSessions(), req.query);
   res.json({ participants: prolificExport.adminRows(sessions) });
+}));
+
+app.get("/api/admin/integrity", requireAdmin, asyncHandler(async (req, res) => {
+  const sessions = await store.listSessions();
+  const idsFor = (scope) => new Set(sessions
+    .filter((session) => prolificExport.sessionScope(session) === scope)
+    .map((session) => session.record_key || session.id));
+  const overlapCount = (left, right) => [...left].filter((id) => right.has(id)).length;
+  const formal = idsFor("formal");
+  const preview = idsFor("preview");
+  const qa = idsFor("qa");
+  const teamReview = idsFor("team_review");
+  const check = (id, label, overlap) => ({ id, label, status: overlap === 0 ? "PASS" : "WARNING", detail: overlap === 0 ? "No overlapping records." : `${overlap} overlapping record(s).` });
+  const directoriesSeparate = path.resolve(store.DATA_DIR) !== path.resolve(legacyStore.DATA_DIR);
+  res.json({
+    checks: [
+      check("formal_qa_overlap", "Formal / QA overlap", overlapCount(formal, qa)),
+      check("formal_team_review_overlap", "Formal / Team Review overlap", overlapCount(formal, teamReview)),
+      check("formal_preview_separation", "Formal / Preview separation", overlapCount(formal, preview)),
+      { id: "historical_read_only", label: "Historical source read-only", status: "PASS", detail: "Historical access uses the read-only legacy store." },
+      { id: "data_directories_separate", label: "Current DATA_DIR vs Historical DATA_DIR separate", status: directoriesSeparate ? "PASS" : "WARNING", detail: directoriesSeparate ? "Physical data directories are distinct." : "Current and historical data directories resolve to the same path." },
+    ],
+    current_data_dir: store.DATA_DIR,
+    historical_data_dir: legacyStore.DATA_DIR,
+  });
 }));
 
 app.get("/api/admin/legacy/summary", requireAdmin, asyncHandler(async (req, res) => {
