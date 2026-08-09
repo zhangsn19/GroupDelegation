@@ -1006,7 +1006,8 @@ function asyncHandler(fn) {
 
 function filterSessions(sessions, query = {}) {
   const scope = query.scope || "all";
-  const explicitSyntheticScope = scope === "qa" || scope === "team_review";
+  const dataset = query.dataset || "all";
+  const explicitSyntheticScope = scope === "qa" || scope === "team_review" || dataset === "internal";
   const includeTest = explicitSyntheticScope || String(query.include_test || query.includeTest || "").toLowerCase() === "true";
   const condition = query.condition || "all";
   const peerIdentity = query.peer_identity || "all";
@@ -1018,11 +1019,14 @@ function filterSessions(sessions, query = {}) {
   const start = query.start_date ? new Date(`${query.start_date}T00:00:00.000Z`) : null;
   const end = query.end_date ? new Date(`${query.end_date}T23:59:59.999Z`) : null;
   return sessions.filter((session) => {
+    const sessionScope = prolificExport.sessionScope(session);
     if (!includeTest && session.is_test_session) return false;
+    if (dataset === "recruitment" && !["formal", "preview"].includes(sessionScope)) return false;
+    if (dataset === "internal" && !["qa", "team_review"].includes(sessionScope)) return false;
     if (condition !== "all" && condition && session.condition !== condition) return false;
     if (peerIdentity !== "all" && peerIdentity && (session.peer_identity || "human_legacy") !== peerIdentity) return false;
     if (protocolVersion !== "all" && protocolVersion && (session.protocol_version || "legacy") !== protocolVersion) return false;
-    if (scope !== "all" && scope && prolificExport.sessionScope(session) !== scope) return false;
+    if (scope !== "all" && scope && sessionScope !== scope) return false;
     if (status === "completed" && session.status !== "completed") return false;
     if (status === "incomplete" && session.status === "completed") return false;
     if (resumedOnly && Number(session.resume_count || 0) < 1) return false;
@@ -1488,6 +1492,37 @@ app.get("/api/admin/records", asyncHandler(async (req, res) => {
   res.json({ participants: prolificExport.adminRows(sessions) });
 }));
 
+app.get("/api/admin/datasets", asyncHandler(async (req, res) => {
+  const sessions = await store.listSessions();
+  const historical = await legacyStore.listSessions();
+  const byScope = (scope) => sessions.filter((session) => prolificExport.sessionScope(session) === scope);
+  const formal = byScope("formal");
+  const preview = byScope("preview");
+  const qa = byScope("qa");
+  const teamReview = byScope("team_review");
+  const internal = [...qa, ...teamReview];
+  res.json({
+    recruitment: {
+      formal: formal.length,
+      preview: preview.length,
+      formal_completed: formal.filter((session) => session.status === "completed").length,
+      formal_incomplete: formal.filter((session) => session.status !== "completed").length,
+      formal_matrix: prolificAdminSummary(formal).active_matrix,
+      preview_matrix: prolificAdminSummary(preview).active_matrix,
+    },
+    internal: {
+      qa: qa.length,
+      team_review: teamReview.length,
+      total: internal.length,
+      all_matrix: prolificAdminSummary(internal).active_matrix,
+      qa_matrix: prolificAdminSummary(qa).active_matrix,
+      team_review_matrix: prolificAdminSummary(teamReview).active_matrix,
+    },
+    historical: { count: historical.length, read_only: true, data_dir: legacyStore.DATA_DIR },
+    storage: { current_data_dir: store.DATA_DIR, historical_data_dir: legacyStore.DATA_DIR },
+  });
+}));
+
 app.get("/api/admin/integrity", asyncHandler(async (req, res) => {
   const sessions = await store.listSessions();
   const sessionsFor = (scope) => sessions.filter((session) => prolificExport.sessionScope(session) === scope);
@@ -1571,7 +1606,7 @@ app.get("/api/admin/export/prolific-bundle.zip", asyncHandler(async (req, res) =
   const sessions = (await store.listSessions()).filter((session) => prolificExport.sessionScope(session) === "formal");
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
-  res.set("content-disposition", `attachment; filename="study1-prolific-export-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.set("content-disposition", `attachment; filename="study1-human-ai-formal-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
@@ -1579,7 +1614,7 @@ app.get("/api/admin/export/prolific-preview-bundle.zip", asyncHandler(async (req
   const sessions = (await store.listSessions()).filter((session) => prolificExport.sessionScope(session) === "preview");
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
-  res.set("content-disposition", `attachment; filename="study1-prolific-preview-export-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.set("content-disposition", `attachment; filename="study1-human-ai-preview-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
@@ -1587,7 +1622,7 @@ app.get("/api/admin/export/qa-bundle.zip", asyncHandler(async (req, res) => {
   const sessions = (await store.listSessions()).filter((session) => prolificExport.sessionScope(session) === "qa" && session.is_qa === true);
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
-  res.set("content-disposition", `attachment; filename="study1-qa-export-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.set("content-disposition", `attachment; filename="study1-human-ai-qa-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
@@ -1595,7 +1630,7 @@ app.get("/api/admin/export/team-review-bundle.zip", asyncHandler(async (req, res
   const sessions = (await store.listSessions()).filter((session) => prolificExport.sessionScope(session) === "team_review" && session.is_team_review === true);
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
-  res.set("content-disposition", `attachment; filename="study1-team-review-export-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.set("content-disposition", `attachment; filename="study1-human-ai-team-review-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
@@ -1603,7 +1638,7 @@ app.get("/api/admin/export/legacy-study1-bundle.zip", asyncHandler(async (req, r
   const sessions = await legacyStore.listSessions();
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions));
   res.set("content-type", "application/zip");
-  res.set("content-disposition", `attachment; filename="study1-historical-readonly-export-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.set("content-disposition", `attachment; filename="study1-historical-readonly-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 

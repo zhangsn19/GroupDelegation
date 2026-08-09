@@ -8,282 +8,163 @@
     <style>
       :root { --admin-border:#dbe3ee; --admin-muted:#64748b; --admin-soft:#f8fafc; --admin-blue:#1d4ed8; }
       body { background:#f4f7fb; }
-      .admin-shell { width:min(1440px, calc(100% - 2rem)); margin:1rem auto 2rem; display:grid; gap:.85rem; }
-      .admin-card { background:#fff; border:1px solid var(--admin-border); border-radius:8px; padding:.9rem 1rem; box-shadow:0 1px 2px rgb(15 23 42 / .04); }
-      .dashboard-header { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.85rem 1rem; }
-      .dashboard-header h1 { margin:.1rem 0 0; font-size:1.35rem; }
-      .header-meta,.toolbar-actions,.badge-row,.export-actions { display:flex; flex-wrap:wrap; align-items:center; gap:.45rem; }
-      .eyebrow,.section-title,.export-group h3 { margin:0; color:var(--admin-muted); font-size:.7rem; font-weight:800; letter-spacing:.09em; text-transform:uppercase; }
-      .badge { display:inline-flex; align-items:center; border:1px solid var(--admin-border); border-radius:999px; padding:.2rem .5rem; background:var(--admin-soft); font-size:.72rem; font-weight:700; color:#334155; }
-      .badge.blue { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }
-      .badge.pass,.integrity-status.pass { background:#ecfdf5; border-color:#a7f3d0; color:#047857; }
-      .badge.warning,.integrity-status.warning { background:#fff7ed; border-color:#fed7aa; color:#c2410c; }
-      .badge.human { color:#1e40af; }.badge.ai { color:#5b21b6; }
-      .summary-grid { display:grid; grid-template-columns:repeat(5,minmax(120px,1fr)); gap:.65rem; }
-      .summary-card { padding:.75rem .85rem; border:1px solid var(--admin-border); border-radius:7px; background:#fff; }
-      .summary-label { color:var(--admin-muted); font-size:.76rem; font-weight:700; }
-      .summary-count { margin-top:.15rem; font-size:1.65rem; line-height:1; font-weight:800; color:#0f172a; }
-      .section-head { display:flex; justify-content:space-between; align-items:baseline; gap:1rem; margin-bottom:.7rem; }
-      .section-head h2 { margin:0; font-size:1rem; }
-      .section-note { color:var(--admin-muted); font-size:.76rem; }
-      .exports-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.65rem; }
-      .export-group { border:1px solid var(--admin-border); border-radius:7px; padding:.7rem; background:var(--admin-soft); }
-      .export-group h3 { margin-bottom:.5rem; }
-      .export-item { display:flex; align-items:center; justify-content:space-between; gap:.7rem; padding:.42rem 0; border-top:1px solid #e8edf4; }
-      .export-item:first-of-type { border-top:0; padding-top:0; }
-      .export-copy strong { display:block; font-size:.8rem; }.export-copy span { display:block; color:var(--admin-muted); font-size:.68rem; }
-      .compact-button { min-height:32px; padding:.35rem .65rem; border-radius:6px; font-size:.75rem; white-space:nowrap; }
-      .matrix-wrap,.table-wrap { overflow:auto; }
-      .admin-table { width:100%; border-collapse:collapse; font-size:.76rem; }
-      .admin-table th,.admin-table td { border:1px solid var(--admin-border); padding:.48rem; text-align:left; vertical-align:middle; }
-      .admin-table th { background:var(--admin-soft); color:#334155; font-weight:750; white-space:nowrap; }
-      .matrix-table td { min-width:128px; }
-      .matrix-completed { font-size:1.25rem; font-weight:800; color:#0f172a; }
-      .matrix-label { color:var(--admin-muted); font-size:.66rem; }
-      .matrix-meta { display:grid; grid-template-columns:1fr 1fr; gap:.15rem .5rem; margin-top:.3rem; color:#475569; font-size:.66rem; }
-      .filter-grid { display:grid; grid-template-columns:1.05fr .9fr 1.2fr .9fr 1fr 1fr auto; gap:.55rem; align-items:end; }
-      .filter-field { display:grid; gap:.22rem; min-width:0; }.filter-field label { color:#475569; font-size:.68rem; font-weight:700; }
-      .filter-field .text-input { min-height:35px; padding:.38rem .5rem; font-size:.76rem; }
-      .advanced-filters { margin-top:.65rem; border-top:1px solid var(--admin-border); padding-top:.6rem; }
-      .advanced-filters summary,.technical-details summary,.historical-details summary { cursor:pointer; color:#334155; font-size:.78rem; font-weight:750; }
-      .advanced-grid { display:grid; grid-template-columns:1.2fr 1.25fr repeat(2,auto); gap:.65rem; align-items:end; margin-top:.6rem; }
-      .matrix-table td[data-matrix-identity] { cursor:pointer; }.matrix-table td[data-matrix-identity]:hover { background:#eff6ff; }
-      .check-field { display:flex; align-items:center; gap:.35rem; min-height:35px; font-size:.72rem; color:#334155; }
-      .participants-empty { padding:1rem; text-align:center; color:var(--admin-muted); }
-      .quality-list { display:flex; flex-wrap:wrap; gap:.25rem; }
-      .integrity-grid { display:grid; grid-template-columns:repeat(5,1fr); gap:.55rem; }
-      .integrity-item { border:1px solid var(--admin-border); border-radius:7px; padding:.65rem; }
-      .integrity-name { min-height:2.1em; font-size:.73rem; font-weight:750; }.integrity-detail { margin-top:.35rem; color:var(--admin-muted); font-size:.65rem; }
-      .integrity-status { display:inline-block; margin-top:.4rem; border:1px solid; border-radius:999px; padding:.15rem .4rem; font-size:.64rem; font-weight:800; }
-      .technical-grid { display:grid; grid-template-columns:1fr 1fr; gap:.65rem; margin-top:.65rem; }
-      .code-output { max-height:330px; overflow:auto; margin:.35rem 0 0; padding:.65rem; font-size:.68rem; white-space:pre-wrap; background:#f8fafc; color:#1e293b; border:1px solid var(--admin-border); border-radius:6px; }
-      .summary-description { margin-top:.3rem; color:var(--admin-muted); font-size:.66rem; line-height:1.25; }
-      .filtered-summary { margin:.45rem 0 0; color:#475569; font-size:.68rem; }
-      .hidden { display:none !important; }
-      @media(max-width:1000px){.summary-grid{grid-template-columns:repeat(3,1fr)}.exports-grid{grid-template-columns:1fr}.filter-grid{grid-template-columns:repeat(3,1fr)}.advanced-grid{grid-template-columns:1fr 1fr}.integrity-grid{grid-template-columns:repeat(2,1fr)}}
-      @media(max-width:640px){.admin-shell{width:min(100% - 1rem,1440px)}.dashboard-header{align-items:flex-start;flex-direction:column}.summary-grid,.filter-grid,.advanced-grid,.integrity-grid,.technical-grid{grid-template-columns:1fr 1fr}.filter-grid .toolbar-actions{grid-column:1/-1}}
+      .admin-shell { width:min(1440px,calc(100% - 2rem)); margin:1rem auto 2rem; display:grid; gap:.75rem; }
+      .admin-card { background:#fff; border:1px solid var(--admin-border); border-radius:8px; padding:.8rem .95rem; box-shadow:0 1px 2px rgb(15 23 42 / .04); }
+      .dashboard-header,.section-head,.tab-nav,.header-meta,.toolbar-actions { display:flex; align-items:center; gap:.5rem; }
+      .dashboard-header { justify-content:space-between; }.dashboard-header h1 { margin:.1rem 0 0; font-size:1.3rem; }
+      .header-meta { flex-wrap:wrap; justify-content:flex-end; }
+      .eyebrow,.summary-label,.export-group h3 { color:var(--admin-muted); font-size:.68rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+      .badge { display:inline-flex; align-items:center; border:1px solid var(--admin-border); border-radius:999px; padding:.18rem .48rem; background:var(--admin-soft); color:#334155; font-size:.7rem; font-weight:750; }
+      .badge.blue { background:#eff6ff; border-color:#bfdbfe; color:#1d4ed8; }.badge.pass { background:#ecfdf5; border-color:#a7f3d0; color:#047857; }.badge.warning { background:#fff7ed; border-color:#fed7aa; color:#c2410c; }
+      .badge.human { color:#1e40af; }.badge.ai { color:#5b21b6; }.badge.internal { background:#f1f5f9; color:#475569; }
+      .tab-nav { padding:.35rem; }.tab-button { border:0; border-bottom:2px solid transparent; background:transparent; color:#64748b; padding:.55rem .85rem; font-weight:750; cursor:pointer; }.tab-button.active { color:var(--admin-blue); border-color:var(--admin-blue); background:#eff6ff; }
+      .tab-panel { display:grid; gap:.7rem; }.tab-panel[hidden] { display:none; }
+      .tab-heading h2 { margin:0 0 .2rem; font-size:1.08rem; }.tab-heading p,.section-note { margin:0; color:var(--admin-muted); font-size:.75rem; }
+      .summary-grid { display:grid; grid-template-columns:repeat(4,minmax(120px,1fr)); gap:.55rem; }.summary-grid.three { grid-template-columns:repeat(3,minmax(140px,1fr)); }
+      .summary-card { border:1px solid var(--admin-border); border-radius:7px; padding:.68rem .8rem; background:#fff; }.summary-count { margin-top:.12rem; font-size:1.55rem; line-height:1; font-weight:800; }
+      .section-head { justify-content:space-between; align-items:baseline; margin-bottom:.55rem; }.section-head h3 { margin:0; font-size:.94rem; }
+      .exports-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:.5rem; }.export-group { border:1px solid var(--admin-border); border-radius:7px; padding:.6rem; background:var(--admin-soft); }.export-group h3 { margin:0 0 .35rem; }.export-group strong { display:block; font-size:.77rem; }.export-group span { display:block; min-height:2.2em; color:var(--admin-muted); font-size:.65rem; }.export-group button { margin-top:.4rem; width:100%; }
+      .compact-button { min-height:31px; padding:.32rem .62rem; border-radius:6px; font-size:.73rem; white-space:nowrap; }
+      .matrix-wrap,.table-wrap { overflow:auto; }.admin-table { width:100%; border-collapse:collapse; font-size:.74rem; }.admin-table th,.admin-table td { border:1px solid var(--admin-border); padding:.43rem; text-align:left; vertical-align:middle; }.admin-table th { background:var(--admin-soft); color:#334155; white-space:nowrap; }
+      .matrix-table td { min-width:120px; }.matrix-table td[data-matrix-tab] { cursor:pointer; }.matrix-table td[data-matrix-tab]:hover { background:#eff6ff; }.matrix-completed { font-size:1.15rem; font-weight:800; }.matrix-label,.matrix-meta { color:var(--admin-muted); font-size:.64rem; }.matrix-meta { display:grid; grid-template-columns:1fr 1fr; gap:.12rem .4rem; margin-top:.25rem; }
+      .filter-grid { display:grid; grid-template-columns:.95fr .9fr 1.1fr .85fr .9fr .9fr auto; gap:.48rem; align-items:end; }.filter-field { display:grid; gap:.18rem; min-width:0; }.filter-field label { color:#475569; font-size:.66rem; font-weight:700; }.filter-field .text-input { min-height:33px; padding:.34rem .45rem; font-size:.73rem; }
+      .advanced-filters { margin-top:.55rem; border-top:1px solid var(--admin-border); padding-top:.5rem; }.advanced-filters summary,details.admin-card>summary { cursor:pointer; color:#334155; font-size:.76rem; font-weight:750; }.advanced-grid { display:grid; grid-template-columns:1.1fr 1.2fr repeat(2,auto); gap:.55rem; margin-top:.5rem; align-items:end; }.check-field { display:flex; align-items:center; gap:.3rem; min-height:33px; font-size:.7rem; }
+      .quality-list { display:flex; flex-wrap:wrap; gap:.2rem; }.participants-empty { padding:.9rem; text-align:center; color:var(--admin-muted); }
+      .integrity-summary { display:flex; align-items:center; gap:.55rem; }.integrity-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:.5rem; margin-top:.65rem; }.integrity-item { border:1px solid var(--admin-border); border-radius:7px; padding:.58rem; }.integrity-name { font-size:.7rem; font-weight:750; }.integrity-detail { margin-top:.25rem; color:var(--admin-muted); font-size:.63rem; }
+      .technical-grid { display:grid; grid-template-columns:1fr 1fr; gap:.55rem; margin-top:.6rem; }.code-output { max-height:280px; overflow:auto; margin:.25rem 0 0; padding:.55rem; font-size:.65rem; white-space:pre-wrap; background:var(--admin-soft); border:1px solid var(--admin-border); border-radius:6px; }
+      @media(max-width:1050px){.exports-grid{grid-template-columns:repeat(2,1fr)}.filter-grid{grid-template-columns:repeat(3,1fr)}.integrity-grid{grid-template-columns:repeat(2,1fr)}}
+      @media(max-width:650px){.dashboard-header{align-items:flex-start;flex-direction:column}.header-meta{justify-content:flex-start}.tab-nav{overflow:auto}.summary-grid,.summary-grid.three,.exports-grid,.filter-grid,.advanced-grid,.technical-grid{grid-template-columns:1fr 1fr}}
     </style>
   </head>
   <body>
     <main class="admin-shell">
-      <div id="dashboard">
-        <header class="admin-card dashboard-header">
-          <div>
-            <div class="eyebrow">Researcher dashboard</div>
-            <h1>Study1 Human–AI Admin</h1>
-          </div>
-          <div class="header-meta">
-            <span class="badge blue">REVIEW DEPLOYMENT</span>
-            <span class="badge">study1-human-ai-v1</span>
-            <span id="health-badge" class="badge">Health checking</span>
-            <button id="refresh-data" class="primary-button compact-button">Refresh data</button>
-            <span id="last-refreshed" class="section-note">Last refreshed: —</span>
-          </div>
-        </header>
+      <header class="admin-card dashboard-header">
+        <div><div class="eyebrow">Researcher dashboard</div><h1>Study1 Human–AI Admin</h1></div>
+        <div class="header-meta"><span class="badge blue">REVIEW DEPLOYMENT</span><span class="badge">study1-human-ai-v1</span><span id="health-badge" class="badge">Checking</span><button id="refresh-data" class="primary-button compact-button">Refresh</button><span id="last-refreshed" class="section-note">Last refreshed: —</span></div>
+      </header>
 
-        <section class="summary-grid" aria-label="Study record counts">
-          <article class="summary-card"><div class="summary-label">Formal</div><div id="count-formal" class="summary-count">—</div><div class="summary-description">Production recruitment records</div></article>
-          <article class="summary-card"><div class="summary-label">Preview</div><div id="count-preview" class="summary-count">—</div><div class="summary-description">Prolific preview records</div></article>
-          <article class="summary-card"><div class="summary-label">QA</div><div id="count-qa" class="summary-count">—</div><div class="summary-description">NON-FORMAL RESEARCHER QA</div></article>
-          <article class="summary-card"><div class="summary-label">Team Review</div><div id="count-team-review" class="summary-count">—</div><div class="summary-description">NON-FORMAL INTERNAL REVIEW</div></article>
-          <article class="summary-card"><div class="summary-label">Historical</div><div id="count-historical" class="summary-count">—</div><div class="summary-description">READ-ONLY LEGACY</div></article>
+      <nav class="admin-card tab-nav" aria-label="Admin datasets">
+        <button class="tab-button active" data-tab="recruitment">Recruitment (<span id="tab-formal-count">—</span> Formal)</button>
+        <button class="tab-button" data-tab="internal">Internal Testing (<span id="tab-internal-count">—</span>)</button>
+        <button class="tab-button" data-tab="historical">Historical (<span id="tab-historical-count">—</span>)</button>
+      </nav>
+
+      <section id="tab-recruitment" class="tab-panel">
+        <div class="admin-card tab-heading"><h2>RECRUITMENT</h2><p>Production recruitment data only. Internal QA and Team Review records are excluded.</p></div>
+        <div class="summary-grid"><article class="summary-card"><div class="summary-label">Formal</div><div id="count-formal" class="summary-count">—</div></article><article class="summary-card"><div class="summary-label">Preview</div><div id="count-preview" class="summary-count">—</div></article><article class="summary-card"><div class="summary-label">Formal Completed</div><div id="count-formal-completed" class="summary-count">—</div></article><article class="summary-card"><div class="summary-label">Formal Incomplete</div><div id="count-formal-incomplete" class="summary-count">—</div></article></div>
+        <section class="admin-card"><div class="section-head"><h3>DATA EXPORTS</h3><span class="section-note">Recruitment scopes only</span></div><div id="export-groups" class="exports-grid">
+          <div class="export-group"><h3>Formal ZIP</h3><strong>Complete Formal production scope</strong><span>Ignores participant filters.</span><button class="secondary-button compact-button" data-export="/api/admin/export/prolific-bundle.zip" data-complete="true">Download</button></div>
+          <div class="export-group"><h3>Preview ZIP</h3><strong>Complete Prolific Preview scope</strong><span>Ignores participant filters.</span><button class="secondary-button compact-button" data-export="/api/admin/export/prolific-preview-bundle.zip" data-complete="true">Download</button></div>
+          <div class="export-group"><h3>participants.csv</h3><strong>Filtered recruitment participants</strong><span>Uses Recruitment filters.</span><button class="secondary-button compact-button" data-export="/api/admin/export/participants.csv" data-filter-tab="recruitment">Download</button></div>
+          <div class="export-group"><h3>study1_dice_rounds.csv</h3><strong>Filtered recruitment rounds</strong><span>Uses Recruitment filters.</span><button class="secondary-button compact-button" data-export="/api/admin/export/study1_dice_rounds.csv" data-filter-tab="recruitment">Download</button></div>
+          <div class="export-group"><h3>JSON raw data</h3><strong>Filtered recruitment raw sessions</strong><span>Uses Recruitment filters.</span><button class="secondary-button compact-button" data-export="/api/admin/export/json" data-filter-tab="recruitment">Download</button></div>
+        </div></section>
+        <section class="admin-card"><div class="section-head"><h3>FORMAL RECRUITMENT 2×6 MATRIX</h3><span class="section-note">Formal scope only; Completed is the primary metric.</span></div><div id="matrix-output" class="matrix-wrap"></div></section>
+        <section class="admin-card"><div class="section-head"><h3>Recruitment Participants</h3><span id="recruitment-participant-count" class="section-note"></span></div>
+          <div class="filter-grid"><div class="filter-field"><label for="filter-scope">Dataset</label><select id="filter-scope" class="text-input"><option value="formal">Formal</option><option value="preview">Preview</option></select></div><div class="filter-field"><label for="rec-identity">Identity</label><select id="rec-identity" class="text-input"><option value="all">All</option><option value="human">Human</option><option value="ai">AI</option></select></div><div class="filter-field"><label for="rec-condition">Condition</label><select id="rec-condition" class="text-input"></select></div><div class="filter-field"><label for="rec-status">Status</label><select id="rec-status" class="text-input"><option value="all">All</option><option value="completed">Completed</option><option value="incomplete">Incomplete</option></select></div><div class="filter-field"><label for="rec-start">Start Date</label><input id="rec-start" class="text-input" type="date"></div><div class="filter-field"><label for="rec-end">End Date</label><input id="rec-end" class="text-input" type="date"></div><div class="toolbar-actions"><button class="primary-button compact-button" data-apply="recruitment">Apply</button><button class="secondary-button compact-button" data-reset="recruitment">Reset</button></div></div>
+          <details class="advanced-filters"><summary>Advanced filters</summary><div class="advanced-grid"><div class="filter-field"><label for="rec-protocol">Protocol</label><select id="rec-protocol" class="text-input"><option value="all">All</option><option value="study1-human-ai-v1">study1-human-ai-v1</option></select></div><div class="filter-field"><label for="rec-quality">Quality / recovery</label><select id="rec-quality" class="text-input"></select></div><label class="check-field"><input id="rec-resumed" type="checkbox">Resumed only</label><label class="check-field"><input id="rec-aliases" type="checkbox">Session aliases &gt; 1</label></div></details>
+          <div id="all-records-output" class="table-wrap" style="margin-top:.65rem"></div>
         </section>
+      </section>
 
-        <section class="admin-card">
-          <div class="section-head"><h2>Data Exports</h2><span class="section-note">Complete bundles and filter-aware analysis exports.</span></div>
-          <div id="export-groups" class="exports-grid"></div>
+      <section id="tab-internal" class="tab-panel" hidden>
+        <div class="admin-card tab-heading"><div class="header-meta" style="justify-content:flex-start"><h2>INTERNAL TESTING</h2><span class="badge internal">NON-FORMAL</span><span class="badge internal">INTERNAL TEST DATA</span></div><p>These records are internal QA and team-review sessions. They are not recruitment participants and are excluded from Formal exports.</p></div>
+        <div class="summary-grid three"><article class="summary-card"><div class="summary-label">QA</div><div id="count-qa" class="summary-count">—</div></article><article class="summary-card"><div class="summary-label">Team Review</div><div id="count-team-review" class="summary-count">—</div></article><article class="summary-card"><div class="summary-label">Total Internal</div><div id="count-internal" class="summary-count">—</div></article></div>
+        <section class="admin-card"><div class="section-head"><h3>DATA EXPORTS</h3><span class="section-note">Internal scopes only</span></div><div class="exports-grid">
+          <div class="export-group"><h3>QA ZIP</h3><strong>Complete QA scope</strong><span>Ignores participant filters.</span><button class="secondary-button compact-button" data-export="/api/admin/export/qa-bundle.zip" data-complete="true">Download</button></div>
+          <div class="export-group"><h3>Team Review ZIP</h3><strong>Complete Team Review scope</strong><span>Ignores participant filters.</span><button class="secondary-button compact-button" data-export="/api/admin/export/team-review-bundle.zip" data-complete="true">Download</button></div>
+          <div class="export-group"><h3>participants.csv</h3><strong>INTERNAL FILTERED EXPORT</strong><span>Uses Internal filters.</span><button class="secondary-button compact-button" data-export="/api/admin/export/participants.csv" data-filter-tab="internal">Download</button></div>
+          <div class="export-group"><h3>study1_dice_rounds.csv</h3><strong>INTERNAL FILTERED EXPORT</strong><span>Uses Internal filters.</span><button class="secondary-button compact-button" data-export="/api/admin/export/study1_dice_rounds.csv" data-filter-tab="internal">Download</button></div>
+          <div class="export-group"><h3>JSON raw data</h3><strong>INTERNAL FILTERED EXPORT</strong><span>Uses Internal filters.</span><button class="secondary-button compact-button" data-export="/api/admin/export/json" data-filter-tab="internal">Download</button></div>
+        </div></section>
+        <section class="admin-card"><div class="section-head"><h3>INTERNAL TEST 2×6 MATRIX</h3><div class="filter-field"><label for="internal-matrix-dataset">Dataset</label><select id="internal-matrix-dataset" class="text-input"><option value="all">All Internal</option><option value="qa">QA</option><option value="team_review">Team Review</option></select></div></div><div id="internal-matrix-output" class="matrix-wrap"></div></section>
+        <section class="admin-card"><div class="section-head"><h3>Internal Records</h3><span id="internal-participant-count" class="section-note"></span></div>
+          <div class="filter-grid"><div class="filter-field"><label for="internal-dataset">Dataset</label><select id="internal-dataset" class="text-input"><option value="all">All Internal</option><option value="qa">QA</option><option value="team_review">Team Review</option></select></div><div class="filter-field"><label for="internal-show">Show</label><select id="internal-show" class="text-input"><option value="clean">Completed &amp; Clean</option><option value="all">All records</option><option value="incomplete">Incomplete only</option><option value="flagged">Flagged only</option></select></div><div class="filter-field"><label for="internal-identity">Identity</label><select id="internal-identity" class="text-input"><option value="all">All</option><option value="human">Human</option><option value="ai">AI</option></select></div><div class="filter-field"><label for="internal-condition">Condition</label><select id="internal-condition" class="text-input"></select></div><div class="filter-field"><label for="internal-start">Start Date</label><input id="internal-start" class="text-input" type="date"></div><div class="filter-field"><label for="internal-end">End Date</label><input id="internal-end" class="text-input" type="date"></div><div class="toolbar-actions"><button class="primary-button compact-button" data-apply="internal">Apply</button><button class="secondary-button compact-button" data-reset="internal">Reset</button></div></div>
+          <details class="advanced-filters"><summary>Advanced filters</summary><div class="advanced-grid"><div class="filter-field"><label for="internal-protocol">Protocol</label><select id="internal-protocol" class="text-input"><option value="all">All</option><option value="study1-human-ai-v1">study1-human-ai-v1</option></select></div><div class="filter-field"><label for="internal-quality">Quality / recovery</label><select id="internal-quality" class="text-input"></select></div><label class="check-field"><input id="internal-resumed" type="checkbox">Resumed only</label><label class="check-field"><input id="internal-aliases" type="checkbox">Session aliases &gt; 1</label></div></details>
+          <div id="internal-records-output" class="table-wrap" style="margin-top:.65rem"></div>
         </section>
+      </section>
 
-        <section class="admin-card">
-          <div class="section-head"><h2>Active Human–AI 2×6 Matrix</h2><span class="section-note">Completed is the primary metric.</span></div>
-          <div id="matrix-output" class="matrix-wrap"></div>
-        </section>
+      <section id="tab-historical" class="tab-panel" hidden>
+        <div class="admin-card tab-heading"><div class="header-meta" style="justify-content:flex-start"><h2>HISTORICAL STUDY1</h2><span class="badge internal">READ-ONLY LEGACY DATA</span></div><p>Historical Study1 is stored separately and cannot be modified from this Admin.</p></div>
+        <div class="summary-grid three"><article class="summary-card"><div class="summary-label">Historical Records</div><div id="count-historical" class="summary-count">—</div></article><article class="summary-card"><div class="summary-label">Storage</div><div class="summary-description">Physically separate source</div></article><article class="summary-card"><div class="summary-label">Access</div><div class="summary-description">Read-only</div></article></div>
+        <section class="admin-card"><div class="section-head"><h3>DATA EXPORTS</h3><span class="section-note">Historical dataset only</span></div><div class="exports-grid"><div class="export-group"><h3>Historical Study1 ZIP</h3><strong>Complete historical read-only scope</strong><span>Ignores current dataset filters.</span><button class="secondary-button compact-button" data-export="/api/admin/export/legacy-study1-bundle.zip" data-complete="true">Download</button></div></div></section>
+        <section class="admin-card"><div class="section-head"><h3>Historical Participants</h3><span id="historical-participant-count" class="section-note"></span></div><div id="legacy-records-output" class="table-wrap"></div></section>
+      </section>
 
-        <section class="admin-card">
-          <div class="section-head"><h2>Participants</h2><span id="participant-count" class="section-note"></span></div>
-          <div class="filter-grid">
-            <div class="filter-field"><label for="filter-scope">Scope</label><select id="filter-scope" class="text-input"><option value="all">All</option><option value="formal">Formal</option><option value="preview">Preview</option><option value="qa">QA</option><option value="team_review">Team Review</option><option value="legacy">Legacy</option></select></div>
-            <div class="filter-field"><label for="filter-peer-identity">Identity</label><select id="filter-peer-identity" class="text-input"><option value="all">All</option><option value="human">Human</option><option value="ai">AI</option><option value="human_legacy">Legacy</option></select></div>
-            <div class="filter-field"><label for="filter-condition">Condition</label><select id="filter-condition" class="text-input"><option value="all">All</option><option value="hidden">Hidden</option><option value="honest">0 Dishonest</option><option value="dishonest_fixed_1">1 Dishonest</option><option value="dishonest_fixed_2">2 Dishonest</option><option value="dishonest_fixed_3">3 Dishonest</option><option value="dishonest">4 Dishonest</option><option value="dishonest_escalating">Legacy Escalating</option></select></div>
-            <div class="filter-field"><label for="record-status">Status</label><select id="record-status" class="text-input"><option value="all">All</option><option value="completed">Completed</option><option value="incomplete">Incomplete</option></select></div>
-            <div class="filter-field"><label for="start-date">Start Date</label><input id="start-date" class="text-input" type="date"></div>
-            <div class="filter-field"><label for="end-date">End Date</label><input id="end-date" class="text-input" type="date"></div>
-            <div class="toolbar-actions"><button id="apply-filters" class="primary-button compact-button">Apply</button><button id="reset-filters" class="secondary-button compact-button">Reset</button></div>
-          </div>
-          <details class="advanced-filters">
-            <summary>Advanced filters</summary>
-            <div class="advanced-grid">
-              <div class="filter-field"><label for="filter-protocol">Protocol</label><select id="filter-protocol" class="text-input"><option value="all">All</option><option value="study1-human-ai-v1">study1-human-ai-v1</option><option value="peer-reporting-v2">Legacy peer-reporting-v2</option></select></div>
-              <div class="filter-field"><label for="record-conflict">Quality / recovery</label><select id="record-conflict" class="text-input"><option value="all">All records</option><option value="recovery_conflict">Recovery conflict</option><option value="identity_conflict">Identity conflict</option><option value="missing_required_fields">Missing Prolific fields</option><option value="incomplete_rounds">Incomplete rounds</option><option value="comprehension_failed">Comprehension failed</option><option value="invalid_decision_time">Invalid decision time</option><option value="excessive_page_hidden_time">Excessive hidden time</option><option value="incomplete_survey_data">Incomplete survey data</option><option value="completion_not_confirmed">Completion not confirmed</option></select></div>
-              <label class="check-field"><input id="resumed-only" type="checkbox">Resumed only</label>
-              <label class="check-field"><input id="aliases-only" type="checkbox">Session alias &gt;1</label>
-            </div>
-          </details>
-          <div id="all-records-output" class="table-wrap" style="margin-top:.7rem"></div>
-        </section>
-
-        <section class="admin-card">
-          <div class="section-head"><h2>Data Integrity</h2><span class="section-note">Computed from current server data and store configuration.</span></div>
-          <div id="integrity-output" class="integrity-grid"></div>
-        </section>
-
-        <details class="admin-card historical-details">
-          <summary>Historical Study1 — read-only</summary>
-          <div id="legacy-records-output" class="table-wrap" style="margin-top:.7rem"></div>
-        </details>
-
-        <details id="technical-details" class="admin-card technical-details">
-          <summary>Technical Details</summary>
-          <div class="technical-grid">
-            <div><strong>Selected record detail</strong><pre id="record-detail-output" class="code-output">Select Inspect to load technical details.</pre></div>
-            <div><strong>Historical record detail</strong><pre id="legacy-detail-output" class="code-output">Select Inspect to load historical details.</pre></div>
-            <div><strong>Summary response</strong><pre id="summary-output" class="code-output">Not loaded.</pre></div>
-            <div><strong>Formal records</strong><pre id="formal-output" class="code-output">Not loaded.</pre></div>
-            <div><strong>Preview records</strong><pre id="preview-output" class="code-output">Not loaded.</pre></div>
-            <div><strong>Historical summary</strong><pre id="legacy-summary-output" class="code-output">Not loaded.</pre></div>
-          </div>
-        </details>
-      </div>
+      <details id="integrity-details" class="admin-card"><summary><span class="integrity-summary">Data Integrity <span id="integrity-summary" class="badge">Not loaded</span> <span class="section-note">Details ▾</span></span></summary><div id="integrity-output" class="integrity-grid"></div></details>
+      <details id="technical-details" class="admin-card"><summary>Technical Details</summary><div class="technical-grid"><div><strong>Selected record detail</strong><pre id="record-detail-output" class="code-output">Select Inspect to load technical details.</pre></div><div><strong>Historical record detail</strong><pre id="legacy-detail-output" class="code-output">Select Inspect to load technical details.</pre></div><div><strong>Summary response</strong><pre id="summary-output" class="code-output">Not loaded.</pre></div><div><strong>Formal records</strong><pre id="formal-output" class="code-output">Not loaded.</pre></div><div><strong>Preview records</strong><pre id="preview-output" class="code-output">Not loaded.</pre></div><div><strong>Historical summary</strong><pre id="legacy-summary-output" class="code-output">Not loaded.</pre></div></div></details>
     </main>
 
     <script>
       const $ = (selector) => document.querySelector(selector);
-      const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[character]));
-      const conditionLabels = { hidden:"Hidden", honest:"0 Dishonest", dishonest_fixed_1:"1 Dishonest", dishonest_fixed_2:"2 Dishonest", dishonest_fixed_3:"3 Dishonest", dishonest:"4 Dishonest", dishonest_escalating:"Legacy Escalating" };
-      const exportGroups = [
-        ["Current Recruitment", [
-          ["Formal ZIP", "Complete Formal scope", "/api/admin/export/prolific-bundle.zip", true],
-          ["Preview ZIP", "Complete Preview scope", "/api/admin/export/prolific-preview-bundle.zip", true]
-        ]],
-        ["Internal Test / Review", [
-          ["QA ZIP", "Complete QA scope", "/api/admin/export/qa-bundle.zip", true],
-          ["Team Review ZIP", "Complete Team Review scope", "/api/admin/export/team-review-bundle.zip", true]
-        ]],
-        ["Historical", [["Historical Study1 ZIP", "Complete historical read-only scope", "/api/admin/export/legacy-study1-bundle.zip", true]]],
-        ["Filtered Analysis Exports", [
-          ["participants.csv", "FILTERED EXPORT — participant-level table", "/api/admin/export/participants.csv", false],
-          ["study1_dice_rounds.csv", "FILTERED EXPORT — round-level table", "/api/admin/export/study1_dice_rounds.csv", false],
-          ["JSON raw data", "FILTERED EXPORT — current raw sessions", "/api/admin/export/json", false]
-        ]]
-      ];
+      const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (character) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[character]));
+      const conditions = ["hidden","honest","dishonest_fixed_1","dishonest_fixed_2","dishonest_fixed_3","dishonest"];
+      const conditionLabels = {hidden:"Hidden",honest:"0 Dishonest",dishonest_fixed_1:"1 Dishonest",dishonest_fixed_2:"2 Dishonest",dishonest_fixed_3:"3 Dishonest",dishonest:"4 Dishonest",dishonest_escalating:"Escalating"};
+      const qualityOptions = [["all","All records"],["recovery_conflict","Recovery conflict"],["identity_conflict","Identity conflict"],["missing_required_fields","Missing Prolific fields"],["incomplete_rounds","Incomplete rounds"],["comprehension_failed","Comprehension failed"],["invalid_decision_time","Invalid decision time"],["excessive_page_hidden_time","Excessive hidden time"],["incomplete_survey_data","Incomplete survey data"],["completion_not_confirmed","Completion not confirmed"]];
+      let datasets = null;
 
-      async function api(path, options = {}) {
-        const response = await fetch(path, { credentials:"same-origin", ...options });
-        if (!response.ok) throw new Error(`Request failed (HTTP ${response.status})`);
-        return response;
+      async function api(path) { const response = await fetch(path); if (!response.ok) throw new Error(`Request failed (HTTP ${response.status})`); return response; }
+      function badge(value, kind="") { return `<span class="badge ${kind}">${escapeHtml(value)}</span>`; }
+      function identityBadge(identity, historical=false) { if (historical || identity === "human_legacy") return badge("Legacy Human"); return identity === "ai" ? badge("🤖 AI","ai") : badge("👤 Human","human"); }
+      function statusBadge(status) { const complete=status === "completed"; return badge(complete?"Completed":"Incomplete",complete?"pass":"warning"); }
+      function optionsHtml(entries) { return entries.map(([value,label])=>`<option value="${value}">${label}</option>`).join(""); }
+
+      function queryFor(tab) {
+        const p = new URLSearchParams({include_test:"true"});
+        if (tab === "recruitment") {
+          p.set("dataset","recruitment"); p.set("scope",$("#filter-scope").value); p.set("peer_identity",$("#rec-identity").value); p.set("condition",$("#rec-condition").value); p.set("status",$("#rec-status").value); p.set("protocol_version",$("#rec-protocol").value); p.set("recovery_flag",$("#rec-quality").value);
+          if ($("#rec-start").value) p.set("start_date",$("#rec-start").value); if ($("#rec-end").value) p.set("end_date",$("#rec-end").value); if ($("#rec-resumed").checked) p.set("resumed_only","true"); if ($("#rec-aliases").checked) p.set("aliases_only","true");
+        } else {
+          p.set("dataset","internal"); if ($("#internal-dataset").value !== "all") p.set("scope",$("#internal-dataset").value); p.set("peer_identity",$("#internal-identity").value); p.set("condition",$("#internal-condition").value); p.set("protocol_version",$("#internal-protocol").value); p.set("recovery_flag",$("#internal-quality").value);
+          if ($("#internal-start").value) p.set("start_date",$("#internal-start").value); if ($("#internal-end").value) p.set("end_date",$("#internal-end").value); if ($("#internal-resumed").checked) p.set("resumed_only","true"); if ($("#internal-aliases").checked) p.set("aliases_only","true");
+        }
+        return p.toString();
       }
 
-      function queryString(overrides = {}) {
-        const params = new URLSearchParams({
-          scope:$("#filter-scope").value,
-          peer_identity:$("#filter-peer-identity").value,
-          condition:$("#filter-condition").value,
-          status:$("#record-status").value,
-          protocol_version:$("#filter-protocol").value,
-          recovery_flag:$("#record-conflict").value,
-        });
-        if ($("#start-date").value) params.set("start_date", $("#start-date").value);
-        if ($("#end-date").value) params.set("end_date", $("#end-date").value);
-        if ($("#resumed-only").checked) params.set("resumed_only", "true");
-        if ($("#aliases-only").checked) params.set("aliases_only", "true");
-        params.set("include_test", "true");
-        for (const [key, value] of Object.entries(overrides)) value == null ? params.delete(key) : params.set(key, value);
-        return params.toString();
-      }
-
-      function badge(value, kind = "") { return `<span class="badge ${kind}">${escapeHtml(value)}</span>`; }
-      function scopeBadge(scope) { const labels={formal:"Formal",preview:"Preview",qa:"QA",team_review:"Review",legacy:"Historical"}; return badge(labels[scope] || scope, scope === "formal" ? "blue" : ""); }
-      function identityBadge(identity) { return identity === "ai" ? badge("🤖 AI", "ai") : identity === "human" ? badge("👤 Human", "human") : badge(identity || "Legacy"); }
-      function statusBadge(status) { const complete=status === "completed"; return badge(complete ? "Completed" : "Incomplete", complete ? "pass" : "warning"); }
-
-      function renderMatrix(rows) {
-        const conditions=["hidden","honest","dishonest_fixed_1","dishonest_fixed_2","dishonest_fixed_3","dishonest"];
+      function renderMatrix(rows, tab) {
         const cells=new Map((rows||[]).map((row)=>[`${row.peer_identity}:${row.condition}`,row]));
-        const body=["human","ai"].map((identity)=>`<tr><th>${identity === "human" ? "👤 Human" : "🤖 AI"}</th>${conditions.map((condition)=>{
-          const row=cells.get(`${identity}:${condition}`)||{};
-          return `<td data-matrix-identity="${identity}" data-matrix-condition="${condition}"><div class="matrix-label">Completed</div><div class="matrix-completed">${row.completed||0}</div><div class="matrix-meta"><span>Started</span><strong>${row.started||0}</strong><span>Data Complete</span><strong>${row.data_complete||0}</strong><span>Quality Flags</span><strong>${row.quality_flagged||0}</strong></div></td>`;
-        }).join("")}</tr>`).join("");
+        const body=["human","ai"].map((identity)=>`<tr><th>${identity === "human" ? "👤 Human" : "🤖 AI"}</th>${conditions.map((condition)=>{const row=cells.get(`${identity}:${condition}`)||{};return `<td data-matrix-tab="${tab}" data-matrix-identity="${identity}" data-matrix-condition="${condition}"><div class="matrix-label">Completed</div><div class="matrix-completed">${row.completed||0}</div><div class="matrix-meta"><span>Started</span><strong>${row.started||0}</strong><span>Data Complete</span><strong>${row.data_complete||0}</strong><span>Quality Flags</span><strong>${row.quality_flagged||0}</strong></div></td>`;}).join("")}</tr>`).join("");
         return `<table class="admin-table matrix-table"><thead><tr><th>Identity</th>${conditions.map((condition)=>`<th>${conditionLabels[condition]}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
       }
 
-      function renderRecords(rows, legacy = false) {
-        if (!(rows||[]).length) return `<div class="participants-empty">No records match the selected filters.</div>`;
-        const body=rows.map((record)=>{
-          const flags=record.quality_flags||[];
-          return `<tr><td>${escapeHtml(record.prolific_pid||record.session_id||record.record_id)}</td><td>${scopeBadge(record.scope)}</td><td>${identityBadge(record.peer_identity)}</td><td>${escapeHtml(conditionLabels[record.condition]||record.condition)}</td><td>${statusBadge(record.status)}</td><td>${record.rounds_completed||0}</td><td>${escapeHtml(record.completed_at||"—")}</td><td><div class="quality-list">${flags.length?flags.map((flag)=>badge(flag,"warning")).join(""):badge("Clean","pass")}</div></td><td><button class="secondary-button compact-button" data-inspect="${escapeHtml(record.record_id)}" data-legacy="${legacy}">Inspect</button></td></tr>`;
-        }).join("");
-        return `<table class="admin-table"><thead><tr><th>Masked ID</th><th>Scope</th><th>Identity</th><th>Condition</th><th>Status</th><th>Rounds</th><th>Completed</th><th>Quality</th><th>Inspect</th></tr></thead><tbody>${body}</tbody></table>`;
+      function renderRecords(rows, mode) {
+        if (!rows.length) return `<div class="participants-empty">No records match the selected filters.</div>`;
+        const includeDataset=mode === "internal"; const historical=mode === "historical";
+        const body=rows.map((record)=>{const flags=record.quality_flags||[];const dataset=record.scope === "team_review" ? "Team Review" : "QA";return `<tr><td>${escapeHtml(record.prolific_pid||record.session_id||record.record_id)}</td>${includeDataset?`<td>${badge(dataset,"internal")}</td>`:""}<td>${identityBadge(record.peer_identity,historical)}</td><td>${escapeHtml(conditionLabels[record.condition]||record.condition)}</td><td>${statusBadge(record.status)}</td><td>${record.rounds_completed||0}</td><td>${escapeHtml(record.completed_at||"—")}</td><td><div class="quality-list">${flags.length?flags.map((flag)=>badge(flag,"warning")).join(""):badge("Clean","pass")}</div></td><td><button class="secondary-button compact-button" data-inspect="${escapeHtml(record.record_id)}" data-legacy="${historical}">Inspect</button></td></tr>`;}).join("");
+        return `<table class="admin-table"><thead><tr><th>Masked ID</th>${includeDataset?"<th>Dataset</th>":""}<th>Identity</th><th>Condition</th><th>Status</th><th>Rounds</th><th>Completed</th><th>Quality</th><th>Inspect</th></tr></thead><tbody>${body}</tbody></table>`;
       }
 
-      function renderExports() {
-        $("#export-groups").innerHTML=exportGroups.map(([title,items])=>`<section class="export-group"><h3>${title}</h3>${title === "Filtered Analysis Exports" ? '<div id="filtered-view-summary" class="filtered-summary"></div>' : ""}${items.map(([label,description,path,complete])=>`<div class="export-item"><div class="export-copy"><strong>${label}</strong><span>${description}</span></div><button class="secondary-button compact-button" data-export="${path}" data-export-complete="${complete}">Download</button></div>`).join("")}</section>`).join("");
-      }
-
-      function updateFilterSummary() {
-        const parts=[`Scope = ${$("#filter-scope").selectedOptions[0].text}`,`Identity = ${$("#filter-peer-identity").selectedOptions[0].text}`,`Condition = ${$("#filter-condition").selectedOptions[0].text}`,`Status = ${$("#record-status").selectedOptions[0].text}`];
-        $("#filtered-view-summary").textContent=`Filtered view: ${parts.join(" · ")}`;
-      }
-
-      function renderIntegrity(checks) {
-        $("#integrity-output").innerHTML=(checks||[]).map((check)=>`<article class="integrity-item"><div class="integrity-name">${escapeHtml(check.label)}</div><span class="integrity-status ${String(check.status).toLowerCase()}">${escapeHtml(check.status)}</span><div class="integrity-detail">${escapeHtml(check.detail)}</div></article>`).join("");
-      }
+      function applyInternalShow(rows) { const mode=$("#internal-show").value; if(mode==="clean") return rows.filter((r)=>r.status==="completed"&&!(r.quality_flags||[]).length); if(mode==="incomplete") return rows.filter((r)=>r.status!=="completed"); if(mode==="flagged") return rows.filter((r)=>(r.quality_flags||[]).length); return rows; }
+      function renderIntegrity(checks) { const pass=checks.filter((c)=>c.status==="PASS").length; const warnings=checks.filter((c)=>c.status==="WARNING").length; const unverified=checks.filter((c)=>c.status==="NOT VERIFIED").length; const summary=$("#integrity-summary"); summary.textContent=warnings||unverified?`${pass}/${checks.length} PASS · ${warnings} WARNING · ${unverified} NOT VERIFIED`:`✓ ${pass}/${checks.length} PASS`; summary.className=`badge ${warnings?"warning":"pass"}`; $("#integrity-output").innerHTML=checks.map((c)=>`<article class="integrity-item"><div class="integrity-name">${escapeHtml(c.label)}</div>${badge(c.status,c.status==="PASS"?"pass":"warning")}<div class="integrity-detail">${escapeHtml(c.detail)}</div></article>`).join(""); }
 
       async function loadDashboard() {
         $("#refresh-data").disabled=true;
         try {
-          const selectedQuery=queryString();
-          const countScopes=["formal","preview","qa","team_review"];
-          const [summaryResponse, matrixResponse, recordsResponse, legacySummaryResponse, legacyRecordsResponse, integrityResponse, healthResponse, ...countResponses]=await Promise.all([
-            api(`/api/admin/summary?${selectedQuery}`), api("/api/admin/prolific-summary?include_test=true"), api(`/api/admin/records?${selectedQuery}`),
-            api(`/api/admin/legacy/summary?${queryString({scope:"all",include_test:"true"})}`), api(`/api/admin/legacy/records?${queryString({scope:"all"})}`), api("/api/admin/integrity"), fetch("/health"),
-            ...countScopes.map((scope)=>api(`/api/admin/records?scope=${scope}&include_test=true`))
-          ]);
-          const [summary,matrix,records,legacySummary,legacyRecords,integrity,...counts]=await Promise.all([
-            summaryResponse.json(),matrixResponse.json(),recordsResponse.json(),legacySummaryResponse.json(),legacyRecordsResponse.json(),integrityResponse.json(),...countResponses.map((response)=>response.json())
-          ]);
-          ["formal","preview","qa","team-review"].forEach((id,index)=>$("#count-"+id).textContent=(counts[index].participants||[]).length);
-          $("#count-historical").textContent=legacySummary.record_count;
-          $("#matrix-output").innerHTML=renderMatrix(matrix.active_matrix||[]);
-          const showingLegacy=$("#filter-scope").value === "legacy";
-          const displayedRecords=showingLegacy?(legacyRecords.participants||[]):(records.participants||[]);
-          $("#all-records-output").innerHTML=renderRecords(displayedRecords,showingLegacy);
-          $("#participant-count").textContent=`${displayedRecords.length} matching record(s)`;
-          $("#legacy-records-output").innerHTML=renderRecords(legacyRecords.participants||[],true);
-          renderIntegrity(integrity.checks);
-          $("#summary-output").textContent=JSON.stringify({summary,integrity},null,2);
-          $("#formal-output").textContent=JSON.stringify(matrix.participants||[],null,2);
-          $("#preview-output").textContent=JSON.stringify(matrix.preview_participants||[],null,2);
-          $("#legacy-summary-output").textContent=JSON.stringify(legacySummary,null,2);
-          const healthOk=healthResponse.ok; $("#health-badge").textContent=healthOk?"Healthy":"Warning"; $("#health-badge").className=`badge ${healthOk?"pass":"warning"}`;
-          $("#last-refreshed").textContent=`Last refreshed: ${new Date().toLocaleTimeString()}`;
-          updateFilterSummary();
-        } catch (error) {
-          alert(`Dashboard refresh failed: ${error.message}`);
-        } finally { $("#refresh-data").disabled=false; }
+          const [datasetResponse,recResponse,internalResponse,legacyResponse,integrityResponse,healthResponse,formalResponse,previewResponse]=await Promise.all([api("/api/admin/datasets"),api(`/api/admin/records?${queryFor("recruitment")}`),api(`/api/admin/records?${queryFor("internal")}`),api("/api/admin/legacy/records?include_test=true"),api("/api/admin/integrity"),fetch("/health"),api("/api/admin/records?scope=formal&include_test=true"),api("/api/admin/records?scope=preview&include_test=true")]);
+          const [datasetData,recData,internalData,legacyData,integrity,formalData,previewData]=await Promise.all([datasetResponse.json(),recResponse.json(),internalResponse.json(),legacyResponse.json(),integrityResponse.json(),formalResponse.json(),previewResponse.json()]); datasets=datasetData;
+          $("#count-formal").textContent=datasets.recruitment.formal; $("#count-preview").textContent=datasets.recruitment.preview; $("#count-formal-completed").textContent=datasets.recruitment.formal_completed; $("#count-formal-incomplete").textContent=datasets.recruitment.formal_incomplete;
+          $("#count-qa").textContent=datasets.internal.qa; $("#count-team-review").textContent=datasets.internal.team_review; $("#count-internal").textContent=datasets.internal.total; $("#count-historical").textContent=datasets.historical.count;
+          $("#tab-formal-count").textContent=datasets.recruitment.formal; $("#tab-internal-count").textContent=datasets.internal.total; $("#tab-historical-count").textContent=datasets.historical.count;
+          $("#matrix-output").innerHTML=renderMatrix(datasets.recruitment.formal_matrix,"recruitment"); renderInternalMatrix();
+          $("#all-records-output").innerHTML=renderRecords(recData.participants||[],"recruitment"); $("#recruitment-participant-count").textContent=`${(recData.participants||[]).length} matching record(s)`;
+          const internalRows=applyInternalShow(internalData.participants||[]); $("#internal-records-output").innerHTML=renderRecords(internalRows,"internal"); $("#internal-participant-count").textContent=`${internalRows.length} shown of ${(internalData.participants||[]).length} matching record(s)`;
+          $("#legacy-records-output").innerHTML=renderRecords(legacyData.participants||[],"historical"); $("#historical-participant-count").textContent=`${(legacyData.participants||[]).length} record(s)`;
+          renderIntegrity(integrity.checks||[]); $("#summary-output").textContent=JSON.stringify({datasets,integrity},null,2); $("#formal-output").textContent=JSON.stringify(formalData.participants||[],null,2); $("#preview-output").textContent=JSON.stringify(previewData.participants||[],null,2); $("#legacy-summary-output").textContent=JSON.stringify(datasets.historical,null,2);
+          $("#health-badge").textContent=healthResponse.ok?"Healthy":"Warning"; $("#health-badge").className=`badge ${healthResponse.ok?"pass":"warning"}`; $("#last-refreshed").textContent=`Last refreshed: ${new Date().toLocaleTimeString()}`;
+        } catch(error) { alert(`Dashboard refresh failed: ${error.message}`); }
+        finally { $("#refresh-data").disabled=false; }
       }
 
-      async function downloadExport(button) {
-        button.disabled=true;
-        try {
-          const complete=button.dataset.exportComplete === "true";
-          const response=await api(complete ? button.dataset.export : `${button.dataset.export}?${queryString()}`);
-          const blob=await response.blob(); const url=URL.createObjectURL(blob); const link=document.createElement("a");
-          link.href=url; link.download=(response.headers.get("content-disposition")?.match(/filename="?([^";]+)"?/)||[])[1]||button.dataset.export.split("/").pop(); link.click(); URL.revokeObjectURL(url);
-        } catch(error) { alert(`Export failed: ${error.message}`); }
-        finally { button.disabled=false; }
-      }
+      function renderInternalMatrix() { if(!datasets)return; const selected=$("#internal-matrix-dataset").value; const rows=selected==="qa"?datasets.internal.qa_matrix:selected==="team_review"?datasets.internal.team_review_matrix:datasets.internal.all_matrix; $("#internal-matrix-output").innerHTML=renderMatrix(rows,"internal"); }
+      function resetFilters(tab) { if(tab==="recruitment"){$("#filter-scope").value="formal"; for(const id of ["rec-identity","rec-condition","rec-status","rec-protocol","rec-quality"]) $("#"+id).value="all"; for(const id of ["rec-start","rec-end"]) $("#"+id).value=""; $("#rec-resumed").checked=false; $("#rec-aliases").checked=false;} else {$("#internal-dataset").value="all";$("#internal-show").value="clean";for(const id of ["internal-identity","internal-condition","internal-protocol","internal-quality"]) $("#"+id).value="all";for(const id of ["internal-start","internal-end"]) $("#"+id).value="";$("#internal-resumed").checked=false;$("#internal-aliases").checked=false;} loadDashboard(); }
 
-      async function inspectRecord(button) {
-        const legacy=button.dataset.legacy === "true"; const output=legacy?$("#legacy-detail-output"):$("#record-detail-output");
-        try { output.textContent=JSON.stringify(await (await api(`${legacy?"/api/admin/legacy/session/":"/api/admin/session/"}${encodeURIComponent(button.dataset.inspect)}`)).json(),null,2); $("#technical-details").open=true; $("#technical-details").scrollIntoView({block:"start"}); }
-        catch(error) { output.textContent=`Inspect failed: ${error.message}`; }
-      }
+      async function downloadExport(button) { button.disabled=true; try { const tab=button.dataset.filterTab; const path=button.dataset.complete==="true"?button.dataset.export:`${button.dataset.export}?${queryFor(tab)}`; const response=await api(path); const blob=await response.blob(); const url=URL.createObjectURL(blob); const link=document.createElement("a"); const extension=button.dataset.export.endsWith("json")?"json":"csv"; link.href=url; link.download=(response.headers.get("content-disposition")?.match(/filename="?([^";]+)"?/)||[])[1]||`study1-human-ai-${tab||"complete"}-${new Date().toISOString().slice(0,10)}.${extension}`; link.click(); URL.revokeObjectURL(url); } catch(error){alert(`Export failed: ${error.message}`);} finally{button.disabled=false;} }
+      async function inspectRecord(button) { const legacy=button.dataset.legacy==="true"; const output=legacy?$("#legacy-detail-output"):$("#record-detail-output"); try{output.textContent=JSON.stringify(await(await api(`${legacy?"/api/admin/legacy/session/":"/api/admin/session/"}${encodeURIComponent(button.dataset.inspect)}`)).json(),null,2);$("#technical-details").open=true;$("#technical-details").scrollIntoView({block:"start"});}catch(error){output.textContent=`Inspect failed: ${error.message}`;} }
 
-      renderExports();
-      $("#refresh-data").addEventListener("click",loadDashboard); $("#apply-filters").addEventListener("click",loadDashboard);
-      $("#reset-filters").addEventListener("click",()=>{ for(const id of ["filter-scope","filter-peer-identity","filter-condition","record-status","filter-protocol","record-conflict"]) $("#"+id).value="all"; for(const id of ["start-date","end-date"]) $("#"+id).value=""; $("#resumed-only").checked=false; $("#aliases-only").checked=false; loadDashboard(); });
-      document.addEventListener("click",(event)=>{ const exportButton=event.target.closest("[data-export]"); if(exportButton) downloadExport(exportButton); const inspectButton=event.target.closest("[data-inspect]"); if(inspectButton) inspectRecord(inspectButton); const cell=event.target.closest("[data-matrix-identity]"); if(cell){$("#filter-scope").value="all";$("#filter-peer-identity").value=cell.dataset.matrixIdentity;$("#filter-condition").value=cell.dataset.matrixCondition;loadDashboard();} });
-      loadDashboard();
+      const conditionOptions=[["all","All"],...Object.entries(conditionLabels).filter(([key])=>key!=="dishonest_escalating")]; for(const id of ["rec-condition","internal-condition"]) $("#"+id).innerHTML=optionsHtml(conditionOptions); for(const id of ["rec-quality","internal-quality"]) $("#"+id).innerHTML=optionsHtml(qualityOptions);
+      document.addEventListener("click",(event)=>{const tab=event.target.closest("[data-tab]");if(tab){document.querySelectorAll("[data-tab]").forEach((button)=>button.classList.toggle("active",button===tab));document.querySelectorAll(".tab-panel").forEach((panel)=>panel.hidden=panel.id!==`tab-${tab.dataset.tab}`);}const apply=event.target.closest("[data-apply]");if(apply)loadDashboard();const reset=event.target.closest("[data-reset]");if(reset)resetFilters(reset.dataset.reset);const exp=event.target.closest("[data-export]");if(exp)downloadExport(exp);const inspect=event.target.closest("[data-inspect]");if(inspect)inspectRecord(inspect);const cell=event.target.closest("[data-matrix-tab]");if(cell){if(cell.dataset.matrixTab==="recruitment"){$("#rec-identity").value=cell.dataset.matrixIdentity;$("#rec-condition").value=cell.dataset.matrixCondition;}else{$("#internal-identity").value=cell.dataset.matrixIdentity;$("#internal-condition").value=cell.dataset.matrixCondition;}loadDashboard();}});
+      $("#internal-matrix-dataset").addEventListener("change",renderInternalMatrix); $("#refresh-data").addEventListener("click",loadDashboard); loadDashboard();
     </script>
   </body>
 </html>
