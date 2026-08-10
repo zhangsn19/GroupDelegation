@@ -68,26 +68,30 @@ function createProlificSupport({
   expectedVariantCount,
   env = process.env,
 }) {
-  const active = assignmentMode === "prolific_taskflow";
+  const formalActive = assignmentMode === "prolific_taskflow";
   const expectedStudyId = String(env.PROLIFIC_EXPECTED_STUDY_ID || "").trim();
   const completionUrl = String(env.PROLIFIC_COMPLETION_URL || "").trim();
   const recordSecret = String(env.SERVER_RECORD_SECRET || "").trim();
   const bonusCurrency = String(env.BONUS_CURRENCY || "").trim();
   const bonusDisplayLabel = String(env.BONUS_DISPLAY_LABEL || "").trim();
   const previewMode = String(env.PROLIFIC_PREVIEW_MODE || "").toLowerCase() === "true";
+  const previewOnly = assignmentMode === "review_only" && previewMode;
+  const active = formalActive || previewOnly;
   let variants = new Map();
 
   if (active) {
-    if (!expectedStudyId || !ID_PATTERN.test(expectedStudyId)) {
-      throw configError("PROLIFIC_EXPECTED_STUDY_ID is required");
-    }
-    try {
-      const url = new URL(completionUrl);
-      if (url.protocol !== "https:" || !/prolific\.com$/i.test(url.hostname)) {
-        throw new Error("invalid");
+    if (formalActive) {
+      if (!expectedStudyId || !ID_PATTERN.test(expectedStudyId)) {
+        throw configError("PROLIFIC_EXPECTED_STUDY_ID is required");
       }
-    } catch {
-      throw configError("PROLIFIC_COMPLETION_URL must be an HTTPS Prolific URL");
+      try {
+        const url = new URL(completionUrl);
+        if (url.protocol !== "https:" || !/prolific\.com$/i.test(url.hostname)) {
+          throw new Error("invalid");
+        }
+      } catch {
+        throw configError("PROLIFIC_COMPLETION_URL must be an HTTPS Prolific URL");
+      }
     }
     if (recordSecret.length < 32) {
       throw configError("SERVER_RECORD_SECRET must contain at least 32 characters");
@@ -129,20 +133,34 @@ function createProlificSupport({
     if (!active) {
       throw requestError(404, "prolific_mode_disabled", "This Prolific entry is not enabled.");
     }
-    const prolificPid = validateId(body.PROLIFIC_PID ?? body.prolific_pid, "PROLIFIC_PID");
-    const studyId = validateId(body.STUDY_ID ?? body.prolific_study_id, "STUDY_ID");
-    const sessionId = validateId(body.SESSION_ID ?? body.prolific_session_id, "SESSION_ID");
     const previewRequested = body.preview === true || String(body.preview || "").toLowerCase() === "true";
     if (previewRequested && !previewMode) {
       throw requestError(403, "preview_mode_disabled", "Prolific Preview is not enabled for this study.");
     }
-    const variant = String(body.variant || "").trim();
-    if (studyId !== expectedStudyId) {
-      throw requestError(403, "invalid_study_id", "This study link is not valid.");
+    if (previewOnly && !previewRequested) {
+      throw requestError(403, "formal_mode_disabled", "Formal recruitment is not enabled for this study.");
     }
+    const variant = String(body.variant || "").trim();
     const descriptor = variants.get(variant);
     if (!descriptor) {
       throw requestError(403, "invalid_variant", "This Taskflow assignment is not valid.");
+    }
+    const generated = crypto.randomUUID().replace(/-/g, "");
+    const optionalId = (value, fallback, field) => {
+      const normalized = String(value || "").trim();
+      return normalized ? validateId(normalized, field) : fallback;
+    };
+    const prolificPid = previewOnly
+      ? optionalId(body.PROLIFIC_PID ?? body.prolific_pid, `preview_${generated.slice(0, 20)}`, "PROLIFIC_PID")
+      : validateId(body.PROLIFIC_PID ?? body.prolific_pid, "PROLIFIC_PID");
+    const studyId = previewOnly
+      ? optionalId(body.STUDY_ID ?? body.prolific_study_id, "preview_study", "STUDY_ID")
+      : validateId(body.STUDY_ID ?? body.prolific_study_id, "STUDY_ID");
+    const sessionId = previewOnly
+      ? optionalId(body.SESSION_ID ?? body.prolific_session_id, `preview_session_${generated.slice(0, 20)}`, "SESSION_ID")
+      : validateId(body.SESSION_ID ?? body.prolific_session_id, "SESSION_ID");
+    if (formalActive && studyId !== expectedStudyId) {
+      throw requestError(403, "invalid_study_id", "This study link is not valid.");
     }
     return {
       prolific_pid: prolificPid,

@@ -44,7 +44,49 @@ function loadDotEnv() {
 
 loadDotEnv();
 
-const store = require("./store");
+const internalStore = require("./store");
+const recruitmentStore = process.env.RECRUITMENT_DATA_DIR
+  ? internalStore.createStore(process.env.RECRUITMENT_DATA_DIR)
+  : internalStore;
+function isRecruitmentSession(session = {}) {
+  return session.assignment_mode === "prolific_taskflow" || session.is_preview === true || session.scope === "formal" || session.scope === "preview";
+}
+async function locateCurrentStore(id) {
+  try {
+    await recruitmentStore.readSession(id);
+    return recruitmentStore;
+  } catch (error) {
+    if (error.statusCode !== 410) throw error;
+  }
+  await internalStore.readSession(id);
+  return internalStore;
+}
+const store = {
+  DATA_DIR: internalStore.DATA_DIR,
+  async ensureDataDir() {
+    if (recruitmentStore === internalStore) return internalStore.ensureDataDir();
+    await Promise.all([internalStore.ensureDataDir(), recruitmentStore.ensureDataDir()]);
+  },
+  async listSessions() {
+    if (recruitmentStore === internalStore) return internalStore.listSessions();
+    const [recruitment, internal] = await Promise.all([recruitmentStore.listSessions(), internalStore.listSessions()]);
+    return [...recruitment, ...internal];
+  },
+  async readSession(id) {
+    const selected = await locateCurrentStore(id);
+    return selected.readSession(id);
+  },
+  async updateSession(id, updater) {
+    const selected = await locateCurrentStore(id);
+    return selected.updateSession(id, updater);
+  },
+  async writeSession(session) {
+    return (isRecruitmentSession(session) ? recruitmentStore : internalStore).writeSession(session);
+  },
+  async appendAuditEvent(event) {
+    return recruitmentStore.appendAuditEvent(event);
+  },
+};
 const { createReadOnlyLegacyStore } = require("./legacy-store");
 const legacyStore = createReadOnlyLegacyStore(process.env.LEGACY_STUDY1_DATA_DIR || "");
 const app = express();
@@ -78,7 +120,14 @@ const STUDY1_DICE_MULTISET = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5];
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false, limit: "16kb" }));
 app.get(["/", "/index.html"], (req, res, next) => {
-  if (ASSIGNMENT_MODE === "review_only") return res.status(403).type("text/plain").send("Study access requires a valid study link.");
+  if (ASSIGNMENT_MODE === "review_only") {
+    try {
+      prolificSupport.validateRequest(req.query);
+      return res.sendFile(path.join(__dirname, "..", "public", "en", "index.html"));
+    } catch (error) {
+      return res.status(error.statusCode || 403).type("text/plain").send("Study access requires a valid preview link.");
+    }
+  }
   if (ASSIGNMENT_MODE !== "prolific_taskflow") return next();
   res.sendFile(path.join(__dirname, "..", "public", "en", "index.html"));
 });
@@ -727,7 +776,9 @@ async function createSession({ study, participantId, requestedCondition, entry, 
   let entryAssignment = null;
   const hasEntry = String(entry || "").trim() !== "";
   if (prolificIdentity) {
-    if (ASSIGNMENT_MODE !== "prolific_taskflow") fail(404, "Prolific Taskflow entry is not enabled.");
+    if (ASSIGNMENT_MODE !== "prolific_taskflow" && !(ASSIGNMENT_MODE === "review_only" && prolificIdentity.is_preview)) {
+      fail(404, "Prolific Taskflow entry is not enabled.");
+    }
   } else if (qaIdentity) {
     // QA assignment is authenticated at the route and never uses recruitment randomization.
   } else if (ASSIGNMENT_MODE === "controlled_link") {
@@ -878,6 +929,7 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     last_resumed_at: null,
     resume_events: [],
     is_preview: Boolean(prolificIdentity?.is_preview),
+    scope: prolificIdentity ? (prolificIdentity.is_preview ? "preview" : "formal") : (qaIdentity?.team_review ? "team_review" : (qaIdentity ? "qa" : null)),
     preview_source: prolificIdentity?.preview_source || null,
     taskflow_variant_id: prolificIdentity?.taskflow_variant_id || null,
     variant_token_hash: prolificIdentity?.variant_token_hash || null,
@@ -1487,19 +1539,28 @@ app.get("/api/admin/session/:id", asyncHandler(async (req, res) => {
   });
 }));
 
+async function adminSessionsForQuery(query = {}) {
+  const scope = String(query.scope || "").trim();
+  const dataset = String(query.dataset || "").trim();
+  if (dataset === "recruitment" || ["formal", "preview"].includes(scope)) return recruitmentStore.listSessions();
+  if (dataset === "internal" || ["qa", "team_review"].includes(scope)) return internalStore.listSessions();
+  return store.listSessions();
+}
+
 app.get("/api/admin/records", asyncHandler(async (req, res) => {
-  const sessions = filterSessions(await store.listSessions(), req.query);
+  const sessions = filterSessions(await adminSessionsForQuery(req.query), req.query);
   res.json({ participants: prolificExport.adminRows(sessions) });
 }));
 
 app.get("/api/admin/datasets", asyncHandler(async (req, res) => {
-  const sessions = await store.listSessions();
+  const recruitmentSessions = await recruitmentStore.listSessions();
+  const internalSessions = await internalStore.listSessions();
   const historical = await legacyStore.listSessions();
-  const byScope = (scope) => sessions.filter((session) => prolificExport.sessionScope(session) === scope);
-  const formal = byScope("formal");
-  const preview = byScope("preview");
-  const qa = byScope("qa");
-  const teamReview = byScope("team_review");
+  const byScope = (sessions, scope) => sessions.filter((session) => prolificExport.sessionScope(session) === scope);
+  const formal = byScope(recruitmentSessions, "formal");
+  const preview = byScope(recruitmentSessions, "preview");
+  const qa = byScope(internalSessions, "qa");
+  const teamReview = byScope(internalSessions, "team_review");
   const internal = [...qa, ...teamReview];
   res.json({
     recruitment: {
@@ -1519,13 +1580,22 @@ app.get("/api/admin/datasets", asyncHandler(async (req, res) => {
       team_review_matrix: prolificAdminSummary(teamReview).active_matrix,
     },
     historical: { count: historical.length, read_only: true, data_dir: legacyStore.DATA_DIR },
-    storage: { current_data_dir: store.DATA_DIR, historical_data_dir: legacyStore.DATA_DIR },
+    storage: {
+      recruitment_data_dir: recruitmentStore.DATA_DIR,
+      internal_data_dir: internalStore.DATA_DIR,
+      historical_data_dir: legacyStore.DATA_DIR,
+    },
   });
 }));
 
 app.get("/api/admin/integrity", asyncHandler(async (req, res) => {
-  const sessions = await store.listSessions();
-  const sessionsFor = (scope) => sessions.filter((session) => prolificExport.sessionScope(session) === scope);
+  const recruitmentSessions = await recruitmentStore.listSessions();
+  const internalSessions = await internalStore.listSessions();
+  const sessions = [...recruitmentSessions, ...internalSessions];
+  const sessionsFor = (scope) => {
+    const source = ["formal", "preview"].includes(scope) ? recruitmentSessions : internalSessions;
+    return source.filter((session) => prolificExport.sessionScope(session) === scope);
+  };
   const idsFor = (scope) => new Set(sessionsFor(scope).map((session) => session.record_key || session.id));
   const overlapCount = (left, right) => [...left].filter((id) => right.has(id)).length;
   const scopeNames = ["formal", "preview", "qa", "team_review"];
@@ -1534,7 +1604,10 @@ app.get("/api/admin/integrity", asyncHandler(async (req, res) => {
   const check = (id, label, overlap) => ({ id, label, status: overlap === 0 ? "PASS" : "WARNING", detail: overlap === 0 ? "No overlapping records." : `${overlap} overlapping record(s).` });
   const predicateCheck = (id, label, matching, total) => ({ id, label, status: matching === total ? "PASS" : "WARNING", detail: `${matching} of ${total} record(s) satisfy the requirement.` });
   const countCheck = (id, label, bundleCount, scopeCount) => ({ id, label, status: bundleCount === scopeCount ? "PASS" : "WARNING", detail: `Bundle selector: ${bundleCount}; scope: ${scopeCount}.` });
-  const directoriesSeparate = path.resolve(store.DATA_DIR) !== path.resolve(legacyStore.DATA_DIR);
+  const resolvedDirectories = [recruitmentStore.DATA_DIR, internalStore.DATA_DIR, legacyStore.DATA_DIR].map((item) => path.resolve(item));
+  const directoriesSeparate = new Set(resolvedDirectories).size === resolvedDirectories.length;
+  const recruitmentContamination = recruitmentSessions.filter((session) => !["formal", "preview"].includes(prolificExport.sessionScope(session))).length;
+  const internalContamination = internalSessions.filter((session) => !["qa", "team_review"].includes(prolificExport.sessionScope(session))).length;
   const formalContamination = {
     qa: scopeSessions.formal.filter((session) => session.is_qa === true).length,
     team_review: scopeSessions.formal.filter((session) => session.is_team_review === true).length,
@@ -1558,13 +1631,16 @@ app.get("/api/admin/integrity", asyncHandler(async (req, res) => {
       predicateCheck("preview_identity", "Preview records satisfy is_preview=true", scopeSessions.preview.filter((session) => session.is_preview === true).length, scopeSessions.preview.length),
       { id: "cross_scope_duplicates", label: "No duplicate record key across scopes", status: crossScopeDuplicates === 0 ? "PASS" : "WARNING", detail: `${crossScopeDuplicates} record key(s) occur in multiple scopes.` },
       { id: "historical_read_only", label: "Historical source read-only", status: "PASS", detail: "Historical access uses the read-only legacy store." },
-      { id: "data_directories_separate", label: "Current DATA_DIR vs Historical DATA_DIR separate", status: directoriesSeparate ? "PASS" : "WARNING", detail: directoriesSeparate ? "Physical data directories are distinct." : "Current and historical data directories resolve to the same path." },
+      { id: "data_directories_separate", label: "Recruitment / Internal / Historical directories separate", status: directoriesSeparate ? "PASS" : "WARNING", detail: directoriesSeparate ? "All three physical data directories are distinct." : "Two or more physical data directories resolve to the same path." },
+      { id: "recruitment_store_scope", label: "Recruitment store contains only Formal / Preview", status: recruitmentContamination === 0 ? "PASS" : "WARNING", detail: `${recruitmentContamination} out-of-scope record(s).` },
+      { id: "internal_store_scope", label: "Internal store contains only QA / Team Review", status: internalContamination === 0 ? "PASS" : "WARNING", detail: `${internalContamination} out-of-scope record(s).` },
       countCheck("formal_bundle_count", "Formal bundle count equals Formal scope", sessions.filter((session) => prolificExport.sessionScope(session) === "formal").length, scopeSessions.formal.length),
       countCheck("preview_bundle_count", "Preview bundle count equals Preview scope", sessions.filter((session) => prolificExport.sessionScope(session) === "preview").length, scopeSessions.preview.length),
       countCheck("qa_bundle_count", "QA bundle count equals QA scope", sessions.filter((session) => prolificExport.sessionScope(session) === "qa" && session.is_qa === true).length, scopeSessions.qa.length),
       countCheck("team_review_bundle_count", "Team Review bundle count equals Team Review scope", sessions.filter((session) => prolificExport.sessionScope(session) === "team_review" && session.is_team_review === true).length, scopeSessions.team_review.length),
     ],
-    current_data_dir: store.DATA_DIR,
+    recruitment_data_dir: recruitmentStore.DATA_DIR,
+    internal_data_dir: internalStore.DATA_DIR,
     historical_data_dir: legacyStore.DATA_DIR,
   });
 }));
@@ -1674,18 +1750,23 @@ async function validateRuntime() {
     return;
   }
   if (!process.env.DATA_DIR) throw new Error("DATA_DIR must be set in production");
+  if (!process.env.RECRUITMENT_DATA_DIR) throw new Error("RECRUITMENT_DATA_DIR must be set in production");
   if (!process.env.LEGACY_STUDY1_DATA_DIR) throw new Error("LEGACY_STUDY1_DATA_DIR must be set in production");
   if (!STUDY_CONTACT_EMAIL) throw new Error("STUDY_CONTACT_EMAIL must be set in production");
   if (!path.isAbsolute(process.env.DATA_DIR)) throw new Error("DATA_DIR must be an absolute path in production");
+  if (!path.isAbsolute(process.env.RECRUITMENT_DATA_DIR)) throw new Error("RECRUITMENT_DATA_DIR must be an absolute path in production");
   if (!path.isAbsolute(process.env.LEGACY_STUDY1_DATA_DIR)) throw new Error("LEGACY_STUDY1_DATA_DIR must be an absolute path in production");
-  if (path.resolve(process.env.DATA_DIR) === path.resolve(process.env.LEGACY_STUDY1_DATA_DIR)) throw new Error("Current and historical Study1 data directories must remain separate");
+  const runtimeDirectories = [process.env.DATA_DIR, process.env.RECRUITMENT_DATA_DIR, process.env.LEGACY_STUDY1_DATA_DIR].map((item) => path.resolve(item));
+  if (new Set(runtimeDirectories).size !== runtimeDirectories.length) throw new Error("Recruitment, Internal, and Historical Study1 data directories must remain separate");
   await fs.promises.access(process.env.LEGACY_STUDY1_DATA_DIR, fs.constants.R_OK);
   await store.ensureDataDir();
-  const parent = path.dirname(store.DATA_DIR);
-  await fs.promises.mkdir(parent, { recursive: true });
-  const probe = path.join(parent, `.write-test-${process.pid}-${Date.now()}`);
-  await fs.promises.writeFile(probe, "ok", "utf8");
-  await fs.promises.unlink(probe);
+  for (const writableStore of [internalStore, recruitmentStore]) {
+    const parent = path.dirname(writableStore.DATA_DIR);
+    await fs.promises.mkdir(parent, { recursive: true });
+    const probe = path.join(parent, `.write-test-${process.pid}-${Date.now()}`);
+    await fs.promises.writeFile(probe, "ok", "utf8");
+    await fs.promises.unlink(probe);
+  }
 }
 
 if (require.main === module) {
