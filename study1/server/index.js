@@ -55,9 +55,9 @@ const ALLOW_TEAM_REVIEW = String(process.env.ALLOW_TEAM_REVIEW || "").toLowerCas
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const REQUIRE_PARTICIPANT_ID = IS_PRODUCTION || String(process.env.REQUIRE_PARTICIPANT_ID).toLowerCase() === "true";
 const STUDY_VERSION = process.env.STUDY_VERSION || "study1-v1.1.0";
-const PROTOCOL_VERSION = process.env.PROTOCOL_VERSION || "peer-reporting-v2";
-const TEST_CONDITION = String(process.env.TEST_CONDITION || "").trim();
 const ASSIGNMENT_MODE = String(process.env.ASSIGNMENT_MODE || "block").trim() || "block";
+const PROTOCOL_VERSION = process.env.PROTOCOL_VERSION || (ASSIGNMENT_MODE === "review_only" ? HUMAN_AI_PROTOCOL_VERSION : "peer-reporting-v2");
+const TEST_CONDITION = String(process.env.TEST_CONDITION || "").trim();
 const ENTRY_CODES = {
   A: { condition: "hidden", value: String(process.env.ENTRY_CODE_HIDDEN || "").trim() },
   B: { condition: "honest", value: String(process.env.ENTRY_CODE_HONEST || "").trim() },
