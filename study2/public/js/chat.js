@@ -1,5 +1,6 @@
 (function () {
-  const OPENING_MESSAGES = [
+  // Legacy opening script retained only for historical/non-Human-AI sessions.
+  const LEGACY_OPENING_MESSAGES = [
     ["群聊 AI", "大家好，任务群已经建好了。"],
     ["张明", "收到，我这边已经准备好了。"],
     ["李华", "我也进来了，等系统提示。"],
@@ -16,7 +17,7 @@
 
     const sidebar = document.createElement("aside");
     sidebar.className = "member-sidebar";
-    sidebar.innerHTML = `<h4>${options.sidebarTitle || "模拟同事群体"}</h4>`;
+    sidebar.innerHTML = `<h4>${options.sidebarTitle || "Work group"}</h4>`;
 
     const memberList = document.createElement("div");
     memberList.className = "member-list";
@@ -36,7 +37,7 @@
 
     const note = document.createElement("p");
     note.className = "sidebar-note";
-    note.textContent = "群聊 AI 负责接收并提交成员报告。";
+    note.textContent = options.sidebarNote || "The Submission System records each member's report.";
     sidebar.appendChild(note);
 
     const panel = document.createElement("section");
@@ -44,10 +45,15 @@
     const messages = document.createElement("div");
     messages.className = "chat-messages";
     panel.appendChild(messages);
-    const footer = document.createElement("div");
-    footer.className = "read-only-footer";
-    footer.textContent = options.footerText || "群聊 AI 负责接收并提交成员报告。";
-    panel.appendChild(footer);
+    const footerText = Object.prototype.hasOwnProperty.call(options, "footerText")
+      ? options.footerText
+      : "The Submission System records each member's report.";
+    if (footerText) {
+      const footer = document.createElement("div");
+      footer.className = "read-only-footer";
+      footer.textContent = footerText;
+      panel.appendChild(footer);
+    }
 
     layout.appendChild(sidebar);
     layout.appendChild(panel);
@@ -70,24 +76,40 @@
         messages.scrollTop = messages.scrollHeight;
         return msg;
       },
+      addSystemNotice(text) {
+        const notice = document.createElement("div");
+        notice.className = "system-notice";
+        notice.innerHTML = `<span class="system-notice-label">SUBMISSION SYSTEM</span><span></span>`;
+        notice.lastElementChild.textContent = text;
+        messages.appendChild(notice);
+        messages.scrollTop = messages.scrollHeight;
+        return notice;
+      },
       async addMessagesSequentially(items, gapMs = 650) {
         for (const item of items) {
           await delay(gapMs);
-          this.addMessage(item.sender, item.text, item.tone || "bot");
+          if (item.kind === "notice") this.addSystemNotice(item.text);
+          else this.addMessage(item.sender, item.text, item.tone || "bot");
         }
       }
     };
   }
 
   function avatarFor(name) {
-    if (name === "群聊 AI") return "AI";
+    if (name === "Submission System") return "SYSTEM";
     if (name === "你") return "你";
     return String(name || "员").slice(0, 1);
   }
 
+  function identityIntroMessages(members) {
+    return members
+      .filter((member) => member.id !== "participant")
+      .map((member) => ({ sender: member, text: `${member.name} is ready.`, tone: "system" }));
+  }
+
   function introMessages(members) {
     const byName = Object.fromEntries(members.map((member) => [member.name, member]));
-    return OPENING_MESSAGES.map(([name, text]) => ({
+    return LEGACY_OPENING_MESSAGES.map(([name, text]) => ({
       sender: byName[name] || { name, avatar: avatarFor(name) },
       text
     }));
@@ -95,8 +117,9 @@
 
   function peerRecordMessages(members, records) {
     const byName = Object.fromEntries(members.map((member) => [member.name, member]));
+    const byId = Object.fromEntries(members.map((member) => [member.id, member]));
     return records.map((record) => ({
-      sender: byName[record.name] || { name: record.name, avatar: avatarFor(record.name) },
+      sender: byId[record.member_id] || byName[record.name] || { name: record.name, avatar: avatarFor(record.name) },
       text: record.text
     }));
   }
@@ -108,6 +131,7 @@
   window.ChatView = {
     createReadOnlyChat,
     introMessages,
+    identityIntroMessages,
     peerRecordMessages,
     delay
   };

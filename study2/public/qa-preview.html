@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Study 2 Human–AI QA Preview</title>
+    <link rel="stylesheet" href="/css/style.css">
+  </head>
+  <body>
+    <div id="app"><section class="screen active"><div class="card hero" id="selector-card">
+      <p class="eyebrow">RESEARCHER QA · SYNTHETIC</p>
+      <h1>Study 2 Human–AI QA</h1>
+      <p class="subtitle">Choose one of the six protocol cells. QA records remain outside Recruitment.</p>
+      <label class="field-label" for="identity">Peer Identity</label>
+      <select id="identity" class="text-input"><option value="human">Human</option><option value="ai">AI</option></select>
+      <label class="field-label" for="condition">Reporting Information</label>
+      <select id="condition" class="text-input"><option value="hidden">Hidden</option><option value="honest">Honest</option><option value="dishonest">Dishonest</option></select>
+      <div class="hero-actions"><button id="create" class="btn btn-primary btn-lg"><span class="btn-title">Start QA Session</span><span class="btn-desc">Enter the complete Study 2 flow</span></button></div>
+      <p id="result" class="status-hint" role="status"></p>
+    </div></section></div>
+    <script>
+      if (location.protocol === "file:") {
+        document.querySelector("#selector-card").innerHTML = "<h1>This page must be opened through the Study 2 server.</h1>";
+      } else {
+        document.querySelector("#create").addEventListener("click", async () => {
+          const response = await fetch("/api/admin/qa/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ peer_identity: document.querySelector("#identity").value, condition: document.querySelector("#condition").value }) });
+          const data = await response.json();
+          if (!response.ok) { document.querySelector("#result").textContent = data.error || "QA unavailable"; return; }
+          location.href = `/en/?qa_session=${encodeURIComponent(data.session.id)}`;
+        });
+      }
+    </script>
+  </body>
+</html>

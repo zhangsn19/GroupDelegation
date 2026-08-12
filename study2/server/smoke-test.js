@@ -184,7 +184,7 @@ function makeResponses(items) {
   const responses = {};
   for (const item of items) {
     if (item.type === "text") responses[item.id] = "";
-    else if (item.type === "select") responses[item.id] = item.options[0];
+    else if (item.type === "select") responses[item.id] = typeof item.options[0] === "object" ? item.options[0].value : item.options[0];
     else if (item.type === "number") responses[item.id] = item.min ?? 18;
     else responses[item.id] = Math.min(item.scalePoints || 7, 4);
   }
@@ -196,11 +196,11 @@ function comprehensionAnswers() {
 }
 
 function assertPublicSession(session) {
-  for (const key of ["study", "condition", "condition_label", "condition_name", "is_test_session", "debug_mode", "debug_links_enabled", "randomization_block", "randomization_position", "assignment_source", "entry_link_id"]) {
+  for (const key of ["study", "condition_label", "condition_name", "is_test_session", "debug_mode", "debug_links_enabled", "randomization_block", "randomization_position", "assignment_source", "entry_link_id"]) {
     assert(!Object.prototype.hasOwnProperty.call(session, key), `public session exposed ${key}`);
   }
-  assert(session.study_version === "study2-v1.1.0", "public session study_version mismatch");
-  assert(session.protocol_version === "peer-reporting-v2", "public session protocol_version mismatch");
+  assert(session.study_version === "study2-human-ai-v1", "public session study_version mismatch");
+  assert(session.protocol_version === "study2-human-ai-v1", "public session protocol_version mismatch");
 }
 
 function assertPublicConfig(config) {
@@ -215,8 +215,9 @@ function assertPublicConfig(config) {
   assert(Array.isArray(config.ruleBlocks), "config ruleBlocks missing");
   assert(Array.isArray(config.comprehensionQuestions), "config comprehensionQuestions missing");
   assert(!JSON.stringify(config.comprehensionQuestions).includes("correctValue"), "config exposed comprehension correctValue");
-  const f2 = config.postSurveyItems.find((item) => item.id === "f_design_influences");
-  assert(f2.prompt.includes("请说明；若没有或不想补充，也可留空。"), "F2 final text mismatch");
+  const openItem = config.postSurveyItems.find((item) => item.id === "f_decision_considerations");
+  assert(openItem && openItem.required === false && openItem.prompt === "What factors, if any, did you consider when deciding how much income to report during the task?", "active optional open item mismatch");
+  assert(!config.postSurveyItems.some((item) => item.id === "f_design_influences"), "legacy F2 must not be active");
 }
 
 async function testMissingSessionHandling(server) {
@@ -561,7 +562,7 @@ function testControlledLinkAssignment() {
       });
     }
     function assertPublicClean(value) {
-      const forbiddenKeys = new Set(["condition", "assignment_source", "entry_link_id"]);
+      const forbiddenKeys = new Set(["assignment_source", "entry_link_id"]);
       const visit = (node) => {
         if (!node || typeof node !== "object") return;
         for (const [key, child] of Object.entries(node)) {
@@ -831,12 +832,13 @@ function staticChecks() {
   const incomeJs = fs.readFileSync(path.join(root, "public/js/study2-income.js"), "utf8");
   const appJs = fs.readFileSync(path.join(root, "public/js/app.js"), "utf8");
   const indexHtml = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
+  const enIndexHtml = fs.readFileSync(path.join(root, "public/en/index.html"), "utf8");
   const styleCss = fs.readFileSync(path.join(root, "public/css/style.css"), "utf8");
   const surveyJs = fs.readFileSync(path.join(root, "public/js/survey.js"), "utf8");
   const peerConfig = fs.readFileSync(path.join(root, "config/peer-records.js"), "utf8");
   const studyConfig = fs.readFileSync(path.join(root, "config/study2-income.js"), "utf8");
   const measureConfig = fs.readFileSync(path.join(root, "config/measures.js"), "utf8");
-  const allText = [incomeJs, appJs, indexHtml, styleCss, surveyJs, peerConfig, studyConfig, measureConfig].join("\n");
+  const allText = [incomeJs, appJs, indexHtml, enIndexHtml, styleCss, surveyJs, peerConfig, studyConfig, measureConfig].join("\n");
   for (const file of listFiles(root, ".js")) {
     if (file.includes(`${path.sep}node_modules${path.sep}`)) continue;
     const check = spawnSync(process.execPath, ["--check", file], { encoding: "utf8", env: makeBaseTestEnv({ DATA_DIR: path.join(os.tmpdir(), `study2-check-${process.pid}`) }) });
@@ -848,7 +850,7 @@ function staticChecks() {
   assert(incomeJs.includes("你的个人收入申报不会向其他成员展示。"), "new income report privacy copy missing");
   assert(incomeJs.includes("模拟扣除金额由申报收入计算；任务保留奖励 = 实际收入 − 模拟扣除金额。"), "income report final hint missing");
   assert(incomeJs.includes("基础收入") && incomeJs.includes("速度奖励") && incomeJs.includes("本轮实际收入"), "effort result income breakdown missing");
-  assert(incomeJs.includes("努力任务已完成") && incomeJs.includes("你的实际收入由 4 轮任务的本轮实际收入累计得出。") && incomeJs.includes("查看同事此前的收入申报"), "actual income summary page missing");
+  assert(incomeJs.includes("努力任务已完成") && incomeJs.includes("你的实际收入由 4 轮任务的本轮实际收入累计得出。") && incomeJs.includes("View the other group members' income reports"), "actual income summary page missing");
   const actualSection = incomeJs.slice(incomeJs.indexOf("function renderActualIncome"), incomeJs.indexOf("function renderIncomeReport"));
   const reportSection = incomeJs.slice(incomeJs.indexOf("function renderIncomeReport"), incomeJs.indexOf("function renderIncomeConfirmation"));
   assert(!incomeJs.includes('type="range"'), "income report range slider must be removed");
@@ -876,26 +878,27 @@ function staticChecks() {
   assert((appJs.match(/debrief-viewed/g) || []).length === 1, "frontend should call debrief-viewed only once");
   assert(appJs.includes("复制参与编号") && appJs.includes("已复制"), "copy participant id UI missing");
   assert(appJs.includes("参与信息") && appJs.includes("研究联系邮箱") && appJs.includes("123456@163.com"), "participant info card missing");
-  assert(appJs.includes("感谢你完成本次任务！") && appJs.includes("你的任务与问卷记录仅用于研究。你可凭参与编号联系研究团队，了解更多安排、撤回本次参与或申请删除本次记录。"), "debrief final copy missing");
+  assert(appJs.includes("The identities and reporting patterns of the other group members were simulated and controlled by the research system for experimental purposes.") && appJs.includes("No other human participants or live AI models were making these reporting decisions in real time."), "Human-AI debrief disclosure missing");
   assert(!appJs.includes("研究数据管理规范") && !appJs.includes("预先安排") && !appJs.includes("信息环境"), "debrief old research-detail copy must be removed");
   assert(appJs.includes("感谢你的参与。"), "completion thank-you copy missing");
   assert((appJs.match(/感谢你的参与。/g) || []).length === 1, "completion thank-you copy must appear exactly once");
   assert(appJs.includes("participant-id-copy-source") && appJs.includes("123456@163.com"), "completion participant id/contact fallback missing");
   assert(!indexHtml.includes("Group Deception v2") && !indexHtml.includes("GROUP DECEPTION V2"), "internal version label must be removed");
   assert(!indexHtml.includes("模拟收入申报任务") && indexHtml.includes("实验二：收入申报任务"), "Study 2 visible title must remove 模拟");
-  assert(indexHtml.includes("<li>你的个人报告不会向其他成员展示。</li>"), "final consent bullet 1 missing");
-  assert(indexHtml.includes("<li>完成全部流程后，你将获得基础参与报酬；此外，任务报酬将根据页面所示规则另行计算。最终被试费由基础参与报酬和任务报酬两部分构成。</li>"), "final consent bullet 2 missing");
-  assert(indexHtml.includes("<li>你可以随时停止参与。</li>"), "final consent bullet 3 missing");
+  assert(indexHtml.includes("Your assigned group identity will be shown after you begin."), "Human-AI consent identity disclosure missing");
+  assert(enIndexHtml.includes("Your individual report will not be shown to the other group members."), "final consent privacy bullet missing");
+  assert(enIndexHtml.includes("Any task bonus will be calculated according to the rules shown in the study."), "final consent reward bullet missing");
+  assert(enIndexHtml.includes("You may stop participating at any time."), "final consent withdrawal bullet missing");
   assert(!indexHtml.includes("部分群体互动内容由系统生成") && !indexHtml.includes("其他成员也无法查看或更改你的个人报告内容") && !indexHtml.includes("任务结束后，我们将说明本研究的完整安排及数据处理方式"), "old consent copy must be removed");
   assert(appJs.includes("开始前，请回答几个关于日常 AI 使用经验的问题：") && appJs.includes("请根据你的真实情况选择"), "baseline title/subtitle copy missing");
   assert(!measureConfig.includes("频率是。") && !measureConfig.includes("具体任务。") && !measureConfig.includes("完成任务。") && !measureConfig.includes("代为执行。"), "baseline prompts should not end with full stop");
   assert(studyConfig.includes('title: "实验二：收入申报任务"') && studyConfig.includes('taskName: "收入申报任务"'), "Study 2 config visible title/taskName must remove 模拟");
   assert(!studyConfig.includes("实验二：模拟收入申报任务") && !studyConfig.includes('taskName: "模拟收入申报任务"'), "old Study 2 visible title returned");
-  assert(studyConfig.includes("模拟同事群体") && studyConfig.includes("模拟扣除金额"), "required 模拟 terms missing");
-  for (const text of ["你的群体", "完成任务与个人申报", "私密性与群聊 AI", "任务报酬如何计算"]) assert(studyConfig.includes(text), `Study 2 rule block missing ${text}`);
+  assert(!studyConfig.includes("模拟同事群体") && !studyConfig.includes("群聊 AI") && studyConfig.includes("Submission System") && studyConfig.includes("模拟扣除金额"), "Human-AI group framing or deduction wording mismatch");
+  for (const text of ["完成任务与个人申报", "Privacy and the Submission System", "任务报酬如何计算"]) assert(studyConfig.includes(text), `Study 2 rule block missing ${text}`);
   assert(studyConfig.includes("实际收入是任务计算的基数，不等同于最终计入被试费的任务报酬。"), "Study 2 reward base explanation missing");
   assert(studyConfig.includes("模拟扣除金额 = 申报收入 × 0.5") && studyConfig.includes("任务保留奖励 = 实际收入 − 模拟扣除金额"), "Study 2 formulas missing");
-  assert(studyConfig.includes("每答对 1 题可获得 ¥0.80 的基础收入") && studyConfig.includes("速度奖励最高为 ¥1.00") && studyConfig.includes("本轮实际收入 = 基础收入 + 速度奖励"), "effort income transparency copy missing");
+  assert(studyConfig.includes("Each correct answer earns ¥0.80 in base income") && studyConfig.includes("maximum speed bonus is ¥1.00") && studyConfig.includes("Actual income for the round = base income + speed bonus"), "effort income transparency copy missing");
   assert(studyConfig.includes("例如：若实际收入为 ¥20.00，申报收入为 ¥10.00") && studyConfig.includes("则模拟扣除金额为 ¥5.00，任务保留奖励为 ¥15.00。"), "Study 2 scaled example missing");
   assert(studyConfig.includes("在其他条件相同的情况下，申报收入越低，任务保留奖励越高。"), "Study 2 reward direction sentence missing");
   assert(studyConfig.includes("提示：先用申报收入 × 0.5 计算模拟扣除金额") && studyConfig.includes("模拟扣除金额为 ¥5.00；任务保留奖励为 ¥15.00。"), "Study 2 comprehension calculation item missing");
@@ -937,8 +940,8 @@ async function main() {
     const config = await request(server, "GET", "/api/config");
     const health = await request(server, "GET", "/health");
     assert(health.study === "study2", "health study mismatch");
-    assert(health.study_version === "study2-v1.1.0", "health study_version mismatch");
-    assert(health.protocol_version === "peer-reporting-v2", "health protocol_version mismatch");
+    assert(health.study_version === "study2-human-ai-v1", "health study_version mismatch");
+    assert(health.protocol_version === "study2-human-ai-v1", "health protocol_version mismatch");
     assertPublicConfig(config);
     await testMissingSessionHandling(server);
     await testApiNeverReturnsHtml(server);
@@ -963,4 +966,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-

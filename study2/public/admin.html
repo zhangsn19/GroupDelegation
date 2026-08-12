@@ -1,155 +1,121 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Group Deception Study 2 管理端</title>
+    <title>Study2 Human–AI Admin</title>
     <link rel="stylesheet" href="/css/style.css">
+    <style>
+      :root { --border:#dbe3ee; --muted:#64748b; --soft:#f8fafc; --blue:#1d4ed8; --green:#15803d; --amber:#a16207; }
+      body { background:#f4f7fb; }
+      .shell { width:min(1450px,calc(100% - 2rem)); margin:1rem auto 2rem; display:grid; gap:.75rem; }
+      .card { background:#fff; border:1px solid var(--border); border-radius:9px; padding:.85rem 1rem; box-shadow:0 1px 2px rgb(15 23 42 / .04); }
+      .dashboard-header,.section-head,.header-meta,.toolbar { display:flex; align-items:center; justify-content:space-between; gap:.6rem; flex-wrap:wrap; }
+      .dashboard-header h1,.tab-heading h2,.section-head h3 { margin:0; }.dashboard-header h1 { font-size:1.18rem; }
+      .eyebrow,.summary-label { color:var(--muted); font-size:.67rem; font-weight:800; letter-spacing:.08em; text-transform:uppercase; }
+      .badge { display:inline-flex; align-items:center; border:1px solid var(--border); border-radius:999px; padding:.17rem .45rem; font-size:.65rem; font-weight:750; background:var(--soft); }
+      .badge.pass { color:var(--green); background:#f0fdf4; border-color:#bbf7d0; }.badge.warning { color:var(--amber); background:#fffbeb; border-color:#fde68a; }.badge.blue { color:var(--blue); background:#eff6ff; border-color:#bfdbfe; }.badge.internal { color:#6d28d9; background:#f5f3ff; border-color:#ddd6fe; }
+      .token-box { display:flex; gap:.35rem; align-items:center; }.token-box input { min-height:32px; min-width:230px; padding:.3rem .45rem; border:1px solid var(--border); border-radius:6px; }
+      .compact { min-height:32px; padding:.34rem .65rem; border-radius:6px; font-size:.72rem; white-space:nowrap; }
+      .tab-nav { display:flex; gap:.35rem; }.tab-button { border:0; border-bottom:3px solid transparent; background:transparent; padding:.55rem .75rem; font-size:.77rem; font-weight:750; cursor:pointer; }.tab-button.active { color:var(--blue); border-color:var(--blue); }
+      .tab-heading p { margin:.25rem 0 0; color:var(--muted); font-size:.73rem; }
+      .summary-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:.55rem; }.summary-grid.three { grid-template-columns:repeat(3,1fr); }.summary-card { background:#fff; border:1px solid var(--border); border-radius:8px; padding:.7rem .85rem; }.summary-count { margin-top:.1rem; font-size:1.45rem; font-weight:850; }.summary-description { margin-top:.3rem; color:var(--muted); font-size:.7rem; }
+      .exports-grid { display:grid; grid-template-columns:repeat(5,minmax(145px,1fr)); gap:.5rem; }.export-group { display:grid; align-content:start; gap:.22rem; border:1px solid var(--border); border-radius:7px; padding:.58rem; }.export-group h4 { margin:0; font-size:.75rem; }.export-group span { min-height:2.2em; color:var(--muted); font-size:.65rem; }
+      .table-wrap,.matrix-wrap { overflow:auto; }.admin-table { width:100%; border-collapse:collapse; font-size:.72rem; }.admin-table th,.admin-table td { border:1px solid var(--border); padding:.42rem; text-align:left; vertical-align:middle; }.admin-table th { background:var(--soft); color:#334155; white-space:nowrap; }
+      .matrix-table td { min-width:130px; cursor:pointer; }.matrix-table td:hover { background:#eff6ff; }.matrix-completed { font-size:1.2rem; font-weight:850; }.matrix-meta { display:grid; grid-template-columns:1fr auto; gap:.13rem .4rem; margin-top:.25rem; color:var(--muted); font-size:.64rem; }.matrix-meta strong { color:#334155; }
+      .filter-grid { display:grid; grid-template-columns:repeat(6,minmax(115px,1fr)) auto; gap:.45rem; align-items:end; }.filter-field { display:grid; gap:.18rem; }.filter-field label { color:#475569; font-size:.65rem; font-weight:750; }.filter-field select,.filter-field input { min-height:32px; padding:.3rem .42rem; border:1px solid var(--border); border-radius:6px; background:#fff; font-size:.71rem; min-width:0; }
+      .advanced { margin-top:.5rem; border-top:1px solid var(--border); padding-top:.5rem; }.advanced summary,.details-card>summary { cursor:pointer; font-size:.74rem; font-weight:750; }.advanced-grid { display:grid; grid-template-columns:1.2fr 1.3fr auto auto; gap:.5rem; margin-top:.5rem; align-items:end; }.check-field { display:flex; align-items:center; gap:.3rem; min-height:32px; font-size:.7rem; }
+      .quality-list { display:flex; flex-wrap:wrap; gap:.18rem; }.empty { padding:.9rem; text-align:center; color:var(--muted); }
+      .integrity-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:.5rem; margin-top:.65rem; }.integrity-item { border:1px solid var(--border); border-radius:7px; padding:.55rem; }.integrity-name { font-size:.69rem; font-weight:750; }.integrity-detail { margin-top:.25rem; color:var(--muted); font-size:.63rem; }
+      .technical-grid { display:grid; grid-template-columns:1fr 1fr; gap:.65rem; margin-top:.6rem; }.code-output { max-height:430px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-size:.68rem; }
+      .section-note { color:var(--muted); font-size:.66rem; }.hidden { display:none!important; }
+      @media(max-width:1000px){.exports-grid{grid-template-columns:repeat(3,1fr)}.filter-grid{grid-template-columns:repeat(3,1fr)}.summary-grid,.summary-grid.three{grid-template-columns:repeat(2,1fr)}}
+      @media(max-width:650px){.dashboard-header{align-items:flex-start}.header-meta{justify-content:flex-start}.tab-nav{overflow:auto}.exports-grid,.filter-grid,.advanced-grid,.technical-grid,.integrity-grid{grid-template-columns:1fr}.summary-grid,.summary-grid.three{grid-template-columns:1fr 1fr}.token-box{width:100%}.token-box input{min-width:0;flex:1}}
+    </style>
   </head>
   <body>
-    <main class="admin-page">
-      <section class="panel">
-        <div class="section-kicker">Admin</div>
-        <h1>Study 2 管理端导出</h1>
-        <p class="muted">输入 `ADMIN_TOKEN` 后查看计数并下载导出表。</p>
-        <label class="field-label" for="admin-token">管理员 token</label>
-        <input id="admin-token" class="text-input" type="password" autocomplete="off">
-        <label class="consent-check"><input id="include-test" type="checkbox"><span>包含测试 / 调试数据</span></label>
-        <label class="field-label" for="filter-condition">condition</label>
-        <select id="filter-condition" class="text-input">
-          <option value="all">全部</option>
-          <option value="hidden">hidden</option>
-          <option value="honest">honest</option>
-          <option value="dishonest">dishonest</option>
-        </select>
-        <label class="field-label" for="start-date">开始日期</label>
-        <input id="start-date" class="text-input" type="date">
-        <label class="field-label" for="end-date">结束日期</label>
-        <input id="end-date" class="text-input" type="date">
-        <label class="field-label" for="record-kind">Prolific record type</label>
-        <select id="record-kind" class="text-input">
-          <option value="all">Formal and Preview</option>
-          <option value="formal">Formal only</option>
-          <option value="preview">Preview only</option>
-        </select>
-        <label class="field-label" for="record-status">Prolific status</label>
-        <select id="record-status" class="text-input">
-          <option value="all">All statuses</option>
-          <option value="incomplete">Incomplete</option>
-          <option value="completed">Completed</option>
-        </select>
-        <label class="consent-check"><input id="resumed-only" type="checkbox"><span>Resumed records only</span></label>
-        <label class="consent-check"><input id="aliases-only" type="checkbox"><span>Session alias count greater than 1</span></label>
-        <label class="field-label" for="record-conflict">Recovery flags</label>
-        <select id="record-conflict" class="text-input">
-          <option value="all">All records</option>
-          <option value="recovery_conflict">Recovery conflict</option>
-          <option value="identity_conflict">Identity conflict</option>
-        </select>
-        <div class="action-row">
-          <button id="load-summary" class="primary-button">查看汇总</button>
+    <main class="shell">
+      <header class="card dashboard-header">
+        <div><div class="eyebrow">Independent researcher dashboard</div><h1>Study2 Human–AI Admin</h1></div>
+        <div class="header-meta">
+          <span class="badge blue">PRELAUNCH REVIEW</span><span class="badge">study2-human-ai-v1</span><span id="health-badge" class="badge">Not checked</span>
+          <div class="token-box"><label class="section-note" for="admin-token">ADMIN_TOKEN</label><input id="admin-token" type="password" autocomplete="off"><button id="refresh-data" class="primary-button compact">Authenticate &amp; Refresh</button></div>
+          <span id="last-refreshed" class="section-note">Last refreshed: —</span>
         </div>
+      </header>
+
+      <nav class="card tab-nav" aria-label="Admin datasets">
+        <button class="tab-button active" data-tab="recruitment">Recruitment (<span id="tab-formal-count">—</span> Formal)</button>
+        <button class="tab-button" data-tab="internal">Internal Testing (<span id="tab-internal-count">—</span>)</button>
+        <button class="tab-button" data-tab="historical">Historical Study2 (<span id="tab-historical-count">—</span>)</button>
+      </nav>
+
+      <section id="tab-recruitment" class="tab-panel">
+        <div class="card tab-heading"><h2>RECRUITMENT</h2><p>Formal and Preview records in the Recruitment store. QA and Team Review are excluded.</p></div>
+        <div class="summary-grid"><article class="summary-card"><div class="summary-label">Formal</div><div id="count-formal" class="summary-count">—</div></article><article class="summary-card"><div class="summary-label">Preview</div><div id="count-preview" class="summary-count">—</div></article><article class="summary-card"><div class="summary-label">Formal Completed</div><div id="count-formal-completed" class="summary-count">—</div></article><article class="summary-card"><div class="summary-label">Formal Incomplete</div><div id="count-formal-incomplete" class="summary-count">—</div></article></div>
+        <section class="card"><div class="section-head"><h3>DATA EXPORTS</h3><span class="section-note">Complete bundles ignore participant filters; standalone files are scope-filtered.</span></div><div class="exports-grid">
+          <div class="export-group"><h4>Formal ZIP</h4><span>Complete Formal-only 9-file bundle.</span><button class="secondary-button compact" data-export="/api/admin/export/formal-bundle.zip" data-complete="true">Download</button></div>
+          <div class="export-group"><h4>Preview ZIP</h4><span>Complete Preview-only 9-file bundle.</span><button class="secondary-button compact" data-export="/api/admin/export/preview-bundle.zip" data-complete="true">Download</button></div>
+          <div class="export-group"><h4>participants.csv</h4><span>Filtered recruitment participants.</span><button class="secondary-button compact" data-export="/api/admin/export/participants.csv" data-filter="recruitment">Download</button></div>
+          <div class="export-group"><h4>study2_effort_rounds.csv</h4><span>Filtered four-round effort details.</span><button class="secondary-button compact" data-export="/api/admin/export/study2_effort_rounds.csv" data-filter="recruitment">Download</button></div>
+          <div class="export-group"><h4>study2_income_reports.csv</h4><span>Filtered final income reports.</span><button class="secondary-button compact" data-export="/api/admin/export/study2_income_reports.csv" data-filter="recruitment">Download</button></div>
+          <div class="export-group"><h4>Raw JSON</h4><span>Filtered recruitment sessions.</span><button class="secondary-button compact" data-export="/api/admin/export/json" data-filter="recruitment">Download</button></div>
+        </div></section>
+        <section class="card"><div class="section-head"><h3>FORMAL RECRUITMENT 2×3 MATRIX</h3><span class="section-note">Formal scope only; Completed is the primary metric.</span></div><div id="recruitment-matrix" class="matrix-wrap"></div></section>
+        <section class="card"><div class="section-head"><h3>Recruitment Records</h3><span id="recruitment-count" class="section-note"></span></div><div id="recruitment-filters"></div><div id="recruitment-records" class="table-wrap" style="margin-top:.65rem"></div></section>
       </section>
-      <section class="panel">
-        <h2>汇总</h2>
-        <pre id="summary-output" class="code-output">尚未加载。</pre>
-        <h2 id="formal-heading">Formal Records</h2>
-        <pre id="formal-output" class="code-output">Not loaded.</pre>
-        <h2 id="preview-heading">Preview Records</h2>
-        <pre id="preview-output" class="code-output">Not loaded.</pre>
-        <div id="export-links" class="export-grid"></div>
+
+      <section id="tab-internal" class="tab-panel" hidden>
+        <div class="card tab-heading"><div class="header-meta" style="justify-content:flex-start"><h2>INTERNAL TESTING</h2><span class="badge internal">NON-FORMAL</span><span class="badge internal">INTERNAL STORE</span></div><p>QA and Team Review records are physically separated from recruitment records.</p></div>
+        <div class="summary-grid three"><article class="summary-card"><div class="summary-label">QA</div><div id="count-qa" class="summary-count">—</div></article><article class="summary-card"><div class="summary-label">Team Review</div><div id="count-team-review" class="summary-count">—</div></article><article class="summary-card"><div class="summary-label">Total Internal</div><div id="count-internal" class="summary-count">—</div></article></div>
+        <section class="card"><div class="section-head"><h3>DATA EXPORTS</h3><span class="section-note">Internal scopes only.</span></div><div class="exports-grid">
+          <div class="export-group"><h4>QA ZIP</h4><span>Complete QA-only 9-file bundle.</span><button class="secondary-button compact" data-export="/api/admin/export/qa-bundle.zip" data-complete="true">Download</button></div>
+          <div class="export-group"><h4>Team Review ZIP</h4><span>Complete Team Review-only 9-file bundle.</span><button class="secondary-button compact" data-export="/api/admin/export/team-review-bundle.zip" data-complete="true">Download</button></div>
+          <div class="export-group"><h4>participants.csv</h4><span>Filtered internal participants.</span><button class="secondary-button compact" data-export="/api/admin/export/participants.csv" data-filter="internal">Download</button></div>
+          <div class="export-group"><h4>study2_effort_rounds.csv</h4><span>Filtered internal effort details.</span><button class="secondary-button compact" data-export="/api/admin/export/study2_effort_rounds.csv" data-filter="internal">Download</button></div>
+          <div class="export-group"><h4>study2_income_reports.csv</h4><span>Filtered internal income reports.</span><button class="secondary-button compact" data-export="/api/admin/export/study2_income_reports.csv" data-filter="internal">Download</button></div>
+          <div class="export-group"><h4>Raw JSON</h4><span>Filtered internal sessions.</span><button class="secondary-button compact" data-export="/api/admin/export/json" data-filter="internal">Download</button></div>
+        </div></section>
+        <section class="card"><div class="section-head"><h3>INTERNAL TEST 2×3 MATRIX</h3><div class="filter-field"><label for="internal-matrix-scope">Dataset</label><select id="internal-matrix-scope"><option value="all">All Internal</option><option value="qa">QA</option><option value="team_review">Team Review</option></select></div></div><div id="internal-matrix" class="matrix-wrap"></div></section>
+        <section class="card"><div class="section-head"><h3>Internal Records</h3><span id="internal-count" class="section-note"></span></div><div id="internal-filters"></div><div id="internal-records" class="table-wrap" style="margin-top:.65rem"></div></section>
       </section>
+
+      <section id="tab-historical" class="tab-panel" hidden>
+        <div class="card tab-heading"><div class="header-meta" style="justify-content:flex-start"><h2>HISTORICAL STUDY2</h2><span class="badge internal">READ-ONLY LEGACY DATA</span></div><p>Old Study2 records are read from their physically separate historical source and are never mutated by this Admin.</p></div>
+        <div class="summary-grid three"><article class="summary-card"><div class="summary-label">Historical Records</div><div id="count-historical" class="summary-count">—</div></article><article class="summary-card"><div class="summary-label">Storage</div><div class="summary-description">Physically separate source</div></article><article class="summary-card"><div class="summary-label">Access</div><div class="summary-description">Read only</div></article></div>
+        <section class="card"><div class="section-head"><h3>DATA EXPORT</h3><span class="section-note">Historical dataset only.</span></div><div class="exports-grid"><div class="export-group"><h4>Historical Study2 ZIP</h4><span>Complete read-only legacy 9-file bundle.</span><button class="secondary-button compact" data-export="/api/admin/export/historical-bundle.zip" data-complete="true">Download</button></div></div></section>
+        <section class="card"><div class="section-head"><h3>Historical Records</h3><span id="historical-count" class="section-note"></span></div><div id="historical-records" class="table-wrap"></div></section>
+      </section>
+
+      <details id="integrity-details" class="card details-card"><summary>Data Integrity <span id="integrity-summary" class="badge">Not loaded</span> <span class="section-note">Details ▾</span></summary><div id="integrity-output" class="integrity-grid"></div></details>
+      <details id="technical-details" class="card details-card"><summary>Technical Details / Inspect</summary><div class="technical-grid"><div><strong>Selected current record</strong><pre id="record-detail" class="code-output">Select Inspect to load Study2-specific details.</pre></div><div><strong>Selected historical record</strong><pre id="historical-detail" class="code-output">Select Inspect to load read-only legacy details.</pre></div><div><strong>Dataset response</strong><pre id="dataset-detail" class="code-output">Not loaded.</pre></div><div><strong>Integrity response</strong><pre id="integrity-detail" class="code-output">Not loaded.</pre></div></div></details>
     </main>
     <script>
-      const tokenInput = document.querySelector("#admin-token");
-      const summaryOutput = document.querySelector("#summary-output");
-      const formalOutput = document.querySelector("#formal-output");
-      const previewOutput = document.querySelector("#preview-output");
-      const links = document.querySelector("#export-links");
-      let prolificSummary = null;
-      const exportsList = [
-        ["JSON 原始数据", "/api/admin/export/json"],
-        ["participants.csv", "/api/admin/export/participants.csv"],
-        ["study2_effort_rounds.csv", "/api/admin/export/study2_effort_rounds.csv"],
-        ["study2_income_reports.csv", "/api/admin/export/study2_income_reports.csv"],
-        ["Download formal Prolific export bundle", "/api/admin/export/prolific-bundle.zip"],
-        ["Download Preview records bundle", "/api/admin/export/prolific-preview-bundle.zip"]
-      ];
-      async function loadSummary() {
-        const token = tokenInput.value.trim();
-        const response = await fetch(`/api/admin/summary?${queryString()}`, {
-          headers: { "x-admin-token": token }
-        });
-        const data = await response.json();
-        const prolificResponse = await fetch(`/api/admin/prolific-summary?${queryString()}`, {
-          headers: { "x-admin-token": token }
-        });
-        prolificSummary = await prolificResponse.json();
-        summaryOutput.textContent = JSON.stringify({ current: data, preview_mode_enabled: prolificSummary.preview_mode_enabled, formal: prolificSummary.formal, preview: prolificSummary.preview }, null, 2);
-        renderProlificRecords();
-        links.innerHTML = exportsList.map(([label, href]) => (
-          `<button class="secondary-button" data-export="${href}">${label}</button>`
-        )).join("");
-      }
-      document.querySelector("#load-summary").addEventListener("click", loadSummary);
-      ["record-kind", "record-status", "record-conflict", "resumed-only", "aliases-only"].forEach((id) => {
-        document.querySelector(`#${id}`).addEventListener("change", () => {
-          if (prolificSummary) loadSummary();
-        });
-      });
-      function filterRecords(records) {
-        const status = document.querySelector("#record-status").value;
-        const conflict = document.querySelector("#record-conflict").value;
-        return records.filter((record) => {
-          if (status === "completed" && record.status !== "completed") return false;
-          if (status === "incomplete" && record.status === "completed") return false;
-          if (document.querySelector("#resumed-only").checked && Number(record.resume_count || 0) < 1) return false;
-          if (document.querySelector("#aliases-only").checked && Number(record.session_alias_count || 0) <= 1) return false;
-          if (conflict !== "all" && !(record.quality_flags || []).includes(conflict)) return false;
-          return true;
-        });
-      }
-      function renderProlificRecords() {
-        if (!prolificSummary) return;
-        const kind = document.querySelector("#record-kind").value;
-        const formal = filterRecords(prolificSummary.participants || []);
-        const preview = filterRecords(prolificSummary.preview_participants || []);
-        document.querySelector("#formal-heading").hidden = kind === "preview";
-        formalOutput.hidden = kind === "preview";
-        formalOutput.textContent = JSON.stringify(formal, null, 2);
-        document.querySelector("#preview-heading").hidden = kind === "formal";
-        previewOutput.hidden = kind === "formal";
-        previewOutput.textContent = JSON.stringify(preview, null, 2);
-      }
-      links.addEventListener("click", async (event) => {
-        const button = event.target.closest("[data-export]");
-        if (!button) return;
-        const token = tokenInput.value.trim();
-        const href = button.dataset.export;
-        const response = await fetch(`${href}?${queryString()}`, {
-          headers: { "x-admin-token": token }
-        });
-        const blob = await response.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = href.split("/").pop();
-        a.click();
-        URL.revokeObjectURL(url);
-      });
-      function queryString() {
-        const params = new URLSearchParams();
-        params.set("condition", document.querySelector("#filter-condition").value);
-        if (document.querySelector("#include-test").checked) params.set("include_test", "true");
-        if (document.querySelector("#start-date").value) params.set("start_date", document.querySelector("#start-date").value);
-        if (document.querySelector("#end-date").value) params.set("end_date", document.querySelector("#end-date").value);
-        params.set("record_kind", document.querySelector("#record-kind").value);
-        params.set("status", document.querySelector("#record-status").value);
-        if (document.querySelector("#resumed-only").checked) params.set("resumed_only", "true");
-        if (document.querySelector("#aliases-only").checked) params.set("aliases_only", "true");
-        params.set("recovery_flag", document.querySelector("#record-conflict").value);
-        return params.toString();
-      }
+      const $ = (selector) => document.querySelector(selector);
+      const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]));
+      const conditions = ["hidden","honest","dishonest"];
+      const conditionLabels = {hidden:"Hidden",honest:"Honest",dishonest:"Dishonest"};
+      const qualityOptions = [["all","All records"],["recovery_conflict","Recovery conflict"],["identity_conflict","Identity conflict"],["missing_required_fields","Missing Prolific fields"],["incomplete_rounds","Incomplete task data"],["comprehension_failed","Comprehension failed"],["invalid_decision_time","Invalid decision time"],["excessive_page_hidden_time","Excessive hidden time"],["incomplete_survey_data","Incomplete survey"],["completion_not_confirmed","Completion not confirmed"],["missing_peer_identity","Missing peer identity"]];
+      let datasets = null;
+      function token() { return $("#admin-token").value.trim(); }
+      async function api(path) { const response=await fetch(path,{headers:{"x-admin-token":token()}}); if(!response.ok){let message=`HTTP ${response.status}`;try{message=(await response.json()).error||message;}catch{}throw new Error(message);}return response; }
+      function badge(value,kind=""){return `<span class="badge ${kind}">${escapeHtml(value)}</span>`;}
+      function identityBadge(identity,historical=false){if(historical||identity==="historical")return badge("Legacy","internal");return identity==="ai"?badge("🤖 AI","blue"):badge("👤 Human");}
+      function statusBadge(record){return record.status==="completed"?badge("Completed","pass"):badge("Incomplete","warning");}
+      function optionHtml(entries){return entries.map(([value,label])=>`<option value="${value}">${escapeHtml(label)}</option>`).join("");}
+      function filterMarkup(prefix,internal=false){return `<div class="filter-grid"><div class="filter-field"><label>Dataset</label><select id="${prefix}-scope">${internal?'<option value="all">All Internal</option><option value="qa">QA</option><option value="team_review">Team Review</option>':'<option value="formal">Formal</option><option value="preview">Preview</option>'}</select></div><div class="filter-field"><label>Identity</label><select id="${prefix}-identity"><option value="all">All</option><option value="human">Human</option><option value="ai">AI</option></select></div><div class="filter-field"><label>Condition</label><select id="${prefix}-condition">${optionHtml([["all","All"],...conditions.map((c)=>[c,conditionLabels[c]])])}</select></div><div class="filter-field"><label>${internal?"Show":"Status"}</label><select id="${prefix}-status">${internal?'<option value="clean">Completed & Clean</option><option value="all">All records</option><option value="incomplete">Incomplete</option><option value="flagged">Flagged</option>':'<option value="all">All</option><option value="completed">Completed</option><option value="incomplete">Incomplete</option>'}</select></div><div class="filter-field"><label>Start Date</label><input id="${prefix}-start" type="date"></div><div class="filter-field"><label>End Date</label><input id="${prefix}-end" type="date"></div><div class="toolbar"><button class="primary-button compact" data-apply="${prefix}">Apply</button><button class="secondary-button compact" data-reset="${prefix}">Reset</button></div></div><details class="advanced"><summary>Advanced filters</summary><div class="advanced-grid"><div class="filter-field"><label>Protocol / version</label><select id="${prefix}-protocol"><option value="all">All</option><option value="study2-human-ai-v1">study2-human-ai-v1</option></select></div><div class="filter-field"><label>Quality / recovery</label><select id="${prefix}-quality">${optionHtml(qualityOptions)}</select></div><label class="check-field"><input id="${prefix}-resumed" type="checkbox">Resumed only</label><label class="check-field"><input id="${prefix}-aliases" type="checkbox">Aliases &gt; 1</label></div></details>`;}
+      $("#recruitment-filters").innerHTML=filterMarkup("rec",false);$("#internal-filters").innerHTML=filterMarkup("int",true);
+      function queryFor(dataset){const internal=dataset==="internal",prefix=internal?"int":"rec",p=new URLSearchParams({include_test:"true",dataset});const scope=$(`#${prefix}-scope`).value;if(scope!=="all")p.set("scope",scope);p.set("peer_identity",$(`#${prefix}-identity`).value);p.set("condition",$(`#${prefix}-condition`).value);const show=$(`#${prefix}-status`).value;if(!internal&&show!=="all")p.set("status",show);p.set("protocol_version",$(`#${prefix}-protocol`).value);p.set("recovery_flag",$(`#${prefix}-quality`).value);if($(`#${prefix}-start`).value)p.set("start_date",$(`#${prefix}-start`).value);if($(`#${prefix}-end`).value)p.set("end_date",$(`#${prefix}-end`).value);if($(`#${prefix}-resumed`).checked)p.set("resumed_only","true");if($(`#${prefix}-aliases`).checked)p.set("aliases_only","true");return p.toString();}
+      function renderMatrix(rows,tab){const cells=new Map((rows||[]).map((row)=>[`${row.peer_identity}:${row.condition}`,row]));const body=["human","ai"].map((identity)=>`<tr><th>${identityBadge(identity)}</th>${conditions.map((condition)=>{const row=cells.get(`${identity}:${condition}`)||{};return `<td data-cell-tab="${tab}" data-cell-identity="${identity}" data-cell-condition="${condition}"><div class="section-note">Completed</div><div class="matrix-completed">${row.completed||0}</div><div class="matrix-meta"><span>Started</span><strong>${row.started||0}</strong><span>Data Complete</span><strong>${row.data_complete||0}</strong><span>Quality Flags</span><strong>${row.quality_flagged||0}</strong></div></td>`;}).join("")}</tr>`).join("");return `<table class="admin-table matrix-table"><thead><tr><th>Peer identity</th>${conditions.map((condition)=>`<th>${conditionLabels[condition]}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;}
+      function recordRows(records,mode){let rows=records||[];if(mode==="internal"){const show=$("#int-status").value;if(show==="clean")rows=rows.filter((row)=>row.status==="completed"&&!(row.quality_flags||[]).length);if(show==="incomplete")rows=rows.filter((row)=>row.status!=="completed");if(show==="flagged")rows=rows.filter((row)=>(row.quality_flags||[]).length);}if(!rows.length)return '<div class="empty">No records match the selected filters.</div>';const historical=mode==="historical",internal=mode==="internal";return `<table class="admin-table"><thead><tr><th>Masked ID</th>${internal?"<th>Dataset</th>":""}<th>Identity</th><th>Condition</th><th>Status</th><th>Rounds</th><th>Income / Report</th><th>Timing</th><th>Quality</th><th>Inspect</th></tr></thead><tbody>${rows.map((record)=>`<tr><td>${escapeHtml(record.prolific_pid||record.session_id||record.record_id)}</td>${internal?`<td>${badge(record.scope==="team_review"?"Team Review":"QA","internal")}</td>`:""}<td>${identityBadge(record.peer_identity,historical)}</td><td>${escapeHtml(conditionLabels[record.condition]||record.condition||"—")}</td><td>${statusBadge(record)}</td><td>${record.rounds_completed||0}/4</td><td>${escapeHtml(record.actual_income??"—")} / ${escapeHtml(record.reported_income??"—")}</td><td>${escapeHtml(record.decision_time_ms??"—")} ms<br><span class="section-note">hidden ${escapeHtml(record.page_hidden_duration_ms??"—")} ms</span></td><td><div class="quality-list">${(record.quality_flags||[]).length?(record.quality_flags||[]).map((flag)=>badge(flag,"warning")).join(""):badge("Clean","pass")}</div></td><td><button class="secondary-button compact" data-inspect="${escapeHtml(record.record_id)}" data-historical="${historical}">Inspect</button></td></tr>`).join("")}</tbody></table>`;}
+      function renderIntegrity(checks){const items=checks||[],pass=items.filter((item)=>item.status==="PASS").length,warnings=items.length-pass;$("#integrity-summary").textContent=warnings?`${pass}/${items.length} PASS · ${warnings} WARNING`:`✓ ${pass}/${items.length} PASS`;$("#integrity-summary").className=`badge ${warnings?"warning":"pass"}`;$("#integrity-output").innerHTML=items.map((item)=>`<article class="integrity-item"><div class="integrity-name">${escapeHtml(item.label||item.id)}</div>${badge(item.status,item.status==="PASS"?"pass":"warning")}<div class="integrity-detail">${escapeHtml(item.detail||"")}</div></article>`).join("");}
+      async function loadDashboard(){if(!token()){alert("Enter ADMIN_TOKEN first.");return;}$("#refresh-data").disabled=true;try{const [datasetResponse,recResponse,intResponse,legacyResponse,integrityResponse,healthResponse]=await Promise.all([api("/api/admin/datasets"),api(`/api/admin/records?${queryFor("recruitment")}`),api(`/api/admin/records?${queryFor("internal")}`),api("/api/admin/legacy/records?include_test=true"),api("/api/admin/integrity"),fetch("/health")]);const [datasetData,recData,intData,legacyData,integrity,health]=await Promise.all([datasetResponse.json(),recResponse.json(),intResponse.json(),legacyResponse.json(),integrityResponse.json(),healthResponse.json()]);datasets=datasetData;$("#count-formal").textContent=datasets.recruitment.formal;$("#count-preview").textContent=datasets.recruitment.preview;$("#count-formal-completed").textContent=datasets.recruitment.formal_completed;$("#count-formal-incomplete").textContent=datasets.recruitment.formal_incomplete;$("#count-qa").textContent=datasets.internal.qa;$("#count-team-review").textContent=datasets.internal.team_review;$("#count-internal").textContent=datasets.internal.total;$("#count-historical").textContent=datasets.historical.count;$("#tab-formal-count").textContent=datasets.recruitment.formal;$("#tab-internal-count").textContent=datasets.internal.total;$("#tab-historical-count").textContent=datasets.historical.count;$("#recruitment-matrix").innerHTML=renderMatrix(datasets.recruitment.formal_matrix,"recruitment");renderInternalMatrix();$("#recruitment-records").innerHTML=recordRows(recData.participants,"recruitment");$("#recruitment-count").textContent=`${(recData.participants||[]).length} matching record(s)`;$("#internal-records").innerHTML=recordRows(intData.participants,"internal");$("#internal-count").textContent=`${(intData.participants||[]).length} matching record(s)`;$("#historical-records").innerHTML=recordRows(legacyData.participants,"historical");$("#historical-count").textContent=`${(legacyData.participants||[]).length} record(s)`;renderIntegrity(integrity.checks);$("#dataset-detail").textContent=JSON.stringify(datasets,null,2);$("#integrity-detail").textContent=JSON.stringify(integrity,null,2);$("#health-badge").textContent=health.ok?`${health.study_version||"Healthy"} · ${health.formal_recruitment_enabled?"Formal enabled":"Formal disabled"}`:"Warning";$("#health-badge").className=`badge ${health.ok?"pass":"warning"}`;$("#last-refreshed").textContent=`Last refreshed: ${new Date().toLocaleTimeString()}`;sessionStorage.setItem("study2AdminAuthenticated","yes");}catch(error){alert(`Dashboard refresh failed: ${error.message}`);}finally{$("#refresh-data").disabled=false;}}
+      function renderInternalMatrix(){if(!datasets)return;const scope=$("#internal-matrix-scope").value,rows=scope==="qa"?datasets.internal.qa_matrix:scope==="team_review"?datasets.internal.team_review_matrix:datasets.internal.all_matrix;$("#internal-matrix").innerHTML=renderMatrix(rows,"internal");}
+      function resetFilters(prefix){const internal=prefix==="int";$(`#${prefix}-scope`).value=internal?"all":"formal";for(const suffix of ["identity","condition","protocol","quality"])$(`#${prefix}-${suffix}`).value="all";$(`#${prefix}-status`).value=internal?"clean":"all";for(const suffix of ["start","end"])$(`#${prefix}-${suffix}`).value="";$(`#${prefix}-resumed`).checked=false;$(`#${prefix}-aliases`).checked=false;loadDashboard();}
+      async function download(button){button.disabled=true;try{const query=button.dataset.filter?`?${queryFor(button.dataset.filter)}`:"",response=await api(`${button.dataset.export}${query}`),blob=await response.blob(),url=URL.createObjectURL(blob),link=document.createElement("a");link.href=url;link.download=(response.headers.get("content-disposition")?.match(/filename="?([^";]+)"?/)||[])[1]||button.dataset.export.split("/").pop();link.click();URL.revokeObjectURL(url);}catch(error){alert(`Export failed: ${error.message}`);}finally{button.disabled=false;}}
+      async function inspect(button){const historical=button.dataset.historical==="true",output=historical?$("#historical-detail"):$("#record-detail");try{const path=`${historical?"/api/admin/legacy/session/":"/api/admin/session/"}${encodeURIComponent(button.dataset.inspect)}`;output.textContent=JSON.stringify(await (await api(path)).json(),null,2);$("#technical-details").open=true;$("#technical-details").scrollIntoView({block:"start"});}catch(error){output.textContent=`Inspect failed: ${error.message}`;}}
+      document.addEventListener("click",(event)=>{const tab=event.target.closest("[data-tab]");if(tab){document.querySelectorAll("[data-tab]").forEach((button)=>button.classList.toggle("active",button===tab));document.querySelectorAll(".tab-panel").forEach((panel)=>panel.hidden=panel.id!==`tab-${tab.dataset.tab}`);}const apply=event.target.closest("[data-apply]");if(apply)loadDashboard();const reset=event.target.closest("[data-reset]");if(reset)resetFilters(reset.dataset.reset);const exp=event.target.closest("[data-export]");if(exp)download(exp);const detail=event.target.closest("[data-inspect]");if(detail)inspect(detail);const cell=event.target.closest("[data-cell-tab]");if(cell){const prefix=cell.dataset.cellTab==="internal"?"int":"rec";$(`#${prefix}-identity`).value=cell.dataset.cellIdentity;$(`#${prefix}-condition`).value=cell.dataset.cellCondition;loadDashboard();}});
+      $("#internal-matrix-scope").addEventListener("change",renderInternalMatrix);$("#refresh-data").addEventListener("click",loadDashboard);$("#admin-token").addEventListener("keydown",(event)=>{if(event.key==="Enter")loadDashboard();});
     </script>
   </body>
 </html>

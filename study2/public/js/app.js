@@ -1,5 +1,7 @@
 (function () {
   const params = new URLSearchParams(window.location.search);
+  const qaSessionId = (params.get("qa_session") || "").trim();
+  const reviewSessionId = (params.get("review_session") || "").trim();
   const screens = {
     landing: document.querySelector("#screen-landing"),
     consent: document.querySelector("#screen-consent"),
@@ -10,10 +12,12 @@
   const phaseIndicator = document.querySelector("#phase-indicator");
   const prolificQueryPresent = ["PROLIFIC_PID", "STUDY_ID", "SESSION_ID", "variant"]
     .some((key) => Boolean((params.get(key) || "").trim()));
-  const INCOME_REPORT_ERROR = prolificQueryPresent
+  const isEnglishFlow = prolificQueryPresent || Boolean(qaSessionId || reviewSessionId) ||
+    String(document.documentElement?.lang || "").toLowerCase().startsWith("en") || String(window.location.pathname || "").startsWith("/en/");
+  const INCOME_REPORT_ERROR = isEnglishFlow
     ? "Enter a non-negative amount with no more than two decimal places."
     : "\u8bf7\u8f93\u5165\u4e0d\u5c0f\u4e8e 0 \u7684\u91d1\u989d\uff0c\u6700\u591a\u4fdd\u7559\u4e24\u4f4d\u5c0f\u6570\u3002";
-  const SAVE_ERROR_MESSAGE = prolificQueryPresent
+  const SAVE_ERROR_MESSAGE = isEnglishFlow
     ? "This action could not be saved. Refresh the page and try again. If the problem continues, contact the research team."
     : "\u5f53\u524d\u64cd\u4f5c\u6682\u65f6\u672a\u80fd\u4fdd\u5b58\uff0c\u8bf7\u5237\u65b0\u9875\u9762\u540e\u91cd\u8bd5\uff1b\u82e5\u95ee\u9898\u6301\u7eed\uff0c\u8bf7\u8054\u7cfb\u7814\u7a76\u56e2\u961f\u3002";
   const SAFE_SERVER_MESSAGES = new Set([
@@ -146,7 +150,7 @@
 
   function toParticipantMessage(data = {}) {
     const candidate = data.message || data.error || "";
-    if (isProlificEntry && candidate && !/[\u3400-\u9fff]/.test(candidate)) return candidate;
+    if (isEnglishFlow && candidate && !/[\u3400-\u9fff]/.test(candidate)) return candidate;
     return SAFE_SERVER_MESSAGES.has(candidate) ? candidate : SAVE_ERROR_MESSAGE;
   }
 
@@ -164,8 +168,28 @@
     phaseIndicator.textContent = label;
   }
 
+  function isHumanAiProtocol() {
+    return state.session?.protocol_version === "study2-human-ai-v1";
+  }
+
   function setSession(session) {
-    state.session = session;    state.actualIncome = session.actual_income ?? state.actualIncome;
+    state.session = session;
+    const participantConfig = (value) => isEnglishFlow && window.EnglishLocale
+      ? window.EnglishLocale.deepTranslate(value)
+      : value;
+    if (Array.isArray(session.peer_members)) state.members = session.peer_members;
+    if (Array.isArray(session.post_survey_items)) state.config.postSurveyItems = participantConfig(session.post_survey_items);
+    if (Array.isArray(session.experience_items)) state.config.experienceItems = participantConfig(session.experience_items);
+    if (Array.isArray(session.demographics_items)) state.config.demographicsItems = participantConfig(session.demographics_items);
+    if (Array.isArray(session.rule_blocks)) state.config.ruleBlocks = participantConfig(session.rule_blocks);
+    if (Array.isArray(session.comprehension_questions)) state.config.comprehensionQuestions = participantConfig(session.comprehension_questions);
+    if (isHumanAiProtocol()) {
+      const consentIntro = screens.consent.querySelector(".consent-text p");
+      if (consentIntro) consentIntro.textContent = session.peer_identity === "ai"
+        ? "You will complete this task with four AI group members."
+        : "You will complete this task with four other human group members.";
+    }
+    state.actualIncome = session.actual_income ?? state.actualIncome;
     state.actualIncomeCents = session.actual_income_cents ?? state.actualIncomeCents;
   }
 
@@ -287,8 +311,16 @@
   async function renderGroupIntro() {
     setPhase("群体介绍");
     content.innerHTML = "";
-    const chat = window.ChatView.createReadOnlyChat(content, state.members, { footerText: "群聊 AI 负责接收并提交成员报告。" });
-    await chat.addMessagesSequentially(window.ChatView.introMessages(state.members), 650);
+    const chat = window.ChatView.createReadOnlyChat(content, state.members, {
+      sidebarTitle: "Work group",
+      sidebarNote: "The Submission System records each member's report.",
+      footerText: false
+    });
+    await chat.addMessagesSequentially([
+      ...window.ChatView.identityIntroMessages(state.members),
+      { kind: "notice", text: "Each group member has an individual task income and submits an individual income report." },
+      { kind: "notice", text: "Each member decides how much income to report. The Submission System records the selected report." }
+    ], 650);
     content.insertAdjacentHTML("beforeend", `
       <div class="step-nav step-nav-cta">
         <p class="step-nav-hint">请继续阅读收入申报任务规则</p>
@@ -424,17 +456,27 @@
   }
 
   async function renderPeerRecords() {
-    setPhase("同事此前收入申报记录");
+    setPhase("Group members' income reports");
     const data = await api(`/api/session/${state.session.id}/peer-records`);
     content.innerHTML = "";
-    const chat = window.ChatView.createReadOnlyChat(content, state.members, { footerText: "只显示同事此前收入申报记录" });
+    const hidden = state.session.condition === "hidden" || data.records?.every((record) => record.visibility === "hidden");
+    const chat = window.ChatView.createReadOnlyChat(content, state.members, {
+      sidebarTitle: "Work group",
+      sidebarNote: "The Submission System records each member's report.",
+      footerText: false
+    });
     await chat.addMessagesSequentially([
-      { sender: { name: "群聊 AI", avatar: "🤖" }, text: "下面显示同事此前在相同收入申报任务中的记录。" },
-      ...window.ChatView.peerRecordMessages(state.members, data.records)
+      { kind: "notice", text: hidden
+        ? "The other group members' report values are not shown in this task."
+        : "The other group members' actual and reported income information is shown below." },
+      ...window.ChatView.peerRecordMessages(state.members, data.records),
+      { kind: "notice", text: hidden
+        ? "All four group members completed an income report. The reported amounts are not visible to you."
+        : "All four group members' reports have been displayed. Complete your private report next." }
     ], 600);
     content.insertAdjacentHTML("beforeend", `
       <div class="step-nav step-nav-cta">
-        <p class="step-nav-hint">记录阅读完成后进入你的私密收入申报</p>
+        <p class="step-nav-hint">Continue to your private income report.</p>
         <button class="btn btn-primary" data-action="peer-records-viewed">继续</button>
       </div>
     `);
@@ -563,16 +605,16 @@
     const pid = state.session.participant_id || "";
     content.innerHTML = `
       <div class="card">
-        <h2>事后说明</h2>
+        <h2>Debrief</h2>
         <div class="consent-text">
-          <p>感谢你完成本次任务！</p>
-          <p>你的任务与问卷记录仅用于研究。你可凭参与编号联系研究团队，了解更多安排、撤回本次参与或申请删除本次记录。</p>
+          <p>The identities and reporting patterns of the other group members were simulated and controlled by the research system for experimental purposes. No other human participants or live AI models were making these reporting decisions in real time.</p>
+          <p>The study examines how the stated identity and reporting behavior of group members may affect decisions. Your records are used only for research. Contact the research team with your participant ID if you have questions about the study or your participation.</p>
         </div>
       </div>
       ${participantInfoCard(pid, contact)}
       <div class="step-nav">
-        <p class="status-hint" id="debrief-save-status">正在确认事后说明…</p>
-        <button class="btn btn-primary" data-action="complete">完成</button>
+        <p class="status-hint" id="debrief-save-status">Saving debrief acknowledgement...</p>
+        <button class="btn btn-primary" data-action="complete">Complete</button>
       </div>
     `;
     const completeButton = content.querySelector('[data-action="complete"]');
@@ -583,7 +625,7 @@
         const status = content.querySelector("#debrief-save-status");
         if (status) status.textContent = "";
         completeButton.disabled = false;
-        completeButton.textContent = "完成";
+        completeButton.textContent = "Complete";
       }).catch(() => {
         const status = content.querySelector("#debrief-save-status");
         if (status) status.textContent = "当前页面信息尚未保存，请稍后重试。";
@@ -756,7 +798,7 @@
 
   async function init() {
     state.config = await api("/api/config");
-    if (isProlificEntry && window.EnglishLocale) {
+    if (isEnglishFlow && window.EnglishLocale) {
       state.config = window.EnglishLocale.deepTranslate(state.config);
     }
     state.members = state.config.members;

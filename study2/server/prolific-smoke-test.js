@@ -5,15 +5,17 @@ const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 const { CONDITIONS } = require("../config/common");
+const { activeCells } = require("../config/human-ai-protocol");
 const { createProlificSupport } = require("./prolific");
 const prolificExport = require("./prolific-export");
 
 const study = CONDITIONS.length === 7 ? "study1" : "study2";
 const expectedStudyId = `taskflow-test-${study}`;
 const dataDir = path.join(os.tmpdir(), `group-deception-${study}-prolific-${process.pid}-${Date.now()}`);
-const variants = Object.fromEntries(CONDITIONS.map((condition, index) => [
+const variantCells = study === "study2" ? activeCells() : CONDITIONS.map((condition, index) => ({ condition, variant_id: `variant_${index + 1}` }));
+const variants = Object.fromEntries(variantCells.map((cell, index) => [
   crypto.randomBytes(32).toString("base64url"),
-  { variant_id: `variant_${index + 1}`, condition }
+  { variant_id: cell.variant_id || `variant_${index + 1}`, condition: cell.condition, ...(cell.peer_identity ? { peer_identity: cell.peer_identity } : {}) }
 ]));
 
 function setTestEnvironment() {
@@ -31,8 +33,9 @@ function setTestEnvironment() {
     PROLIFIC_VARIANT_MAP_JSON: JSON.stringify(variants),
     SERVER_RECORD_SECRET: "test-only-record-secret-with-at-least-32-characters",
     BONUS_CURRENCY: "GBP",
-    BONUS_DISPLAY_LABEL: "Task bonus"
-    ,PROLIFIC_PREVIEW_MODE: "true"
+    BONUS_DISPLAY_LABEL: "Task bonus",
+    PROLIFIC_PREVIEW_MODE: "true",
+    FORMAL_RECRUITMENT_ENABLED: "true"
   });
   for (const key of [
     "PARTICIPANT_ID_ALLOWLIST_FILE",
@@ -107,6 +110,7 @@ async function main() {
       assert.strictEqual(result.payload.session.condition, undefined, "participant API must not expose condition");
       const raw = JSON.parse(await fs.readFile(path.join(dataDir, `${result.payload.session.id}.json`), "utf8"));
       assert.strictEqual(raw.condition, descriptor.condition);
+      assert.strictEqual(raw.peer_identity, descriptor.peer_identity);
       assert.strictEqual(raw.taskflow_variant_id, descriptor.variant_id);
       assert.strictEqual(raw.assignment_mode, "prolific_taskflow");
       assert.strictEqual(raw.locale, "en");
@@ -185,7 +189,7 @@ async function main() {
     assert.strictEqual(JSON.parse(previewFiles["export_metadata.json"]).git_commit, "export-test-commit");
     const emptySurveyHeader = prolificExport.buildFiles([], { ...process.env, GIT_COMMIT: "export-test-commit" })["surveys.csv"].split(/\r?\n/, 1)[0];
     assert.ok(emptySurveyHeader.includes("pre_ai_use_frequency"));
-    assert.ok(emptySurveyHeader.includes("post_f_design_influences"));
+    assert.ok(emptySurveyHeader.includes("post_f_decision_considerations"));
     assert.ok(emptySurveyHeader.includes("experience_income_reporting_familiarity"));
     assert.ok(emptySurveyHeader.includes("demo_education"));
     previewRaw.status = "completed";
@@ -240,9 +244,7 @@ async function main() {
     assert.strictEqual(sameSessions.length, 1, "concurrent submission created duplicate sessions");
     assert.ok(await fs.stat(path.join(dataDir, "identity-audit.ndjson")));
     const root = await fetch(`${baseUrl}/`);
-    const rootHtml = await root.text();
-    assert.match(rootHtml, /<html lang="en"/);
-    assert.doesNotMatch(rootHtml, /[\u3400-\u9fff]/);
+    assert.strictEqual(root.status, 403, "bare Formal root must fail closed without a valid assignment");
     const summaryResponse = await fetch(`${baseUrl}/api/admin/prolific-summary?include_test=true`, {
       headers: { "x-admin-token": process.env.ADMIN_TOKEN }
     });
@@ -282,10 +284,10 @@ async function main() {
     const previewBundle = Buffer.from(await previewBundleResponse.arrayBuffer());
     assert.strictEqual(previewBundleResponse.status, 200);
     assert.ok(previewBundle.includes(Buffer.from("prolific_pid_preview")), "Preview bundle missing Preview data");
-    for (const name of ["participants.csv", "study2_rounds.csv", "surveys.csv", "bonus_payments.csv", "raw_sessions.ndjson", "export_metadata.json"]) {
+    for (const name of prolificExport.BUNDLE_FILES) {
       assert.ok(bundle.includes(Buffer.from(name)), `bundle missing ${name}`);
     }
-    console.log(`${study} Prolific Taskflow smoke passed: variants=${CONDITIONS.length} parallel=20 same_submission_sessions=1`);
+    console.log(`${study} Prolific Taskflow smoke passed: variants=${Object.keys(variants).length} parallel=20 same_submission_sessions=1`);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     await fs.rm(dataDir, { recursive: true, force: true });

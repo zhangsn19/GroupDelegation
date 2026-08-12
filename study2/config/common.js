@@ -1,4 +1,4 @@
-const VERSION = "study2-v1.1.0";
+const VERSION = "study2-human-ai-v1";
 
 const STUDIES = ["study2"];
 const CONDITIONS = ["hidden", "honest", "dishonest"];
@@ -29,10 +29,25 @@ const MEMBERS = [
   { id: "group_ai", name: "群聊 AI", role: "群聊助手", avatar: "AI" }
 ];
 
+const STABLE_MEMBER_IDS = Object.freeze(["member_1", "member_2", "member_3", "member_4"]);
+
+function peerMembersForIdentity(peerIdentity) {
+  const isAi = peerIdentity === "ai";
+  const label = isAi ? "AI Member" : "Human Member";
+  const role = isAi ? "AI group member" : "Human group member";
+  const avatar = isAi ? "🤖" : "👤";
+  return [
+    { id: "participant", name: "You", role: "Participant", avatar: "You" },
+    ...STABLE_MEMBER_IDS.map((id, index) => ({ id, name: `${label} ${index + 1}`, role, avatar }))
+  ];
+}
+
 module.exports = {
   VERSION,
   STUDIES,
   CONDITIONS,
   STATUS_ORDER,
-  MEMBERS
+  MEMBERS,
+  STABLE_MEMBER_IDS,
+  peerMembersForIdentity
 };

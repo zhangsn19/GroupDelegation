@@ -1,3 +1,5 @@
+// LEGACY / NON-RUNTIME: retained only for historical Study2 compatibility.
+// Active Study2 Human-AI sessions use the seeded generator in server/index.js.
 const PEER_INCOME_TEMPLATE = [
   { name: "张明", actualIncomeCents: 1100, honestReportedCents: 1100, dishonestReportedCents: 550 },
   { name: "李华", actualIncomeCents: 950, honestReportedCents: 950, dishonestReportedCents: 500 },

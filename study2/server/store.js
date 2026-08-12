@@ -1,7 +1,8 @@
 const fs = require("fs/promises");
 const path = require("path");
 
-const DATA_DIR = path.resolve(process.cwd(), process.env.DATA_DIR || "./data/sessions");
+function createStore(dataDir) {
+const DATA_DIR = path.resolve(process.cwd(), dataDir || "./data/sessions");
 const locks = new Map();
 let auditWrite = Promise.resolve();
 
@@ -111,7 +112,7 @@ async function appendAuditEvent(event) {
   return auditWrite;
 }
 
-module.exports = {
+return {
   DATA_DIR,
   ensureDataDir,
   readSession,
@@ -120,3 +121,8 @@ module.exports = {
   updateSession,
   appendAuditEvent
 };
+
+}
+
+const defaultStore = createStore(process.env.DATA_DIR || "./data/sessions");
+module.exports = { ...defaultStore, createStore };

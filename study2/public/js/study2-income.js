@@ -93,7 +93,7 @@
         <div class="metric-value">¥${moneyFromCents(actualIncomeCents ?? 0)}</div>
         <p class="hint">你的实际收入由 4 轮任务的本轮实际收入累计得出。</p>
         <ul class="income-round-list">${rows}</ul>
-        <button class="btn btn-primary full-width" data-action="income-viewed">查看同事此前的收入申报</button>
+        <button class="btn btn-primary full-width" data-action="income-viewed">View the other group members' income reports</button>
       </div>
     `;
   }
@@ -136,7 +136,7 @@
           </div>
         </div>
         <p class="hint">模拟扣除金额由申报收入计算；任务保留奖励 = 实际收入 − 模拟扣除金额。</p>
-        <button class="btn btn-primary full-width" data-action="submit-income-report" ${Number.isInteger(selected) ? "" : "disabled"}>请群聊 AI 提交我的收入申报</button>
+        <button class="btn btn-primary full-width" data-action="submit-income-report" ${Number.isInteger(selected) ? "" : "disabled"}>Submit my income report to the Submission System</button>
       </div>
     `;
   }

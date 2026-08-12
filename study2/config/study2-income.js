@@ -3,15 +3,15 @@ const { baselineItems, demographicsItems } = require("./measures");
 const ruleBlocks = [
   {
     title: "你的群体",
-    body: "你将与四位同事组成模拟同事群体，并通过同一个共享群聊 AI 完成个人收入申报。"
+    body: "You will complete this task with four other group members. Each group member has an individual task income and submits an individual income report."
   },
   {
     title: "完成任务与个人申报",
-    body: "你将先完成 4 轮奇偶数分类任务，每轮包含 8 题。每答对 1 题可获得 ¥0.80 的基础收入。\n\n系统会根据完成该轮任务时的剩余时间计算速度奖励，速度奖励最高为 ¥1.00。本轮实际收入 = 基础收入 + 速度奖励。\n\n4 轮本轮实际收入之和，构成后续收入申报阶段显示的“实际收入”。\n\n任务要求成员申报自己在任务中实际获得的收入。其他成员完成申报后，你将在个人面板中填写自己的申报收入，并由群聊 AI 提交。"
+    body: "You will first complete four rounds of an odd/even classification task, with eight items per round. Each correct answer earns ¥0.80 in base income.\n\nThe system calculates a speed bonus from the time remaining when you finish the round. The maximum speed bonus is ¥1.00. Actual income for the round = base income + speed bonus.\n\nYour actual income for the reporting stage is the sum of your actual income across the four rounds.\n\nThe task asks each member to report the income they actually earned. After the other group members have reported, you will enter your own reported income in a private panel. The Submission System records the report you choose."
   },
   {
-    title: "私密性与群聊 AI",
-    body: "你的个人收入申报不会向其他成员展示；每位成员的任务结果分别结算。\n\n群聊 AI 负责接收并提交每位成员的个人申报。每位成员自行决定自己的申报金额。"
+    title: "Privacy and the Submission System",
+    body: "Your individual income report will not be shown to the other group members. Each member's task outcome is calculated separately.\n\nEach member decides how much income to report. The Submission System only records the report selected by that member; it does not advise, evaluate, or decide what to report."
   },
   {
     title: "任务报酬如何计算",
@@ -56,39 +56,53 @@ const comprehensionQuestions = [
   }
 ];
 
+const agreement = { type: "likert", minLabel: "Strongly disagree", maxLabel: "Strongly agree" };
 const postSurveyItems = [
-  { section: "A", id: "a_specific_peer_records_seen", prompt: "在我作出自己的最终申报前，我看到了其他成员此前向群聊 AI 提交的具体申报内容。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  {
-    section: "A",
-    id: "a_condition_memory",
-    prompt: "根据刚才看到的信息，其他成员此前的申报情况最接近哪一种？",
-    type: "select",
-    options: [
-      "我没有看到其他成员的具体申报内容",
-      "其他成员大多如实申报了实际收入",
-      "其他成员大多申报了低于实际收入的金额",
-      "其他成员的申报情况混合且不一致",
-      "我不记得"
-    ]
-  },
-  { section: "A", id: "a_private_submission_understood", prompt: "我理解其他成员无法看到我最终向群聊 AI 提交的收入申报。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "A", id: "a_independent_reward_understood", prompt: "我理解其他成员的申报不会改变我的个人奖励。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "A", id: "a_ai_executes_understood", prompt: "我理解在本任务中，群聊 AI 只负责执行申报，不替成员决定应申报多少收入。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "B", id: "b_peer_truthful_reporting_common", prompt: "在这个群聊中，其他成员通常会如实申报自己实际获得的收入。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "B", id: "b_peer_underreporting_common", prompt: "在这个群聊中，其他成员通常会为了增加个人奖励而申报低于实际获得的收入。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "B", id: "b_peer_behavior_predictable", prompt: "我刚才看到的信息，足以让我判断这个群聊中其他成员通常会如何申报收入。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "C", id: "c_truthful_reporting_acceptable", prompt: "在这个群聊中，其他成员认为如实申报实际收入是应该的。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "C", id: "c_underreporting_acceptable", prompt: "在这个群聊中，其他成员认为为了增加个人奖励而申报低于实际获得的收入是可以接受的。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "D", id: "d_guilt", prompt: "回顾刚才的收入申报任务和我的最终提交，我感到内疚。", type: "likert", minLabel: "完全没有", maxLabel: "非常强烈" },
-  { section: "D", id: "d_moral_discomfort", prompt: "回顾刚才的收入申报任务和我的最终提交，我感到道德上的不安。", type: "likert", minLabel: "完全没有", maxLabel: "非常强烈" },
-  { section: "E", id: "e_reflects_my_decision", prompt: "我最终申报的收入反映了我自己的决定。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "E", id: "e_personal_responsibility", prompt: "我应当为自己最终申报的收入承担责任。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "E", id: "e_ai_followed_choice", prompt: "群聊 AI 按照我的选择完成了收入申报。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "E", id: "e_ai_influenced_decision", prompt: "群聊 AI 影响了我最终决定申报多少收入。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "E", id: "e_ai_decided_outcome", prompt: "我认为最终申报的收入主要由群聊 AI 决定。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
-  { section: "F", id: "f_decision_considerations", prompt: "请简要说明：在决定最终申报多少收入时，你主要考虑了哪些因素？", type: "text", required: false },
-  { section: "F", id: "f_design_influences", prompt: "任务中是否有任何信息或设计影响了你的决定？例如其他成员的申报情况、群聊 AI 的角色、奖励规则或其他因素。请说明；若没有或不想补充，也可留空。", type: "text", required: false }
+  { section: "A", id: "b_peer_truthful_reporting_common", prompt: "During this task, the other group members generally reported their task income truthfully.", ...agreement },
+  { section: "A", id: "b_peer_underreporting_common", prompt: "During this task, the other group members generally reported an amount below their actual task income to reduce their individual deduction.", ...agreement },
+  { section: "A", id: "c_truthful_reporting_acceptable", prompt: "During this task, the other group members considered reporting their task income truthfully to be appropriate.", ...agreement },
+  { section: "A", id: "c_underreporting_acceptable", prompt: "During this task, the other group members considered reporting an amount below their actual task income to reduce one's deduction to be acceptable.", ...agreement },
+  { section: "B", id: "peer_influence_self_report", prompt: "The other group members influenced my reporting decision.", ...agreement },
+  { section: "B", id: "peer_reports_considered", prompt: "I considered the other group members' income reports when deciding what to report.", visibleOnly: true, ...agreement },
+  { section: "B", id: "peer_behavior_appropriateness_influence", prompt: "The behavior of the other group members affected what I considered appropriate to report.", ...agreement },
+  { section: "C", id: "e_reflects_my_decision", prompt: "The income amount I reported in the task reflected my own decision.", ...agreement },
+  { section: "C", id: "e_personal_responsibility", prompt: "I should take responsibility for the income amount I reported in the task.", ...agreement },
+  { section: "C", id: "shared_group_responsibility", prompt: "Responsibility for the task outcome was shared across group members.", ...agreement },
+  { section: "C", id: "d_guilt", prompt: "Looking back on the income-reporting task and the amount I reported, I feel guilty.", type: "likert", minLabel: "Not at all", maxLabel: "Very strongly" },
+  { section: "C", id: "d_moral_discomfort", prompt: "Looking back on the income-reporting task and the amount I reported, I feel morally uncomfortable.", type: "likert", minLabel: "Not at all", maxLabel: "Very strongly" },
+  { section: "D", id: "b_peer_behavior_predictable", prompt: "The information I saw was sufficient for me to judge how the other group members reported their task income.", ...agreement },
+  { section: "D", id: "a_truthful_peer_count", prompt: "Looking back on the task, how many of the four other group members reported their task income truthfully?", type: "select", options: [
+    { value: "0", label: "0 group members" }, { value: "1", label: "1 group member" },
+    { value: "2", label: "2 group members" }, { value: "3", label: "3 group members" },
+    { value: "4", label: "4 group members" }, { value: "not_visible", label: "I did not see specific report amounts" },
+    { value: "not_sure", label: "I do not remember" }
+  ] },
+  { section: "D", id: "a_private_submission_understood", prompt: "I understood that my income report was not shown to the other group members.", ...agreement },
+  { section: "D", id: "a_independent_reward_understood", prompt: "I understood that the other group members' income reports did not directly determine my individual task reward.", ...agreement },
+  { section: "E", id: "identity_recall", prompt: "The other four group members were:", type: "select", options: [
+    { value: "human", label: "Human participants" }, { value: "ai", label: "AI agents" },
+    { value: "not_sure", label: "Not sure" }
+  ] },
+  { section: "E", id: "identity_confidence", prompt: "How confident are you about your answer above?", type: "likert", minLabel: "Not at all confident", maxLabel: "Very confident" },
+  { section: "E", id: "perceived_peer_agency", prompt: "The other group members seemed to make their own reporting decisions.", ...agreement },
+  { section: "F", id: "f_decision_considerations", prompt: "What factors, if any, did you consider when deciding how much income to report during the task?", type: "text", required: false }
 ];
+
+function postSurveyItemsForCondition(condition) {
+  return postSurveyItems.filter((item) => condition !== "hidden" || item.id !== "peer_reports_considered");
+}
+
+function ruleBlocksFor(peerIdentity, condition) {
+  const identityIntro = peerIdentity === "ai"
+    ? "You will complete this task with four AI group members."
+    : "You will complete this task with four other human group members.";
+  const visibility = condition === "hidden"
+    ? "The other group members' report values are not shown in this task. You will see that each member completed a report, but not any actual or reported amount."
+    : "Before making your own report, you will see the available actual and reported income information from the other four group members.";
+  return ruleBlocks.map((block, index) => index === 0
+    ? { ...block, body: `${identityIntro} Each group member has an individual task income and submits an individual income report.\n\n${visibility}` }
+    : block);
+}
 
 const experienceItems = [
   { id: "income_reporting_familiarity", prompt: "我熟悉收入、报销或税务申报的基本流程。", type: "likert", minLabel: "非常不同意", maxLabel: "非常同意" },
@@ -114,6 +128,8 @@ module.exports = {
   demographicsItems,
   experienceItems,
   postSurveyItems,
+  postSurveyItemsForCondition,
+  ruleBlocksFor,
   ruleBlocks,
   comprehensionQuestions,
   effortTask

@@ -7,6 +7,17 @@ const study2 = require("../config/study2-income");
 const exporters = require("./export");
 const prolificExport = require("./prolific-export");
 const { createProlificSupport } = require("./prolific");
+const { createPeerIncomeRecords } = require("./peer-model");
+const {
+  ACTIVE_CONDITIONS,
+  STUDY_VERSION: HUMAN_AI_STUDY_VERSION,
+  PROTOCOL_VERSION: HUMAN_AI_PROTOCOL_VERSION,
+  IDENTITY_MANIPULATION_VERSION,
+  CONDITION_MAP_VERSION,
+  activeCells,
+  isActiveCondition,
+  isPeerIdentity,
+} = require("../config/human-ai-protocol");
 
 function loadDotEnv() {
   const envPath = path.join(process.cwd(), ".env");
@@ -22,16 +33,47 @@ function loadDotEnv() {
 
 loadDotEnv();
 
-const store = require("./store");
+const internalStore = require("./store");
+const recruitmentStore = process.env.RECRUITMENT_DATA_DIR
+  ? internalStore.createStore(process.env.RECRUITMENT_DATA_DIR)
+  : internalStore;
+function isRecruitmentSession(session = {}) {
+  return ["formal", "preview"].includes(session.scope) || session.assignment_mode === "prolific_taskflow" || session.is_preview === true;
+}
+async function locateCurrentStore(id) {
+  try { await recruitmentStore.readSession(id); return recruitmentStore; } catch (error) { if (error.statusCode !== 410) throw error; }
+  await internalStore.readSession(id);
+  return internalStore;
+}
+const store = {
+  DATA_DIR: internalStore.DATA_DIR,
+  async ensureDataDir() {
+    if (recruitmentStore === internalStore) return internalStore.ensureDataDir();
+    await Promise.all([internalStore.ensureDataDir(), recruitmentStore.ensureDataDir()]);
+  },
+  async listSessions() {
+    if (recruitmentStore === internalStore) return internalStore.listSessions();
+    const [recruitment, internal] = await Promise.all([recruitmentStore.listSessions(), internalStore.listSessions()]);
+    return [...recruitment, ...internal];
+  },
+  async readSession(id) { return (await locateCurrentStore(id)).readSession(id); },
+  async updateSession(id, updater) { return (await locateCurrentStore(id)).updateSession(id, updater); },
+  async writeSession(session) { return (isRecruitmentSession(session) ? recruitmentStore : internalStore).writeSession(session); },
+  async appendAuditEvent(event) { return recruitmentStore.appendAuditEvent(event); },
+};
+const { createReadOnlyLegacyStore } = require("./legacy-store");
+const legacyStore = createReadOnlyLegacyStore(process.env.LEGACY_STUDY2_DATA_DIR || "");
 const app = express();
 
 const PORT = Number(process.env.PORT || 3001);
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN || "dev-admin-token";
 const DEBUG_LINKS = String(process.env.DEBUG_LINKS).toLowerCase() === "true";
+const ALLOW_QA_PREVIEW = String(process.env.ALLOW_QA_PREVIEW || "").toLowerCase() === "true";
+const ALLOW_TEAM_REVIEW = String(process.env.ALLOW_TEAM_REVIEW || "").toLowerCase() === "true";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const REQUIRE_PARTICIPANT_ID = IS_PRODUCTION || String(process.env.REQUIRE_PARTICIPANT_ID).toLowerCase() === "true";
-const STUDY_VERSION = process.env.STUDY_VERSION || "study2-v1.1.0";
-const PROTOCOL_VERSION = process.env.PROTOCOL_VERSION || "peer-reporting-v2";
+const STUDY_VERSION = process.env.STUDY_VERSION || HUMAN_AI_STUDY_VERSION;
+const PROTOCOL_VERSION = process.env.PROTOCOL_VERSION || HUMAN_AI_PROTOCOL_VERSION;
 const TEST_CONDITION = String(process.env.TEST_CONDITION || "").trim();
 const ASSIGNMENT_MODE = String(process.env.ASSIGNMENT_MODE || "block").trim() || "block";
 const ENTRY_CODES = {
@@ -58,7 +100,12 @@ const STUDY2_PEER_PROFILE_OFFSETS = {
 
 app.use(express.json({ limit: "1mb" }));
 app.get(["/", "/index.html"], (req, res, next) => {
-  if (ASSIGNMENT_MODE !== "prolific_taskflow") return next();
+  if (!["prolific_taskflow", "review_only"].includes(ASSIGNMENT_MODE)) return next();
+  const hasVariant = typeof req.query.variant === "string" && req.query.variant.length > 0;
+  const preview = String(req.query.preview || "").toLowerCase() === "true";
+  if (!hasVariant) return res.status(403).type("text/plain").send("Study entry requires a valid assignment link.");
+  if (!prolificSupport.variants.has(String(req.query.variant))) return res.status(403).type("text/plain").send("This assignment link is not valid.");
+  if (!preview && !prolificSupport.formalEnabled) return res.status(403).type("text/plain").send("Formal recruitment is not enabled for this study.");
   res.sendFile(path.join(__dirname, "..", "public", "en", "index.html"));
 });
 app.use(express.static(path.join(__dirname, "..", "public")));
@@ -112,8 +159,8 @@ function loadParticipantAllowlist(filePath) {
 }
 
 function validateAssignmentConfig() {
-  if (!["block", "controlled_link", "prolific_taskflow"].includes(ASSIGNMENT_MODE)) {
-    throw new Error("ASSIGNMENT_MODE must be block, controlled_link, or prolific_taskflow");
+  if (!["block", "controlled_link", "prolific_taskflow", "review_only"].includes(ASSIGNMENT_MODE)) {
+    throw new Error("ASSIGNMENT_MODE must be block, controlled_link, prolific_taskflow, or review_only");
   }
   if (!["open", "allowlist"].includes(PARTICIPANT_ID_POLICY)) {
     throw new Error("PARTICIPANT_ID_POLICY must be open or allowlist");
@@ -160,8 +207,6 @@ validateAssignmentConfig();
 const prolificSupport = createProlificSupport({
   assignmentMode: ASSIGNMENT_MODE,
   isProduction: IS_PRODUCTION,
-  allowedConditions: CONDITIONS,
-  expectedVariantCount: 3
 });
 
 function publicContactEmail() {
@@ -259,11 +304,25 @@ function transition(session, targetStatus) {
 }
 
 function publicSession(session) {
+  const activePostSurveyItems = postSurveyItemsForSession(session);
   const payload = {
     id: session.id,
     participant_id: session.participant_id || session.prolific_id || "",
     study_version: session.study_version || STUDY_VERSION,
     protocol_version: session.protocol_version || PROTOCOL_VERSION,
+    peer_identity: session.peer_identity || null,
+    identity_manipulation_version: session.identity_manipulation_version || null,
+    condition_map_version: session.condition_map_version || null,
+    scope: session.scope || null,
+    is_preview: Boolean(session.is_preview),
+    is_qa: Boolean(session.is_qa),
+    is_team_review: Boolean(session.is_team_review),
+    peer_members: peerMembersForIdentity(session.peer_identity),
+    post_survey_items: activePostSurveyItems,
+    rule_blocks: typeof study2.ruleBlocksFor === "function" ? study2.ruleBlocksFor(session.peer_identity, session.condition) : study2.ruleBlocks,
+    comprehension_questions: publicComprehensionQuestions(study2.comprehensionQuestions),
+    experience_items: study2.experienceItems,
+    demographics_items: study2.demographicsItems,
     status: session.status,
     effort_round_count: session.effort_rounds?.length || 0,
     effort_rounds: (session.effort_rounds || []).map((round) => ({
@@ -433,6 +492,26 @@ function peerNames() {
   return MEMBERS.filter((member) => !["participant", "group_ai"].includes(member.id)).map((member) => member.name);
 }
 
+const STABLE_MEMBER_IDS = Object.freeze(["member_1", "member_2", "member_3", "member_4"]);
+
+function peerMembersForIdentity(peerIdentity) {
+  if (!isPeerIdentity(peerIdentity)) return MEMBERS.filter((member) => !["participant", "group_ai"].includes(member.id));
+  const human = peerIdentity === "human";
+  return [{ id: "participant", member_id: "participant", name: "You", role: "Participant", avatar: "👤", is_participant: true }, ...STABLE_MEMBER_IDS.map((memberId, index) => ({
+    id: memberId,
+    member_id: memberId,
+    name: `${human ? "Human" : "AI"} Member ${index + 1}`,
+    avatar: human ? "👤" : "🤖",
+    role: human ? "Human group member" : "AI group member",
+    peer_identity: peerIdentity,
+  }))];
+}
+
+function postSurveyItemsForSession(session = {}) {
+  const items = Array.isArray(study2.postSurveyItems) ? study2.postSurveyItems : [];
+  return session.condition === "hidden" ? items.filter((item) => item.id !== "peer_reports_considered") : items;
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -441,13 +520,13 @@ function createStudy2StimulusPlan(seed) {
   const profileIds = Object.keys(STUDY2_PEER_PROFILE_OFFSETS);
   const profileIndex = Math.floor(createSeededRandom(seed, "study2-profile")() * profileIds.length);
   return {
-    peerDisplayOrder: seededShuffle(peerNames(), createSeededRandom(seed, "study2-peer-display-order")),
+    peerDisplayOrder: seededShuffle(STABLE_MEMBER_IDS, createSeededRandom(seed, "study2-peer-display-order")),
     peerProfileId: profileIds[profileIndex]
   };
 }
 
 function study2HiddenText() {
-  return "\u5df2\u5b8c\u6210\u6b64\u524d\u6536\u5165\u7533\u62a5\u3002\u5f53\u524d\u4fe1\u606f\u8bbe\u7f6e\u4e0b\uff0c\u5b9e\u9645\u6536\u5165\u548c\u7533\u62a5\u5185\u5bb9\u4e0d\u53ef\u89c1\u3002";
+  return "completed an income report in the Submission System. The reported amount is not visible to you.";
 }
 
 function study2VisibleText(actualIncomeCents, reportedIncomeCents) {
@@ -455,42 +534,12 @@ function study2VisibleText(actualIncomeCents, reportedIncomeCents) {
 }
 
 function buildStudy2PeerIncomeRecords(session) {
-  const profileId = session.study2_peer_profile_id || "P1";
-  const offsets = STUDY2_PEER_PROFILE_OFFSETS[profileId] || STUDY2_PEER_PROFILE_OFFSETS.P1;
-  const baseCents = clamp(Number(session.actual_income_cents || 0), 500, 2710);
-  const shuffledActuals = seededShuffle(
-    offsets.map((offset) => clamp(baseCents + offset, 250, STUDY2_MAX_TOTAL_INCOME_CENTS)),
-    createSeededRandom(session.stimulus_seed || session.id, "study2-peer-income-name-mapping")
-  );
-  const names = peerNames();
-  const displayOrder = session.study2_peer_display_order || names;
-  const byName = new Map(names.map((name, index) => {
-    const actualIncomeCents = shuffledActuals[index];
-    const reportedIncomeCents = session.condition === "dishonest"
-      ? Math.max(0, Math.round(actualIncomeCents * 0.5))
-      : actualIncomeCents;
-    return [name, {
-      peer_name: name,
-      name,
-      actual_income_cents: actualIncomeCents,
-      actual_income: centsToMoney(actualIncomeCents),
-      actualIncome: centsToMoney(actualIncomeCents),
-      reported_income_cents: reportedIncomeCents,
-      reported_income: centsToMoney(reportedIncomeCents),
-      reportedIncome: centsToMoney(reportedIncomeCents),
-      visibility: session.condition === "hidden" ? "hidden" : "visible"
-    }];
+  return createPeerIncomeRecords(session).map((record) => ({
+    ...record,
+    text: session.condition === "hidden"
+      ? study2HiddenText()
+      : study2VisibleText(record.actual_income_cents, record.reported_income_cents)
   }));
-  return displayOrder.map((name, index) => {
-    const record = byName.get(name);
-    return {
-      ...record,
-      display_position: index + 1,
-      text: session.condition === "hidden"
-        ? study2HiddenText()
-        : study2VisibleText(record.actual_income_cents, record.reported_income_cents)
-    };
-  });
 }
 
 function ensureStudy2PeerIncomeRecords(session) {
@@ -514,6 +563,7 @@ function publicPeerIncomeRecords(session) {
   const publicRecords = session.condition !== "hidden"
     ? records
     : records.map((record) => ({
+      member_id: record.member_id,
       name: record.name || record.peer_name,
       peer_name: record.peer_name || record.name,
       actual_income_cents: null,
@@ -524,6 +574,7 @@ function publicPeerIncomeRecords(session) {
       display_position: record.display_position,
       text: study2HiddenText()
     }));
+  if (isPeerIdentity(session.peer_identity)) return publicRecords;
   if (session.locale !== "en") return publicRecords;
   const englishNames = { "张明": "Alex", "李华": "Jordan", "王芳": "Taylor", "陈思": "Morgan" };
   return publicRecords.map((record) => {
@@ -637,8 +688,8 @@ function prepareCurrentEffortRound(session) {
   return material;
 }
 
-async function createSession({ participantId, requestedCondition, entry, lockHeld = false, prolificIdentity = null }) {
-  const normalizedParticipant = prolificIdentity?.prolific_pid || parseParticipantId(participantId);
+async function createSession({ participantId, requestedCondition, entry, lockHeld = false, prolificIdentity = null, qaIdentity = null }) {
+  const normalizedParticipant = prolificIdentity?.prolific_pid || qaIdentity?.participant_id || parseParticipantId(participantId);
   if (!normalizedParticipant && REQUIRE_PARTICIPANT_ID) {
     const error = new Error("参与编号缺失。请返回招募平台后通过原始研究链接进入。");
     error.statusCode = 400;
@@ -651,18 +702,20 @@ async function createSession({ participantId, requestedCondition, entry, lockHel
         requestedCondition,
         entry,
         lockHeld: true,
-        prolificIdentity
+        prolificIdentity,
+        qaIdentity,
       });
     });
   }
   if (prolificIdentity) {
-    const existingProlific = prolificSupport.findExisting(await store.listSessions(), prolificIdentity);
+    const existingProlific = prolificSupport.findExisting(await recruitmentStore.listSessions(), prolificIdentity);
     if (existingProlific) return resumeProlificSession(existingProlific, prolificIdentity);
   }
   let entryAssignment = null;
   const hasEntry = String(entry || "").trim() !== "";
-  if (prolificIdentity) {
-    if (ASSIGNMENT_MODE !== "prolific_taskflow") fail(404, "Prolific Taskflow entry is not enabled.");
+  if (prolificIdentity || qaIdentity) {
+    if (qaIdentity && (!isPeerIdentity(qaIdentity.peer_identity) || !isActiveCondition(qaIdentity.condition))) fail(400, "Invalid internal test cell.");
+    if (prolificIdentity && !["prolific_taskflow", "review_only"].includes(ASSIGNMENT_MODE)) fail(404, "Prolific Taskflow entry is not enabled.");
   } else if (ASSIGNMENT_MODE === "controlled_link") {
     entryAssignment = resolveEntryAssignment(entry);
   } else if (hasEntry) {
@@ -690,9 +743,9 @@ async function createSession({ participantId, requestedCondition, entry, lockHel
   let entryLinkId = null;
   const requestedDebugCondition = DEBUG_LINKS && !IS_PRODUCTION ? String(process.env.TEST_CONDITION || "").trim() : "";
   const debugOverride = ASSIGNMENT_MODE === "block" && Boolean(requestedDebugCondition);
-  if (prolificIdentity) {
-    condition = prolificIdentity.condition;
-    assignmentSource = "prolific_taskflow";
+  if (prolificIdentity || qaIdentity) {
+    condition = (prolificIdentity || qaIdentity).condition;
+    assignmentSource = prolificIdentity ? "prolific_taskflow" : (qaIdentity.team_review ? "team_review" : "qa");
     allocation = {
       assigned_at: now(),
       randomization_block: null,
@@ -741,8 +794,15 @@ async function createSession({ participantId, requestedCondition, entry, lockHel
   const session = {
     id,
     version: VERSION,
-    study_version: STUDY_VERSION,
-    protocol_version: PROTOCOL_VERSION,
+    study_version: HUMAN_AI_STUDY_VERSION,
+    protocol_version: HUMAN_AI_PROTOCOL_VERSION,
+    peer_identity: prolificIdentity?.peer_identity || qaIdentity?.peer_identity || null,
+    identity_manipulation_version: IDENTITY_MANIPULATION_VERSION,
+    condition_map_version: CONDITION_MAP_VERSION,
+    scope: prolificIdentity?.scope || (qaIdentity ? (qaIdentity.team_review ? "team_review" : "qa") : null),
+    is_qa: Boolean(qaIdentity && !qaIdentity.team_review),
+    is_team_review: Boolean(qaIdentity?.team_review),
+    git_commit: process.env.GIT_COMMIT || null,
     stimulus_version: STIMULUS_VERSION,
     stimulus_seed: stimulusSeed,
     study: "study2",
@@ -752,7 +812,7 @@ async function createSession({ participantId, requestedCondition, entry, lockHel
     entry_link_id: entryLinkId,
     randomization_block: allocation.randomization_block,
     randomization_position: allocation.randomization_position,
-    is_test_session: !IS_PRODUCTION || DEBUG_LINKS,
+    is_test_session: Boolean(qaIdentity) || Boolean(prolificIdentity?.is_preview) || !IS_PRODUCTION || DEBUG_LINKS,
     condition_label: {
       hidden: "同伴具体行为隐藏",
       honest: "同伴如实申报",
@@ -773,10 +833,11 @@ async function createSession({ participantId, requestedCondition, entry, lockHel
     is_preview: Boolean(prolificIdentity?.is_preview),
     preview_source: prolificIdentity?.preview_source || null,
     taskflow_variant_id: prolificIdentity?.taskflow_variant_id || null,
+    variant_id: prolificIdentity?.variant_id || qaIdentity?.variant_id || null,
     variant_token_hash: prolificIdentity?.variant_token_hash || null,
     record_key: prolificIdentity?.record_key || null,
-    assignment_mode: prolificIdentity ? "prolific_taskflow" : ASSIGNMENT_MODE,
-    locale: prolificIdentity ? "en" : "zh-CN",
+    assignment_mode: prolificIdentity ? "prolific_taskflow" : (qaIdentity ? "internal_review" : ASSIGNMENT_MODE),
+    locale: (prolificIdentity || qaIdentity) ? "en" : "zh-CN",
     status: "created",
     created_at: createdAt,
     assigned_at: createdAt,
@@ -790,6 +851,7 @@ async function createSession({ participantId, requestedCondition, entry, lockHel
     baseline: {},
     comprehension_attempts: [],
     study2_peer_display_order: study2StimulusPlan.peerDisplayOrder,
+    peer_member_ids: [...STABLE_MEMBER_IDS],
     study2_peer_profile_id: study2StimulusPlan.peerProfileId,
     study2_peer_profile_base_cents: null,
     study2_peer_income_records: [],
@@ -809,7 +871,11 @@ async function createSession({ participantId, requestedCondition, entry, lockHel
     demographics: {},
     abnormal_events: []
   };
-  addEvent(session, "session_created", { condition, debug_mode: session.debug_mode, assignment_source: assignmentSource, entry_link_id: entryLinkId });
+  if (isPeerIdentity(session.peer_identity)) {
+    const stablePlan = createStudy2StimulusPlan(stimulusSeed);
+    session.study2_peer_display_order = stablePlan.peerDisplayOrder;
+  }
+  addEvent(session, "session_created", { condition, peer_identity: session.peer_identity, scope: session.scope, debug_mode: session.debug_mode, assignment_source: assignmentSource, entry_link_id: entryLinkId });
   return store.writeSession(session);
 }
 
@@ -824,8 +890,13 @@ function asyncHandler(fn) {
 }
 
 function filterSessions(sessions, query = {}) {
-  const includeTest = String(query.include_test || query.includeTest || "").toLowerCase() === "true";
+  const scope = query.scope || "all";
+  const dataset = query.dataset || "all";
+  const explicitInternal = ["qa", "team_review"].includes(scope) || dataset === "internal";
+  const includeTest = explicitInternal || String(query.include_test || query.includeTest || "").toLowerCase() === "true";
   const condition = query.condition || "all";
+  const peerIdentity = query.peer_identity || "all";
+  const protocolVersion = query.protocol_version || "all";
   const status = query.status || "all";
   const resumedOnly = String(query.resumed_only || "").toLowerCase() === "true";
   const aliasesOnly = String(query.aliases_only || "").toLowerCase() === "true";
@@ -834,7 +905,12 @@ function filterSessions(sessions, query = {}) {
   const end = query.end_date ? new Date(`${query.end_date}T23:59:59.999Z`) : null;
   return sessions.filter((session) => {
     if (!includeTest && session.is_test_session) return false;
+    if (dataset === "recruitment" && !["formal", "preview"].includes(session.scope)) return false;
+    if (dataset === "internal" && !["qa", "team_review"].includes(session.scope)) return false;
+    if (scope !== "all" && scope && session.scope !== scope) return false;
     if (condition !== "all" && condition && session.condition !== condition) return false;
+    if (peerIdentity !== "all" && peerIdentity && session.peer_identity !== peerIdentity) return false;
+    if (protocolVersion !== "all" && protocolVersion && session.protocol_version !== protocolVersion) return false;
     if (status === "completed" && session.status !== "completed") return false;
     if (status === "incomplete" && session.status === "completed") return false;
     if (resumedOnly && Number(session.resume_count || 0) < 1) return false;
@@ -866,9 +942,60 @@ function prolificAdminSummary(sessions) {
     completed: sessions.filter((session) => session.status === "completed").length,
     data_complete: sessions.filter(prolificExport.isDataComplete).length,
     quality_flags: sessions.filter((session) => prolificExport.qualityFlags(session).length > 0).length,
-    conditions
+    conditions,
+    active_matrix: activeCells().map((cell) => {
+      const matching = sessions.filter((session) => session.peer_identity === cell.peer_identity && session.condition === cell.condition && session.protocol_version === HUMAN_AI_PROTOCOL_VERSION);
+      return { ...cell, arrived: matching.length, started: matching.filter((session) => session.started_at).length, incomplete: matching.filter((session) => session.status !== "completed").length, completed: matching.filter((session) => session.status === "completed").length, data_complete: matching.filter(prolificExport.isDataComplete).length, quality_flagged: matching.filter((session) => prolificExport.qualityFlags(session).length > 0).length };
+    }),
   };
 }
+
+app.get("/qa-preview", (req, res) => {
+  if (!ALLOW_QA_PREVIEW) return res.status(404).send("QA Preview is not enabled.");
+  return res.sendFile(path.join(__dirname, "..", "public", "qa-preview.html"));
+});
+
+app.get("/review", (req, res) => {
+  if (!ALLOW_TEAM_REVIEW) return res.status(404).send("Team Review is not enabled.");
+  return res.sendFile(path.join(__dirname, "..", "public", "review.html"));
+});
+
+function internalCellIdentity(body = {}, teamReview = false) {
+  const peerIdentity = String(body.peer_identity || "").trim();
+  const condition = String(body.condition || "").trim();
+  if (!isPeerIdentity(peerIdentity) || !isActiveCondition(condition)) fail(400, "Invalid Study2 Human-AI cell.");
+  const prefix = teamReview ? "review" : "qa";
+  const participantId = `${prefix}_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+  return { participant_id: participantId, peer_identity: peerIdentity, condition, variant_id: `${peerIdentity}_${condition}`, protocol_version: HUMAN_AI_PROTOCOL_VERSION, team_review: teamReview };
+}
+
+app.post("/api/admin/qa/session", asyncHandler(async (req, res) => {
+  if (!ALLOW_QA_PREVIEW) return res.status(404).json({ error: "QA Preview is not enabled." });
+  const identity = internalCellIdentity(req.body, false);
+  const session = await createSession({ participantId: identity.participant_id, requestedCondition: identity.condition, entry: null, qaIdentity: identity });
+  res.json({ session: publicSession(session) });
+}));
+
+app.post("/api/review/session", asyncHandler(async (req, res) => {
+  if (!ALLOW_TEAM_REVIEW) return res.status(404).json({ error: "Team Review is not enabled." });
+  const identity = internalCellIdentity(req.body, true);
+  const session = await createSession({ participantId: identity.participant_id, requestedCondition: identity.condition, entry: null, qaIdentity: identity });
+  res.json({ session: publicSession(session) });
+}));
+
+app.get("/api/qa/session/:id", asyncHandler(async (req, res) => {
+  if (!ALLOW_QA_PREVIEW) return res.status(404).json({ error: "QA Preview is not enabled." });
+  const session = await store.readSession(req.params.id);
+  if (session.scope !== "qa" || !session.is_qa) return res.status(404).json({ error: "QA session not found." });
+  res.json({ session: publicSession(session) });
+}));
+
+app.get("/api/review/session/:id", asyncHandler(async (req, res) => {
+  if (!ALLOW_TEAM_REVIEW) return res.status(404).json({ error: "Team Review is not enabled." });
+  const session = await store.readSession(req.params.id);
+  if (session.scope !== "team_review" || !session.is_team_review) return res.status(404).json({ error: "Review session not found." });
+  res.json({ session: publicSession(session) });
+}));
 
 app.get("/api/config", (req, res) => {
   res.json({
@@ -887,12 +1014,19 @@ app.get("/health", (req, res) => {
   res.json({
     ok: true,
     study: "study2",
-    study_version: STUDY_VERSION,
-    protocol_version: PROTOCOL_VERSION
+    study_version: HUMAN_AI_STUDY_VERSION,
+    protocol_version: HUMAN_AI_PROTOCOL_VERSION,
+    identity_manipulation_version: IDENTITY_MANIPULATION_VERSION,
+    condition_map_version: CONDITION_MAP_VERSION,
+    formal_recruitment_enabled: prolificSupport.formalEnabled,
+    preview_enabled: prolificSupport.previewMode,
+    active_cells: activeCells().length,
+    deployment_mode: prolificSupport.formalEnabled ? "formal" : "prelaunch_review",
   });
 });
 
 app.post("/api/session", asyncHandler(async (req, res) => {
+  if (["review_only", "prolific_taskflow"].includes(ASSIGNMENT_MODE)) return res.status(404).json({ error: "Direct participant entry is not enabled for this deployment." });
   const session = await createSession({
     participantId: req.body.participant_id || req.body.participantId || req.body.PROLIFIC_PID || req.body.pid || req.body.prolific_id,
     entry: req.body.entry,
@@ -1202,7 +1336,7 @@ app.post("/api/session/:id/income-report", asyncHandler(async (req, res) => {
       saved_at: submittedAt,
       selection_started_at: startedAt,
       submitted_at: submittedAt,
-      submission_source: "group_ai_private_panel"
+      submission_source: "submission_system_private_panel"
     };
     addEvent(draft, "income_report_submitted", draft.income_report);
     transition(draft, "income_report_completed");
@@ -1215,7 +1349,8 @@ app.post("/api/session/:id/income-report", asyncHandler(async (req, res) => {
 
 app.post("/api/session/:id/post-survey", asyncHandler(async (req, res) => {
   const responses = req.body.responses || {};
-  const validation = validateItems(study2.postSurveyItems, responses);
+  const current = await store.readSession(req.params.id);
+  const validation = validateItems(postSurveyItemsForSession(current), responses);
   if (validation.error) return res.status(400).json(validation);
   const session = await store.updateSession(req.params.id, (draft) => {
     if (draft.status !== "income_report_completed") throw new Error("Post-survey requires income_report_completed status");
@@ -1269,7 +1404,8 @@ function validateItems(items, responses) {
       const max = item.scalePoints || 7;
       if (!Number.isInteger(numeric) || numeric < 1 || numeric > max) invalid.push(item.id);
     } else if (item.type === "select") {
-      if (!item.options.includes(value)) invalid.push(item.id);
+      const optionValues = (item.options || []).map((option) => typeof option === "object" ? option.value : option);
+      if (!optionValues.includes(value)) invalid.push(item.id);
     } else if (item.type === "number") {
       const numeric = Number(value);
       if (!Number.isFinite(numeric) || !Number.isInteger(numeric) || (item.min !== undefined && numeric < item.min) || (item.max !== undefined && numeric > item.max)) invalid.push(item.id);
@@ -1340,8 +1476,71 @@ app.get("/api/admin/summary", requireAdmin, asyncHandler(async (req, res) => {
   res.json({ version: VERSION, summary: exporters.summary(sessions), data_dir: store.DATA_DIR });
 }));
 
+async function adminSessionsForQuery(query = {}) {
+  const scope = String(query.scope || "").trim();
+  const dataset = String(query.dataset || "").trim();
+  if (dataset === "recruitment" || ["formal", "preview"].includes(scope)) return recruitmentStore.listSessions();
+  if (dataset === "internal" || ["qa", "team_review"].includes(scope)) return internalStore.listSessions();
+  return store.listSessions();
+}
+
+app.get("/api/admin/datasets", requireAdmin, asyncHandler(async (req, res) => {
+  const recruitment = await recruitmentStore.listSessions();
+  const internal = await internalStore.listSessions();
+  const historical = await legacyStore.listSessions();
+  const scoped = (sessions, scope) => sessions.filter((session) => session.scope === scope);
+  const formal = scoped(recruitment, "formal"); const preview = scoped(recruitment, "preview");
+  const qa = scoped(internal, "qa"); const teamReview = scoped(internal, "team_review");
+  res.json({
+    recruitment: { formal: formal.length, preview: preview.length, formal_completed: formal.filter((session) => session.status === "completed").length, formal_incomplete: formal.filter((session) => session.status !== "completed").length, formal_matrix: prolificAdminSummary(formal).active_matrix, preview_matrix: prolificAdminSummary(preview).active_matrix },
+    internal: { qa: qa.length, team_review: teamReview.length, total: qa.length + teamReview.length, all_matrix: prolificAdminSummary([...qa, ...teamReview]).active_matrix, qa_matrix: prolificAdminSummary(qa).active_matrix, team_review_matrix: prolificAdminSummary(teamReview).active_matrix },
+    historical: { count: historical.length, read_only: true },
+    storage: { recruitment_data_dir: recruitmentStore.DATA_DIR, internal_data_dir: internalStore.DATA_DIR, historical_data_dir: legacyStore.DATA_DIR },
+  });
+}));
+
+app.get("/api/admin/legacy/summary", requireAdmin, asyncHandler(async (req, res) => {
+  const sessions = await legacyStore.listSessions();
+  res.json({ read_only: true, record_count: sessions.length, data_dir: legacyStore.DATA_DIR, summary: exporters.summary(sessions) });
+}));
+
+app.get("/api/admin/legacy/records", requireAdmin, asyncHandler(async (req, res) => {
+  const sessions = await legacyStore.listSessions();
+  res.json({ read_only: true, participants: prolificExport.adminRows(sessions) });
+}));
+
+app.get("/api/admin/legacy/session/:id", requireAdmin, asyncHandler(async (req, res) => {
+  const session = await legacyStore.readSession(req.params.id);
+  res.json({ read_only: true, session });
+}));
+
+app.get("/api/admin/integrity", requireAdmin, asyncHandler(async (req, res) => {
+  const recruitment = await recruitmentStore.listSessions();
+  const internal = await internalStore.listSessions();
+  const directories = [recruitmentStore.DATA_DIR, internalStore.DATA_DIR, legacyStore.DATA_DIR].filter(Boolean).map((item) => path.resolve(item));
+  const checks = [];
+  const add = (id, pass, detail) => checks.push({ id, status: pass ? "PASS" : "WARNING", detail });
+  add("data_directories_separate", new Set(directories).size === directories.length, "Recruitment, Internal, and Historical directories are distinct.");
+  add("recruitment_store_scope", recruitment.every((session) => ["formal", "preview"].includes(session.scope)), "Recruitment contains only Formal/Preview.");
+  add("internal_store_scope", internal.every((session) => ["qa", "team_review"].includes(session.scope)), "Internal contains only QA/Team Review.");
+  add("formal_contamination", recruitment.filter((session) => session.scope === "formal").every((session) => !session.is_preview && !session.is_qa && !session.is_team_review), "Formal contains no Preview/QA/Team Review.");
+  add("qa_identity", internal.filter((session) => session.scope === "qa").every((session) => session.is_qa === true), "QA identity flags match scope.");
+  add("team_review_identity", internal.filter((session) => session.scope === "team_review").every((session) => session.is_team_review === true), "Team Review identity flags match scope.");
+  add("historical_read_only", true, "Historical access uses a read-only adapter.");
+  res.json({ checks, recruitment_data_dir: recruitmentStore.DATA_DIR, internal_data_dir: internalStore.DATA_DIR, historical_data_dir: legacyStore.DATA_DIR });
+}));
+
+app.get("/api/admin/records", requireAdmin, asyncHandler(async (req, res) => {
+  res.json({ participants: prolificExport.adminRows(filterSessions(await adminSessionsForQuery(req.query), req.query)) });
+}));
+
+app.get("/api/admin/session/:id", requireAdmin, asyncHandler(async (req, res) => {
+  const session = await store.readSession(req.params.id);
+  res.json({ metadata: prolificExport.adminRows([session])[0], effort_rounds: session.effort_rounds || [], income_report: session.income_report || null, peer_income_records: session.study2_peer_income_records || [], survey: { baseline: session.baseline || {}, post_survey: session.post_survey || {}, experience: session.experience || {}, demographics: session.demographics || {} }, quality_flags: prolificExport.qualityFlags(session) });
+}));
+
 app.get("/api/admin/export/json", requireAdmin, asyncHandler(async (req, res) => {
-  res.json({ version: VERSION, sessions: filterSessions(await store.listSessions(), req.query) });
+  res.json({ version: VERSION, sessions: filterSessions(await adminSessionsForQuery(req.query), req.query) });
 }));
 
 app.get("/api/admin/prolific-summary", requireAdmin, asyncHandler(async (req, res) => {
@@ -1370,16 +1569,37 @@ app.get("/api/admin/export/prolific-preview-bundle.zip", requireAdmin, asyncHand
   res.send(archive);
 }));
 
+async function sendScopeBundle(res, scope) {
+  let sessions;
+  if (scope === "historical") sessions = await legacyStore.listSessions();
+  else if (["formal", "preview"].includes(scope)) sessions = filterSessions(await recruitmentStore.listSessions(), { scope, include_test: "true" });
+  else sessions = filterSessions(await internalStore.listSessions(), { scope, include_test: "true" });
+  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { scope }));
+  res.set("content-type", "application/zip");
+  res.set("content-disposition", `attachment; filename="study2-${scope.replace("_", "-")}-bundle-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.send(archive);
+}
+
+for (const [route, scope] of [
+  ["formal-bundle.zip", "formal"],
+  ["preview-bundle.zip", "preview"],
+  ["qa-bundle.zip", "qa"],
+  ["team-review-bundle.zip", "team_review"],
+  ["historical-bundle.zip", "historical"],
+]) {
+  app.get(`/api/admin/export/${route}`, requireAdmin, asyncHandler(async (req, res) => sendScopeBundle(res, scope)));
+}
+
 app.get("/api/admin/export/participants.csv", requireAdmin, asyncHandler(async (req, res) => {
-  res.type("text/csv").send(exporters.participantsCsv(filterSessions(await store.listSessions(), req.query)));
+  res.type("text/csv").send(exporters.participantsCsv(filterSessions(await adminSessionsForQuery(req.query), req.query)));
 }));
 
 app.get("/api/admin/export/study2_effort_rounds.csv", requireAdmin, asyncHandler(async (req, res) => {
-  res.type("text/csv").send(exporters.effortRoundsCsv(filterSessions(await store.listSessions(), req.query)));
+  res.type("text/csv").send(exporters.effortRoundsCsv(filterSessions(await adminSessionsForQuery(req.query), req.query)));
 }));
 
 app.get("/api/admin/export/study2_income_reports.csv", requireAdmin, asyncHandler(async (req, res) => {
-  res.type("text/csv").send(exporters.incomeReportsCsv(filterSessions(await store.listSessions(), req.query)));
+  res.type("text/csv").send(exporters.incomeReportsCsv(filterSessions(await adminSessionsForQuery(req.query), req.query)));
 }));
 
 app.use("/api", (req, res) => {
@@ -1408,14 +1628,23 @@ async function validateRuntime() {
     throw new Error("ADMIN_TOKEN must be set to a non-development value in production");
   }
   if (!process.env.DATA_DIR) throw new Error("DATA_DIR must be set in production");
+  if (!process.env.RECRUITMENT_DATA_DIR) throw new Error("RECRUITMENT_DATA_DIR must be set in production");
+  if (!process.env.LEGACY_STUDY2_DATA_DIR) throw new Error("LEGACY_STUDY2_DATA_DIR must be set in production");
   if (!STUDY_CONTACT_EMAIL) throw new Error("STUDY_CONTACT_EMAIL must be set in production");
   if (!path.isAbsolute(process.env.DATA_DIR)) throw new Error("DATA_DIR must be an absolute path in production");
+  if (!path.isAbsolute(process.env.RECRUITMENT_DATA_DIR)) throw new Error("RECRUITMENT_DATA_DIR must be an absolute path in production");
+  if (!path.isAbsolute(process.env.LEGACY_STUDY2_DATA_DIR)) throw new Error("LEGACY_STUDY2_DATA_DIR must be an absolute path in production");
+  const runtimeDirectories = [process.env.DATA_DIR, process.env.RECRUITMENT_DATA_DIR, process.env.LEGACY_STUDY2_DATA_DIR].map((item) => path.resolve(item));
+  if (new Set(runtimeDirectories).size !== runtimeDirectories.length) throw new Error("Recruitment, Internal, and Historical Study2 data directories must remain separate");
+  await fs.promises.access(process.env.LEGACY_STUDY2_DATA_DIR, fs.constants.R_OK);
   await store.ensureDataDir();
-  const parent = path.dirname(store.DATA_DIR);
-  await fs.promises.mkdir(parent, { recursive: true });
-  const probe = path.join(parent, `.write-test-${process.pid}-${Date.now()}`);
-  await fs.promises.writeFile(probe, "ok", "utf8");
-  await fs.promises.unlink(probe);
+  for (const writableStore of [internalStore, recruitmentStore]) {
+    const parent = path.dirname(writableStore.DATA_DIR);
+    await fs.promises.mkdir(parent, { recursive: true });
+    const probe = path.join(parent, `.write-test-${process.pid}-${Date.now()}`);
+    await fs.promises.writeFile(probe, "ok", "utf8");
+    await fs.promises.unlink(probe);
+  }
 }
 
 if (require.main === module) {
@@ -1431,7 +1660,12 @@ if (require.main === module) {
 
 app._internal = {
   createStudy2StimulusPlan,
-  buildStudy2PeerIncomeRecords
+  buildStudy2PeerIncomeRecords,
+  publicPeerIncomeRecords,
+  peerMembersForIdentity,
+  postSurveyItemsForSession,
+  filterSessions,
+  activeCells,
 };
 
 module.exports = app;

@@ -1,16 +1,15 @@
 (function () {
   const SECTION_TITLES = {
-    A: "任务理解与信息回忆",
-    B: "你对同事实际做法的判断",
-    C: "你对同事认为“应该/可接受”的判断",
-    D: "回顾自己的感受",
-    E: "回顾你的决定与群聊 AI 的角色",
-    F: "补充说明（可选）"
+    A: "Group norms",
+    B: "Social influence",
+    C: "Responsibility and moral feelings",
+    D: "Information and task checks",
+    E: "Identity manipulation",
+    F: "Additional comment (optional)"
   };
 
   const SECTION_SUBTITLES = {
-    D: "以下两题请按感受强度作答：1 = 完全没有，7 = 非常强烈。",
-    F: "以下两题为可选。若没有补充，也可留空继续。"
+    F: "This question is optional. You may leave it blank."
   };
 
   function likertButtons(item, value) {
