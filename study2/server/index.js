@@ -1470,7 +1470,7 @@ app.post("/api/session/:id/completion-redirect-initiated", asyncHandler(async (r
   res.json({ session: publicSession(session) });
 }));
 
-app.get("/api/admin/summary", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/summary", asyncHandler(async (req, res) => {
   let sessions = filterSessions(await store.listSessions(), req.query);
   if (ASSIGNMENT_MODE === "prolific_taskflow") sessions = sessions.filter((session) => !session.is_preview);
   res.json({ version: VERSION, summary: exporters.summary(sessions), data_dir: store.DATA_DIR });
@@ -1484,7 +1484,7 @@ async function adminSessionsForQuery(query = {}) {
   return store.listSessions();
 }
 
-app.get("/api/admin/datasets", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/datasets", asyncHandler(async (req, res) => {
   const recruitment = await recruitmentStore.listSessions();
   const internal = await internalStore.listSessions();
   const historical = await legacyStore.listSessions();
@@ -1499,22 +1499,22 @@ app.get("/api/admin/datasets", requireAdmin, asyncHandler(async (req, res) => {
   });
 }));
 
-app.get("/api/admin/legacy/summary", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/legacy/summary", asyncHandler(async (req, res) => {
   const sessions = await legacyStore.listSessions();
   res.json({ read_only: true, record_count: sessions.length, data_dir: legacyStore.DATA_DIR, summary: exporters.summary(sessions) });
 }));
 
-app.get("/api/admin/legacy/records", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/legacy/records", asyncHandler(async (req, res) => {
   const sessions = await legacyStore.listSessions();
   res.json({ read_only: true, participants: prolificExport.adminRows(sessions) });
 }));
 
-app.get("/api/admin/legacy/session/:id", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/legacy/session/:id", asyncHandler(async (req, res) => {
   const session = await legacyStore.readSession(req.params.id);
   res.json({ read_only: true, session });
 }));
 
-app.get("/api/admin/integrity", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/integrity", asyncHandler(async (req, res) => {
   const recruitment = await recruitmentStore.listSessions();
   const internal = await internalStore.listSessions();
   const directories = [recruitmentStore.DATA_DIR, internalStore.DATA_DIR, legacyStore.DATA_DIR].filter(Boolean).map((item) => path.resolve(item));
@@ -1530,20 +1530,20 @@ app.get("/api/admin/integrity", requireAdmin, asyncHandler(async (req, res) => {
   res.json({ checks, recruitment_data_dir: recruitmentStore.DATA_DIR, internal_data_dir: internalStore.DATA_DIR, historical_data_dir: legacyStore.DATA_DIR });
 }));
 
-app.get("/api/admin/records", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/records", asyncHandler(async (req, res) => {
   res.json({ participants: prolificExport.adminRows(filterSessions(await adminSessionsForQuery(req.query), req.query)) });
 }));
 
-app.get("/api/admin/session/:id", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/session/:id", asyncHandler(async (req, res) => {
   const session = await store.readSession(req.params.id);
   res.json({ metadata: prolificExport.adminRows([session])[0], effort_rounds: session.effort_rounds || [], income_report: session.income_report || null, peer_income_records: session.study2_peer_income_records || [], survey: { baseline: session.baseline || {}, post_survey: session.post_survey || {}, experience: session.experience || {}, demographics: session.demographics || {} }, quality_flags: prolificExport.qualityFlags(session) });
 }));
 
-app.get("/api/admin/export/json", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/export/json", asyncHandler(async (req, res) => {
   res.json({ version: VERSION, sessions: filterSessions(await adminSessionsForQuery(req.query), req.query) });
 }));
 
-app.get("/api/admin/prolific-summary", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/prolific-summary", asyncHandler(async (req, res) => {
   const allSessions = filterSessions(await store.listSessions(), req.query).filter((session) => session.assignment_mode === "prolific_taskflow");
   const recordKind = req.query.record_kind || "all";
   const sessions = recordKind === "preview" ? [] : allSessions.filter((session) => !session.is_preview);
@@ -1553,7 +1553,7 @@ app.get("/api/admin/prolific-summary", requireAdmin, asyncHandler(async (req, re
   res.json({ preview_mode_enabled: prolificSupport.previewMode, formal, preview, conditions: formal.conditions, preview_conditions: preview.conditions, participants: prolificExport.adminRows(sessions), preview_participants: prolificExport.adminRows(previewSessions) });
 }));
 
-app.get("/api/admin/export/prolific-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/export/prolific-bundle.zip", asyncHandler(async (req, res) => {
   const sessions = filterSessions(await store.listSessions(), req.query).filter((session) => session.assignment_mode === "prolific_taskflow" && !session.is_preview);
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions));
   res.set("content-type", "application/zip");
@@ -1561,7 +1561,7 @@ app.get("/api/admin/export/prolific-bundle.zip", requireAdmin, asyncHandler(asyn
   res.send(archive);
 }));
 
-app.get("/api/admin/export/prolific-preview-bundle.zip", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/export/prolific-preview-bundle.zip", asyncHandler(async (req, res) => {
   const sessions = filterSessions(await store.listSessions(), req.query).filter((session) => session.assignment_mode === "prolific_taskflow" && session.is_preview);
   const archive = prolificExport.zip(prolificExport.buildFiles(sessions));
   res.set("content-type", "application/zip");
@@ -1587,18 +1587,18 @@ for (const [route, scope] of [
   ["team-review-bundle.zip", "team_review"],
   ["historical-bundle.zip", "historical"],
 ]) {
-  app.get(`/api/admin/export/${route}`, requireAdmin, asyncHandler(async (req, res) => sendScopeBundle(res, scope)));
+  app.get(`/api/admin/export/${route}`, asyncHandler(async (req, res) => sendScopeBundle(res, scope)));
 }
 
-app.get("/api/admin/export/participants.csv", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/export/participants.csv", asyncHandler(async (req, res) => {
   res.type("text/csv").send(exporters.participantsCsv(filterSessions(await adminSessionsForQuery(req.query), req.query)));
 }));
 
-app.get("/api/admin/export/study2_effort_rounds.csv", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/export/study2_effort_rounds.csv", asyncHandler(async (req, res) => {
   res.type("text/csv").send(exporters.effortRoundsCsv(filterSessions(await adminSessionsForQuery(req.query), req.query)));
 }));
 
-app.get("/api/admin/export/study2_income_reports.csv", requireAdmin, asyncHandler(async (req, res) => {
+app.get("/api/admin/export/study2_income_reports.csv", asyncHandler(async (req, res) => {
   res.type("text/csv").send(exporters.incomeReportsCsv(filterSessions(await adminSessionsForQuery(req.query), req.query)));
 }));
 

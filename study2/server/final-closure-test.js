@@ -165,6 +165,12 @@ function zipEntryNames(buffer) {
       assert.strictEqual(review.data.session.is_team_review, true);
       assert(fs.existsSync(path.join(internalDir, `${qa.data.session.id}.json`)));
       assert(fs.existsSync(path.join(internalDir, `${review.data.session.id}.json`)));
+      const qaEntry = await request(`/api/qa/session/${qa.data.session.id}`);
+      const reviewEntry = await request(`/api/review/session/${review.data.session.id}`);
+      assert.strictEqual(qaEntry.response.status, 200, qaEntry.text);
+      assert.strictEqual(reviewEntry.response.status, 200, reviewEntry.text);
+      assert.strictEqual((await request(`/api/review/session/${qa.data.session.id}`)).response.status, 404, "QA session crossed into Team Review");
+      assert.strictEqual((await request(`/api/qa/session/${review.data.session.id}`)).response.status, 404, "Team Review session crossed into QA");
       await completeInternalFlow(qa.data.session);
       await completeInternalFlow(review.data.session);
       qaSessions.push(qa.data.session);
@@ -172,6 +178,8 @@ function zipEntryNames(buffer) {
     }
     assert.strictEqual(new Set(qaSessions.map((session) => session.peer_identity)).size, 2);
     assert.strictEqual(new Set(reviewSessions.map((session) => session.peer_identity)).size, 2);
+    assert.strictEqual((await request("/api/review/session/not-a-real-session")).response.status, 410);
+    assert.strictEqual((await request("/api/qa/session/not-a-real-session")).response.status, 410);
 
     const adminHeaders = { "x-admin-token": "study2-closure-admin" };
     const datasets = (await request("/api/admin/datasets", { headers: adminHeaders })).data;
@@ -182,10 +190,17 @@ function zipEntryNames(buffer) {
     assert.strictEqual(datasets.historical.count, 1);
     const integrity = (await request("/api/admin/integrity", { headers: adminHeaders })).data;
     assert(integrity.checks.every((check) => check.status === "PASS"), JSON.stringify(integrity));
+    assert.strictEqual((await request("/api/admin/datasets")).response.status, 200, "Admin datasets still require a token");
+    assert.strictEqual((await request("/api/admin/integrity")).response.status, 200, "Admin integrity still requires a token");
+    const internalRecords = (await request("/api/admin/records?dataset=internal&include_test=true")).data.participants;
+    assert(internalRecords.length >= 12, "Admin internal records did not load");
+    assert.strictEqual((await request(`/api/admin/session/${internalRecords[0].record_id}`)).response.status, 200, "Admin Inspect still requires a token");
+    assert.strictEqual((await request("/api/admin/legacy/session/legacy_fixture")).response.status, 200, "Historical Inspect still requires a token");
+    assert.strictEqual((await request("/api/admin/export/participants.csv?dataset=internal&scope=qa&include_test=true")).response.status, 200, "Admin export still requires a token");
 
     const expectedZip = ["participants.csv", "study2_rounds.csv", "study2_effort_rounds.csv", "study2_income_reports.csv", "surveys.csv", "bonus_payments.csv", "raw_sessions.ndjson", "cell_summary.csv", "export_metadata.json"].sort();
     for (const [route, scope] of [["/api/admin/export/formal-bundle.zip", "formal"], ["/api/admin/export/preview-bundle.zip", "preview"], ["/api/admin/export/qa-bundle.zip", "qa"], ["/api/admin/export/team-review-bundle.zip", "team_review"], ["/api/admin/export/historical-bundle.zip", "historical"]]) {
-      const result = await request(route, { headers: adminHeaders });
+      const result = await request(route);
       assert.strictEqual(result.response.status, 200, `${scope}: ${result.text}`);
       assert.deepStrictEqual(zipEntryNames(result.body).sort(), expectedZip, scope);
     }

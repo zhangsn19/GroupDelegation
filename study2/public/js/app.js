@@ -245,7 +245,10 @@
   }
 
   async function startSession() {
-    const data = await api(isProlificEntry ? "/api/prolific/session" : "/api/session", {
+    let data;
+    if (reviewSessionId) data = await api(`/api/review/session/${encodeURIComponent(reviewSessionId)}`);
+    else if (qaSessionId) data = await api(`/api/qa/session/${encodeURIComponent(qaSessionId)}`);
+    else data = await api(isProlificEntry ? "/api/prolific/session" : "/api/session", {
       method: "POST",
       body: isProlificEntry
         ? prolificParams
@@ -802,6 +805,7 @@
       state.config = window.EnglishLocale.deepTranslate(state.config);
     }
     state.members = state.config.members;
+    if (reviewSessionId || qaSessionId) await startSession();
   }
 
   init().catch((error) => {
