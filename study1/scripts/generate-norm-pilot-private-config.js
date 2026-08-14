@@ -23,7 +23,7 @@ const env = [
   "QA_DATA_DIR=/var/lib/group-deception/study1-ai-norm-pilot-v1/qa/sessions",
   "TEAM_REVIEW_DATA_DIR=/var/lib/group-deception/study1-ai-norm-pilot-v1/team-review/sessions",
   "PROLIFIC_EXPECTED_STUDY_ID=__PENDING__", "PROLIFIC_COMPLETION_URL=__PENDING__",
-  `PROLIFIC_VARIANT_MAP_JSON=${JSON.stringify(descriptors)}`,
+  `PROLIFIC_VARIANT_MAP_JSON='${JSON.stringify(descriptors)}'`,
   `ADMIN_TOKEN=${crypto.randomBytes(32).toString("hex")}`,
   `SERVER_RECORD_SECRET=${crypto.randomBytes(32).toString("hex")}`,
   "STUDY_CONTACT_EMAIL=zsn23@mails.tsinghua.edu.cn", "BONUS_CURRENCY=GBP", "BONUS_DISPLAY_LABEL=Task bonus",
