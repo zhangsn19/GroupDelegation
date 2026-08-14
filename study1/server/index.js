@@ -29,6 +29,7 @@ const {
   isSupportedCondition,
   activeCells,
 } = require("../config/human-ai-protocol");
+const normPilot = require("../config/ai-norm-pilot");
 
 function loadDotEnv() {
   const envPath = path.join(process.cwd(), ".env");
@@ -48,29 +49,45 @@ const internalStore = require("./store");
 const recruitmentStore = process.env.RECRUITMENT_DATA_DIR
   ? internalStore.createStore(process.env.RECRUITMENT_DATA_DIR)
   : internalStore;
+const NORM_RUNTIME = String(process.env.PROTOCOL_VERSION || "") === normPilot.PROTOCOL_VERSION;
+const formalStore = NORM_RUNTIME
+  ? internalStore.createStore(process.env.FORMAL_DATA_DIR || "./data/norm/formal/sessions")
+  : recruitmentStore;
+const previewStore = NORM_RUNTIME
+  ? internalStore.createStore(process.env.PREVIEW_DATA_DIR || "./data/norm/preview/sessions")
+  : recruitmentStore;
+const qaStore = NORM_RUNTIME
+  ? internalStore.createStore(process.env.QA_DATA_DIR || "./data/norm/qa/sessions")
+  : internalStore;
+const teamReviewStore = NORM_RUNTIME
+  ? internalStore.createStore(process.env.TEAM_REVIEW_DATA_DIR || "./data/norm/team-review/sessions")
+  : internalStore;
+const writableStores = [...new Set([formalStore, previewStore, qaStore, teamReviewStore])];
+function storeForScope(scope) {
+  return ({ formal: formalStore, preview: previewStore, qa: qaStore, team_review: teamReviewStore })[scope] || internalStore;
+}
 function isRecruitmentSession(session = {}) {
   return session.assignment_mode === "prolific_taskflow" || session.is_preview === true || session.scope === "formal" || session.scope === "preview";
 }
 async function locateCurrentStore(id) {
-  try {
-    await recruitmentStore.readSession(id);
-    return recruitmentStore;
-  } catch (error) {
-    if (error.statusCode !== 410) throw error;
+  for (const candidate of writableStores) {
+    try {
+      await candidate.readSession(id);
+      return candidate;
+    } catch (error) {
+      if (error.statusCode !== 410) throw error;
+    }
   }
-  await internalStore.readSession(id);
-  return internalStore;
+  await writableStores[0].readSession(id);
+  throw new Error("Unreachable session lookup state");
 }
 const store = {
-  DATA_DIR: internalStore.DATA_DIR,
+  DATA_DIR: NORM_RUNTIME ? formalStore.DATA_DIR : internalStore.DATA_DIR,
   async ensureDataDir() {
-    if (recruitmentStore === internalStore) return internalStore.ensureDataDir();
-    await Promise.all([internalStore.ensureDataDir(), recruitmentStore.ensureDataDir()]);
+    await Promise.all(writableStores.map((candidate) => candidate.ensureDataDir()));
   },
   async listSessions() {
-    if (recruitmentStore === internalStore) return internalStore.listSessions();
-    const [recruitment, internal] = await Promise.all([recruitmentStore.listSessions(), internalStore.listSessions()]);
-    return [...recruitment, ...internal];
+    return (await Promise.all(writableStores.map((candidate) => candidate.listSessions()))).flat();
   },
   async readSession(id) {
     const selected = await locateCurrentStore(id);
@@ -81,10 +98,11 @@ const store = {
     return selected.updateSession(id, updater);
   },
   async writeSession(session) {
+    if (NORM_RUNTIME) return storeForScope(prolificExport.sessionScope(session)).writeSession(session);
     return (isRecruitmentSession(session) ? recruitmentStore : internalStore).writeSession(session);
   },
   async appendAuditEvent(event) {
-    return recruitmentStore.appendAuditEvent(event);
+    return (NORM_RUNTIME ? formalStore : recruitmentStore).appendAuditEvent(event);
   },
 };
 const { createReadOnlyLegacyStore } = require("./legacy-store");
@@ -94,11 +112,14 @@ const PORT = Number(process.env.PORT || 3000);
 const DEBUG_LINKS = String(process.env.DEBUG_LINKS).toLowerCase() === "true";
 const ALLOW_QA_PREVIEW = String(process.env.ALLOW_QA_PREVIEW || "").toLowerCase() === "true";
 const ALLOW_TEAM_REVIEW = String(process.env.ALLOW_TEAM_REVIEW || "").toLowerCase() === "true";
+const ALLOW_PREVIEW = String(process.env.ALLOW_PREVIEW || process.env.PROLIFIC_PREVIEW_MODE || "").toLowerCase() === "true";
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const REQUIRE_PARTICIPANT_ID = IS_PRODUCTION || String(process.env.REQUIRE_PARTICIPANT_ID).toLowerCase() === "true";
 const STUDY_VERSION = process.env.STUDY_VERSION || "study1-v1.1.0";
 const ASSIGNMENT_MODE = String(process.env.ASSIGNMENT_MODE || "block").trim() || "block";
 const PROTOCOL_VERSION = process.env.PROTOCOL_VERSION || (ASSIGNMENT_MODE === "review_only" ? HUMAN_AI_PROTOCOL_VERSION : "peer-reporting-v2");
+const IS_NORM_PILOT = PROTOCOL_VERSION === normPilot.PROTOCOL_VERSION;
+const FORMAL_RECRUITMENT_ENABLED = String(process.env.FORMAL_RECRUITMENT_ENABLED || "false").toLowerCase() === "true";
 const TEST_CONDITION = String(process.env.TEST_CONDITION || "").trim();
 const ENTRY_CODES = {
   A: { condition: "hidden", value: String(process.env.ENTRY_CODE_HIDDEN || "").trim() },
@@ -115,7 +136,7 @@ const PARTICIPANT_ID_PATTERN = /^GD-S1-[A-Z0-9]{6}$/;
 const STUDY_CONTACT_EMAIL = String(process.env.STUDY_CONTACT_EMAIL || (IS_PRODUCTION ? "" : "123456@163.com")).trim();
 const COMPLETION_CODE = process.env.COMPLETION_CODE || "";
 const COMPLETION_REDIRECT_URL = process.env.COMPLETION_REDIRECT_URL || "";
-const STIMULUS_VERSION = "randomized-stimuli-v1";
+const STIMULUS_VERSION = IS_NORM_PILOT ? normPilot.STIMULUS_VERSION : "randomized-stimuli-v1";
 const STUDY1_DICE_MULTISET = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5];
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false, limit: "16kb" }));
@@ -125,7 +146,7 @@ app.get(["/", "/index.html"], (req, res, next) => {
       prolificSupport.validateRequest(req.query);
       return res.sendFile(path.join(__dirname, "..", "public", "en", "index.html"));
     } catch (error) {
-      return res.status(error.statusCode || 403).type("text/plain").send("Study access requires a valid preview link.");
+      return res.status(403).type("text/plain").send("Study access requires a valid study link.");
     }
   }
   if (ASSIGNMENT_MODE !== "prolific_taskflow") return next();
@@ -204,6 +225,7 @@ function validateAssignmentConfig() {
     participantAllowlist = loadParticipantAllowlist(PARTICIPANT_ID_ALLOWLIST_FILE);
   }
   if (ASSIGNMENT_MODE !== "controlled_link") return;
+  if (IS_NORM_PILOT) throw new Error("AI Norm Pilot does not support controlled_link assignment");
   const values = Object.values(ENTRY_CODES).map((item) => item.value);
   if (values.some((value) => !value)) {
     throw new Error("controlled_link assignment requires all seven Study 1 entry codes");
@@ -234,10 +256,10 @@ function validateParticipantIdPolicy(participantId, entryAssignment) {
 validateAssignmentConfig();
 
 const prolificSupport = createProlificSupport({
-  assignmentMode: ASSIGNMENT_MODE,
+  assignmentMode: IS_NORM_PILOT && !FORMAL_RECRUITMENT_ENABLED ? "review_only" : ASSIGNMENT_MODE,
   isProduction: IS_PRODUCTION,
-  allowedConditions: CONDITIONS,
-  expectedVariantCount: 7
+  allowedConditions: IS_NORM_PILOT ? normPilot.CONDITIONS : CONDITIONS,
+  expectedVariantCount: IS_NORM_PILOT ? 4 : 7
 });
 
 function publicContactEmail() {
@@ -288,6 +310,13 @@ function publicSession(session) {
     payload.demographics_items = demographicsItemsForSession(session);
     payload.rule_blocks = study1.humanAiRuleBlocksFor(session.peer_identity, session.condition);
     payload.comprehension_questions = publicComprehensionQuestions(study1.humanAiComprehensionQuestions);
+  } else if (session.protocol_version === normPilot.PROTOCOL_VERSION) {
+    payload.peer_identity = normPilot.PEER_IDENTITY;
+    payload.peer_members = peerMembersForIdentity(normPilot.PEER_IDENTITY);
+    payload.post_survey_items = postSurveyItemsForSession(session);
+    payload.demographics_items = demographicsItemsForSession(session);
+    payload.rule_blocks = normPilot.RULE_BLOCKS;
+    payload.comprehension_questions = publicComprehensionQuestions(normPilot.COMPREHENSION_QUESTIONS);
   }
   return payload;
 }
@@ -315,18 +344,21 @@ function addEvent(session, type, data = {}) {
 }
 
 function postSurveyItemsForSession(session) {
+  if (session?.protocol_version === normPilot.PROTOCOL_VERSION) return normPilot.posttestItemsFor(session.norm_type);
   if (session?.protocol_version !== HUMAN_AI_PROTOCOL_VERSION) return study1.postSurveyItems;
   if (session.condition !== "hidden") return study1.humanAiPostSurveyItems;
   return study1.humanAiPostSurveyItems.filter((item) => item.id !== "peer_reports_considered");
 }
 
 function demographicsItemsForSession(session) {
+  if (session?.protocol_version === normPilot.PROTOCOL_VERSION) return study1.demographicsItems;
   return session?.protocol_version === HUMAN_AI_PROTOCOL_VERSION
     ? study1.humanAiDemographicsItems
     : study1.demographicsItems;
 }
 
 function comprehensionQuestionsForSession(session) {
+  if (session?.protocol_version === normPilot.PROTOCOL_VERSION) return normPilot.COMPREHENSION_QUESTIONS;
   return session?.protocol_version === HUMAN_AI_PROTOCOL_VERSION
     ? study1.humanAiComprehensionQuestions
     : study1.comprehensionQuestions;
@@ -422,7 +454,8 @@ function validateStudy(study) {
 }
 
 function validateCondition(condition) {
-  if (!CONDITIONS.includes(condition)) {
+  const allowed = IS_NORM_PILOT ? normPilot.CONDITIONS : CONDITIONS;
+  if (!allowed.includes(condition)) {
     const error = new Error("Invalid condition");
     error.statusCode = 400;
     throw error;
@@ -430,13 +463,14 @@ function validateCondition(condition) {
 }
 
 async function assignCondition(study) {
-  const sessions = (await store.listSessions()).filter((session) => session.study === study && CONDITIONS.includes(session.condition));
-  const counts = Object.fromEntries(CONDITIONS.map((condition) => [condition, 0]));
+  const allowed = IS_NORM_PILOT ? normPilot.CONDITIONS : CONDITIONS;
+  const sessions = (await store.listSessions()).filter((session) => session.study === study && allowed.includes(session.condition));
+  const counts = Object.fromEntries(allowed.map((condition) => [condition, 0]));
   for (const session of sessions) {
     counts[session.condition] += session.status === "completed" ? 1.25 : 1;
   }
   const min = Math.min(...Object.values(counts));
-  return CONDITIONS.find((condition) => counts[condition] === min);
+  return allowed.find((condition) => counts[condition] === min);
 }
 
 function randomizationDir() {
@@ -628,6 +662,31 @@ function createStudy1Stimuli(condition, seed) {
   };
 }
 
+function createNormPilotStimuli(condition, seed) {
+  const factor = normPilot.descriptor(condition);
+  if (!factor) throw new Error("Invalid AI Norm Pilot condition");
+  const diceSequence = seededShuffle(STUDY1_DICE_MULTISET, createSeededRandom(seed, "study1-dice"));
+  const message = normPilot.STIMULI[condition];
+  const peerMessagesByRound = diceSequence.map((trueValue, index) => ({
+    round_index: index + 1,
+    true_die_value: trueValue,
+    norm_type: factor.norm_type,
+    norm_valence: factor.norm_valence,
+    norm_stimulus_id: factor.stimulus_id,
+    norm_stimulus_version: normPilot.STIMULUS_VERSION,
+    norm_message_text: message,
+    peer_messages: STABLE_MEMBER_IDS.map((peerId, peerIndex) => ({
+      peer_id: peerId,
+      peer_name: `AI Member ${peerIndex + 1}`,
+      message,
+      stimulus_id: factor.stimulus_id,
+      norm_type: factor.norm_type,
+      norm_valence: factor.norm_valence,
+    })),
+  }));
+  return { diceSequence, peerMessagesByRound };
+}
+
 function sessionDiceSequence(session) {
   return session.study1_die_sequence || session.dice_sequence || [];
 }
@@ -640,6 +699,10 @@ function sessionPeerRecordsByRound(session) {
     peer_display_order: peerRecords.map((record) => record.name),
     peer_records: peerRecords
   }));
+}
+
+function sessionNormMessagesByRound(session) {
+  return session.study1_norm_messages_by_round || [];
 }
 
 function publicStudy1PeerRecords(session, peerRecords = []) {
@@ -681,6 +744,7 @@ function publicStudy1PeerRecords(session, peerRecords = []) {
 
 function publicDiceRound(session, round) {
   if (!round) return round;
+  if (session.protocol_version === normPilot.PROTOCOL_VERSION) return { ...round };
   const {
     n_peers_misreporting,
     misreporting_peer_names,
@@ -721,7 +785,7 @@ function allocateBlockCondition(state, { participantId, study }) {
     state.current_block = {
       block: state.next_block,
       position: 0,
-      sequence: shuffle([...CONDITIONS])
+      sequence: shuffle([...(IS_NORM_PILOT ? normPilot.CONDITIONS : CONDITIONS)])
     };
     state.next_block += 1;
   }
@@ -819,7 +883,7 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     };
   } else if (qaIdentity) {
     condition = qaIdentity.condition;
-    assignmentSource = qaIdentity.team_review ? "team_review" : "qa_preview";
+    assignmentSource = qaIdentity.scope || (qaIdentity.team_review ? "team_review" : "qa_preview");
     allocation = { assigned_at: now(), randomization_block: null, randomization_position: null };
   } else if (ASSIGNMENT_MODE === "controlled_link") {
     condition = entryAssignment.condition;
@@ -860,7 +924,10 @@ async function createSession({ study, participantId, requestedCondition, entry, 
   const id = `s_${crypto.randomUUID().replace(/-/g, "").slice(0, 18)}`;
   const createdAt = now();
   const stimulusSeed = createStimulusSeed();
-  const study1Stimuli = study === "study1" ? createStudy1Stimuli(condition, stimulusSeed) : {
+  const sessionProtocol = prolificIdentity?.protocol_version || qaIdentity?.protocol_version || PROTOCOL_VERSION;
+  const isNormSession = sessionProtocol === normPilot.PROTOCOL_VERSION;
+  const normStimuli = isNormSession ? createNormPilotStimuli(condition, stimulusSeed) : null;
+  const study1Stimuli = study === "study1" && !isNormSession ? createStudy1Stimuli(condition, stimulusSeed) : {
     diceSequence: [],
     peerDisplayOrder: [],
     peerRecordsByRound: [],
@@ -870,7 +937,7 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     peerBehaviorAssignments: null,
     compositionVersion: null
   };
-  const diceSequence = study1Stimuli.diceSequence;
+  const diceSequence = isNormSession ? normStimuli.diceSequence : study1Stimuli.diceSequence;
   const isHumanAiSession = (prolificIdentity?.protocol_version || qaIdentity?.protocol_version) === HUMAN_AI_PROTOCOL_VERSION;
   const persistedPeerRecordsByRound = isHumanAiSession
     ? study1Stimuli.peerRecordsByRound.map((round) => ({
@@ -885,29 +952,36 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     id,
     version: VERSION,
     study_version: STUDY_VERSION,
-    protocol_version: prolificIdentity?.protocol_version || qaIdentity?.protocol_version || PROTOCOL_VERSION,
-    peer_identity: prolificIdentity?.peer_identity || qaIdentity?.peer_identity || null,
+    protocol_version: sessionProtocol,
+    study1_source_commit: isNormSession ? normPilot.STUDY1_SOURCE_COMMIT : null,
+    peer_identity: isNormSession ? normPilot.PEER_IDENTITY : (prolificIdentity?.peer_identity || qaIdentity?.peer_identity || null),
+    norm_type: isNormSession ? normPilot.descriptor(condition).norm_type : null,
+    norm_valence: isNormSession ? normPilot.descriptor(condition).norm_valence : null,
     identity_manipulation_version: (prolificIdentity?.protocol_version || qaIdentity?.protocol_version) === HUMAN_AI_PROTOCOL_VERSION ? IDENTITY_MANIPULATION_VERSION : null,
-    condition_map_version: (prolificIdentity?.protocol_version || qaIdentity?.protocol_version) === HUMAN_AI_PROTOCOL_VERSION ? CONDITION_MAP_VERSION : null,
-    is_qa: Boolean(qaIdentity && !qaIdentity.team_review),
-    is_team_review: Boolean(qaIdentity?.team_review),
-    stimulus_version: STIMULUS_VERSION,
+    condition_map_version: isNormSession ? normPilot.CONDITION_MAP_VERSION : ((prolificIdentity?.protocol_version || qaIdentity?.protocol_version) === HUMAN_AI_PROTOCOL_VERSION ? CONDITION_MAP_VERSION : null),
+    posttest_schema_version: isNormSession ? normPilot.POSTTEST_SCHEMA_VERSION : null,
+    git_commit: process.env.GIT_COMMIT || "",
+    is_qa: Boolean(qaIdentity && (qaIdentity.scope === "qa" || (!qaIdentity.scope && !qaIdentity.team_review))),
+    is_team_review: Boolean(qaIdentity?.team_review || qaIdentity?.scope === "team_review"),
+    stimulus_version: isNormSession ? normPilot.STIMULUS_VERSION : STIMULUS_VERSION,
     stimulus_seed: stimulusSeed,
     study,
     condition,
-    condition_analysis_label: conditionAnalysisLabelForCondition(condition),
-    condition_family: study1Stimuli.conditionFamily,
-    fixed_dishonest_count: study1Stimuli.fixedDishonestCount,
-    fixed_dishonest_peer_names: study1Stimuli.fixedDishonestPeerNames,
-    peer_behavior_assignments: study1Stimuli.peerBehaviorAssignments,
-    composition_version: study1Stimuli.compositionVersion,
+    condition_analysis_label: isNormSession ? condition : conditionAnalysisLabelForCondition(condition),
+    ...(!isNormSession ? {
+      condition_family: study1Stimuli.conditionFamily,
+      fixed_dishonest_count: study1Stimuli.fixedDishonestCount,
+      fixed_dishonest_peer_names: study1Stimuli.fixedDishonestPeerNames,
+      peer_behavior_assignments: study1Stimuli.peerBehaviorAssignments,
+      composition_version: study1Stimuli.compositionVersion,
+    } : {}),
     condition_assigned_at: allocation.assigned_at,
     assignment_source: assignmentSource,
     entry_link_id: entryLinkId,
     randomization_block: allocation.randomization_block,
     randomization_position: allocation.randomization_position,
     is_test_session: Boolean(qaIdentity) || !IS_PRODUCTION || DEBUG_LINKS,
-    condition_label: {
+    condition_label: isNormSession ? condition : ({
       hidden: "同伴具体提交隐藏",
       honest: "同伴如实提交",
       dishonest: "同伴提交更高数字",
@@ -915,7 +989,7 @@ async function createSession({ study, participantId, requestedCondition, entry, 
       dishonest_fixed_1: "固定 1 名同伴提交更高数字",
       dishonest_fixed_2: "固定 2 名同伴提交更高数字",
       dishonest_fixed_3: "固定 3 名同伴提交更高数字"
-    }[condition],
+    }[condition]),
     debug_mode: Boolean(debugOverride),
     participant_id: normalizedParticipant,
     prolific_id: normalizedParticipant,
@@ -928,13 +1002,13 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     resume_count: 0,
     last_resumed_at: null,
     resume_events: [],
-    is_preview: Boolean(prolificIdentity?.is_preview),
-    scope: prolificIdentity ? (prolificIdentity.is_preview ? "preview" : "formal") : (qaIdentity?.team_review ? "team_review" : (qaIdentity ? "qa" : null)),
+    is_preview: Boolean(prolificIdentity?.is_preview || qaIdentity?.scope === "preview"),
+    scope: prolificIdentity ? (prolificIdentity.is_preview ? "preview" : "formal") : (qaIdentity?.scope || (qaIdentity?.team_review ? "team_review" : (qaIdentity ? "qa" : null))),
     preview_source: prolificIdentity?.preview_source || null,
     taskflow_variant_id: prolificIdentity?.taskflow_variant_id || null,
     variant_token_hash: prolificIdentity?.variant_token_hash || null,
     record_key: prolificIdentity?.record_key || null,
-    assignment_mode: prolificIdentity ? "prolific_taskflow" : (qaIdentity?.team_review ? "team_review" : (qaIdentity ? "qa_preview" : ASSIGNMENT_MODE)),
+    assignment_mode: prolificIdentity ? "prolific_taskflow" : (qaIdentity?.scope === "preview" ? "preview" : (qaIdentity?.team_review || qaIdentity?.scope === "team_review" ? "team_review" : (qaIdentity ? "qa_preview" : ASSIGNMENT_MODE))),
     locale: prolificIdentity || qaIdentity ? "en" : "zh-CN",
     status: "created",
     created_at: createdAt,
@@ -948,12 +1022,15 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     event_log: [],
     baseline: {},
     comprehension_attempts: [],
-    schedule_version: SCHEDULE_VERSION,
-    peer_onset_rounds: { ...PEER_ONSET_ROUNDS },
+    ...(!isNormSession ? { schedule_version: SCHEDULE_VERSION, peer_onset_rounds: { ...PEER_ONSET_ROUNDS } } : {}),
     study1_die_sequence: diceSequence,
-    study1_peer_display_order: study1Stimuli.peerDisplayOrder,
-    study1_peer_records_by_round: persistedPeerRecordsByRound,
-    peer_records_sequence: persistedPeerRecordsByRound.map((round) => round.peer_records),
+    ...(isNormSession ? {
+      study1_norm_messages_by_round: normStimuli.peerMessagesByRound,
+    } : {
+      study1_peer_display_order: study1Stimuli.peerDisplayOrder,
+      study1_peer_records_by_round: persistedPeerRecordsByRound,
+      peer_records_sequence: persistedPeerRecordsByRound.map((round) => round.peer_records),
+    }),
     dice_sequence: diceSequence,
     dice_round_state: {},
     dice_rounds: [],
@@ -995,22 +1072,34 @@ function markCurrentDiceRoundPresented(session) {
 function currentDicePayload(session) {
   const index = session.dice_rounds.length;
   const diceSequence = sessionDiceSequence(session);
-  const recordsByRound = sessionPeerRecordsByRound(session);
+  const recordsByRound = session.protocol_version === normPilot.PROTOCOL_VERSION
+    ? sessionNormMessagesByRound(session)
+    : sessionPeerRecordsByRound(session);
   if (index >= diceSequence.length) return { completed: true };
   const roundIndex = index + 1;
   const state = session.dice_round_state?.[String(roundIndex)];
   const roundStimulus = recordsByRound[index] || {};
-  return {
+  const payload = {
     completed: false,
     round_index: roundIndex,
     total_rounds: diceSequence.length,
     true_die_value: diceSequence[index],
-    peer_records: publicStudy1PeerRecords(session, roundStimulus.peer_records || []),
     selection_started_at: state?.selection_started_at || null,
     decision_timing_accumulated_ms: state?.decision_timing?.accumulated_active_ms || 0,
     page_hidden_duration_accumulated_ms: state?.decision_timing?.accumulated_hidden_ms || 0,
     decision_timing_segment_count: state?.decision_timing?.segments?.length || 0
   };
+  if (session.protocol_version === normPilot.PROTOCOL_VERSION) {
+    payload.peer_messages = roundStimulus.peer_messages || [];
+    payload.norm_stimulus_id = roundStimulus.norm_stimulus_id;
+    payload.norm_stimulus_version = roundStimulus.norm_stimulus_version;
+    payload.norm_message_text = roundStimulus.norm_message_text;
+    payload.norm_type = roundStimulus.norm_type;
+    payload.norm_valence = roundStimulus.norm_valence;
+  } else {
+    payload.peer_records = publicStudy1PeerRecords(session, roundStimulus.peer_records || []);
+  }
+  return payload;
 }
 
 function validateItems(items, responses) {
@@ -1101,6 +1190,16 @@ app.get("/review", (req, res) => {
   return res.sendFile(path.join(__dirname, "..", "public", "review.html"));
 });
 
+app.get("/preview", (req, res) => {
+  if (!ALLOW_PREVIEW) return res.status(404).send("Preview is not enabled.");
+  return res.sendFile(path.join(__dirname, "..", "public", "preview.html"));
+});
+
+for (const scope of ["formal", "preview", "qa", "team-review"]) {
+  app.get(`/admin/${scope}`, (req, res) => res.sendFile(path.join(__dirname, "..", "public", "admin-scope.html")));
+}
+app.get("/admin", (req, res) => res.redirect(302, "/admin/formal"));
+
 function prolificAdminSummary(sessions) {
   const conditions = Object.fromEntries(CONDITIONS.map((condition) => {
     const matching = sessions.filter((session) => session.condition === condition);
@@ -1135,11 +1234,18 @@ function prolificAdminSummary(sessions) {
   };
 }
 
+app.use("/api/admin", (req, res, next) => {
+  if (IS_NORM_PILOT && !req.path.startsWith("/scope/") && req.path !== "/qa/session") {
+    return res.status(404).json({ error: "Use a scope-locked AI Norm Pilot Admin endpoint." });
+  }
+  next();
+});
+
 app.post("/api/admin/qa/session", asyncHandler(async (req, res) => {
   if (!ALLOW_QA_PREVIEW) return res.status(404).json({ error: "QA Preview is not enabled." });
   const peerIdentity = String(req.body.peer_identity || "").trim();
   const condition = String(req.body.condition || "").trim();
-  if (!isPeerIdentity(peerIdentity) || !isSupportedCondition(condition)) {
+  if (IS_NORM_PILOT ? !normPilot.isCondition(condition) : (!isPeerIdentity(peerIdentity) || !isSupportedCondition(condition))) {
     return res.status(400).json({ error: "Invalid QA cell." });
   }
   const participantId = `qa_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
@@ -1148,7 +1254,7 @@ app.post("/api/admin/qa/session", asyncHandler(async (req, res) => {
     participantId,
     requestedCondition: condition,
     entry: null,
-    qaIdentity: { participant_id: participantId, peer_identity: peerIdentity, condition, protocol_version: HUMAN_AI_PROTOCOL_VERSION },
+    qaIdentity: { participant_id: participantId, peer_identity: IS_NORM_PILOT ? "ai" : peerIdentity, condition, protocol_version: IS_NORM_PILOT ? normPilot.PROTOCOL_VERSION : HUMAN_AI_PROTOCOL_VERSION, ...(IS_NORM_PILOT ? { scope: "qa" } : {}) },
   });
   res.json({ session: publicSession(session) });
 }));
@@ -1157,13 +1263,34 @@ app.post("/api/review/session", asyncHandler(async (req, res) => {
   if (!ALLOW_TEAM_REVIEW) return res.status(404).json({ error: "Team Review is not enabled." });
   const peerIdentity = String(req.body.peer_identity || "").trim();
   const condition = String(req.body.condition || "").trim();
-  if (!isPeerIdentity(peerIdentity) || !ACTIVE_HUMAN_AI_CONDITIONS.includes(condition)) return res.status(400).json({ error: "Invalid active review cell." });
+  if (IS_NORM_PILOT ? !normPilot.isCondition(condition) : (!isPeerIdentity(peerIdentity) || !ACTIVE_HUMAN_AI_CONDITIONS.includes(condition))) return res.status(400).json({ error: "Invalid active review cell." });
   const participantId = `review_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
-  const session = await createSession({ study: "study1", participantId, requestedCondition: condition, entry: null, qaIdentity: { participant_id: participantId, peer_identity: peerIdentity, condition, protocol_version: HUMAN_AI_PROTOCOL_VERSION, team_review: true } });
+  const session = await createSession({ study: "study1", participantId, requestedCondition: condition, entry: null, qaIdentity: { participant_id: participantId, peer_identity: IS_NORM_PILOT ? "ai" : peerIdentity, condition, protocol_version: IS_NORM_PILOT ? normPilot.PROTOCOL_VERSION : HUMAN_AI_PROTOCOL_VERSION, team_review: true, scope: "team_review" } });
+  res.json({ session: publicSession(session) });
+}));
+
+app.post("/api/preview/session", asyncHandler(async (req, res) => {
+  if (!IS_NORM_PILOT || !ALLOW_PREVIEW) return res.status(404).json({ error: "Preview is not enabled." });
+  const condition = String(req.body.condition || "").trim();
+  if (!normPilot.isCondition(condition)) return res.status(400).json({ error: "Invalid Preview cell." });
+  const participantId = `preview_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+  const session = await createSession({
+    study: "study1", participantId, requestedCondition: condition, entry: null,
+    qaIdentity: { participant_id: participantId, peer_identity: "ai", condition, protocol_version: normPilot.PROTOCOL_VERSION, scope: "preview" },
+  });
   res.json({ session: publicSession(session) });
 }));
 
 app.get("/api/config", (req, res) => {
+  if (IS_NORM_PILOT) return res.json({
+    contact_email: publicContactEmail(),
+    members: peerMembersForIdentity("ai"),
+    baselineItems: study1.baselineItems,
+    postSurveyItems: [],
+    demographicsItems: study1.demographicsItems,
+    ruleBlocks: normPilot.RULE_BLOCKS,
+    comprehensionQuestions: publicComprehensionQuestions(normPilot.COMPREHENSION_QUESTIONS),
+  });
   res.json({
     contact_email: publicContactEmail(),
     members: MEMBERS,
@@ -1180,11 +1307,13 @@ app.get("/health", (req, res) => {
     ok: true,
     study: "study1",
     study_version: STUDY_VERSION,
-    protocol_version: PROTOCOL_VERSION
+    protocol_version: PROTOCOL_VERSION,
+    formal_recruitment_enabled: IS_NORM_PILOT ? FORMAL_RECRUITMENT_ENABLED : undefined
   });
 });
 
 app.post("/api/session", asyncHandler(async (req, res) => {
+  if (IS_NORM_PILOT) return res.status(404).json({ error: "Direct participant entry is disabled for this protocol." });
   if (ASSIGNMENT_MODE === "review_only") return res.status(404).json({ error: "Formal participant entry is not configured for this review deployment." });
   const session = await createSession({
     study: "study1",
@@ -1352,6 +1481,13 @@ app.get("/api/review/session/:id", asyncHandler(async (req, res) => {
   res.json({ session: publicSession(session) });
 }));
 
+app.get("/api/preview/session/:id", asyncHandler(async (req, res) => {
+  if (!ALLOW_PREVIEW) return res.status(404).json({ error: "Preview is not enabled." });
+  const session = await previewStore.readSession(req.params.id);
+  if (prolificExport.sessionScope(session) !== "preview") return res.status(404).json({ error: "Preview session not found." });
+  res.json({ session: publicSession(session) });
+}));
+
 app.post("/api/session/:id/decision-timing", asyncHandler(async (req, res) => {
   const roundIndex = Number(req.body.round_index);
   await store.updateSession(req.params.id, (draft) => {
@@ -1380,7 +1516,9 @@ app.post("/api/session/:id/dice/round", asyncHandler(async (req, res) => {
     const expectedRound = draft.dice_rounds.length + 1;
     if (roundIndex !== expectedRound) throw new Error(`Expected round ${expectedRound}, received ${roundIndex}`);
     const diceSequence = sessionDiceSequence(draft);
-    const recordsByRound = sessionPeerRecordsByRound(draft);
+    const recordsByRound = draft.protocol_version === normPilot.PROTOCOL_VERSION
+      ? sessionNormMessagesByRound(draft)
+      : sessionPeerRecordsByRound(draft);
     const trueValue = diceSequence[expectedRound - 1];
     const roundState = draft.dice_round_state?.[String(expectedRound)];
     if (!roundState?.selection_started_at) throw new Error("Dice round was not presented by server");
@@ -1393,19 +1531,31 @@ app.post("/api/session/:id/dice/round", asyncHandler(async (req, res) => {
     const round = {
       round_index: expectedRound,
       true_die_value: trueValue,
-      peer_display_order: stimulusRound.peer_display_order || [],
-      peer_records: stimulusRound.peer_records || [],
-      n_peers_misreporting: stimulusRound.n_peers_misreporting ?? null,
-      misreporting_peer_names: stimulusRound.misreporting_peer_names ?? null,
-      condition_family: stimulusRound.condition_family ?? draft.condition_family ?? null,
-      fixed_dishonest_count: stimulusRound.fixed_dishonest_count ?? draft.fixed_dishonest_count ?? null,
-      fixed_dishonest_peer_names: stimulusRound.fixed_dishonest_peer_names ?? draft.fixed_dishonest_peer_names ?? null,
-      composition_version: stimulusRound.composition_version ?? draft.composition_version ?? null,
-      schedule_version: stimulusRound.schedule_version || draft.schedule_version || SCHEDULE_VERSION,
+      ...(draft.protocol_version === normPilot.PROTOCOL_VERSION ? {
+        norm_type: draft.norm_type,
+        norm_valence: draft.norm_valence,
+        norm_stimulus_id: stimulusRound.norm_stimulus_id,
+        norm_stimulus_version: stimulusRound.norm_stimulus_version,
+        norm_message_text: stimulusRound.norm_message_text,
+        peer_messages: stimulusRound.peer_messages,
+      } : {
+        peer_display_order: stimulusRound.peer_display_order || [],
+        peer_records: stimulusRound.peer_records || [],
+        n_peers_misreporting: stimulusRound.n_peers_misreporting ?? null,
+        misreporting_peer_names: stimulusRound.misreporting_peer_names ?? null,
+        condition_family: stimulusRound.condition_family ?? draft.condition_family ?? null,
+        fixed_dishonest_count: stimulusRound.fixed_dishonest_count ?? draft.fixed_dishonest_count ?? null,
+        fixed_dishonest_peer_names: stimulusRound.fixed_dishonest_peer_names ?? draft.fixed_dishonest_peer_names ?? null,
+        composition_version: stimulusRound.composition_version ?? draft.composition_version ?? null,
+        schedule_version: stimulusRound.schedule_version || draft.schedule_version || SCHEDULE_VERSION,
+      }),
       reported_value: reported,
       upward_misreport: reported > trueValue,
-      misreport_magnitude: reported - trueValue,
+      misreport_magnitude: draft.protocol_version === normPilot.PROTOCOL_VERSION ? Math.max(reported - trueValue, 0) : reported - trueValue,
+      is_misreport: reported > trueValue,
+      misreport_amount: Math.max(reported - trueValue, 0),
       personal_reward: personalReward,
+      reward: personalReward,
       cumulative_reward: Number((priorReward + personalReward).toFixed(2)),
       selection_started_at: startedAt,
       submitted_at: submittedAt,
@@ -1726,6 +1876,52 @@ app.get("/api/admin/export/study1_dice_rounds.csv", asyncHandler(async (req, res
   res.type("text/csv").send(exporters.study1DiceRoundsCsv(filterSessions(await store.listSessions(), req.query)));
 }));
 
+function normAdminAuth(req, res, next) {
+  if (!IS_NORM_PILOT) return next();
+  const expected = String(process.env.ADMIN_TOKEN || "");
+  const supplied = String(req.get("x-admin-token") || "");
+  if (!expected || supplied.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))) {
+    return res.status(401).json({ error: "Admin authentication required." });
+  }
+  next();
+}
+
+function normalizedScope(value) {
+  return value === "team-review" ? "team_review" : value;
+}
+
+app.use("/api/admin/scope", normAdminAuth);
+
+app.get("/api/admin/scope/:scope/summary", asyncHandler(async (req, res) => {
+  const scope = normalizedScope(req.params.scope);
+  if (!IS_NORM_PILOT || !["formal", "preview", "qa", "team_review"].includes(scope)) return res.status(404).json({ error: "Scope not found." });
+  const sessions = await storeForScope(scope).listSessions();
+  const matrix = normPilot.cells().map((cell) => {
+    const matching = sessions.filter((session) => session.condition === cell.condition);
+    return { ...cell, arrived: matching.length, started: matching.filter((session) => session.started_at).length, completed: matching.filter((session) => session.status === "completed").length, data_complete: matching.filter(prolificExport.isDataComplete).length };
+  });
+  res.json({ scope, protocol_version: normPilot.PROTOCOL_VERSION, matrix, participants: prolificExport.adminRows(sessions) });
+}));
+
+app.get("/api/admin/scope/:scope/session/:id", asyncHandler(async (req, res) => {
+  const scope = normalizedScope(req.params.scope);
+  if (!IS_NORM_PILOT || !["formal", "preview", "qa", "team_review"].includes(scope)) return res.status(404).json({ error: "Scope not found." });
+  const session = await storeForScope(scope).readSession(req.params.id);
+  if (prolificExport.sessionScope(session) !== scope) return res.status(404).json({ error: "Session not found in this scope." });
+  res.json({ metadata: prolificExport.adminRows([session])[0], rounds: session.dice_rounds || [], survey: { baseline: session.baseline || {}, post_survey: session.post_survey || {}, demographics: session.demographics || {} } });
+}));
+
+app.get("/api/admin/scope/:scope/export.zip", asyncHandler(async (req, res) => {
+  const scope = normalizedScope(req.params.scope);
+  if (!IS_NORM_PILOT || !["formal", "preview", "qa", "team_review"].includes(scope)) return res.status(404).json({ error: "Scope not found." });
+  const sessions = await storeForScope(scope).listSessions();
+  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: normPilot.PROTOCOL_VERSION, exportScope: scope }));
+  const slug = scope.replace("_", "-");
+  res.set("content-type", "application/zip");
+  res.set("content-disposition", `attachment; filename="study1-ai-norm-pilot-${slug}-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.send(archive);
+}));
+
 app.use("/api", (req, res) => {
   res.status(404).json({ error: "API endpoint not found" });
 });
@@ -1746,6 +1942,19 @@ app.use((error, req, res, next) => {
 
 async function validateRuntime() {
   if (!IS_PRODUCTION) {
+    await store.ensureDataDir();
+    return;
+  }
+  if (IS_NORM_PILOT) {
+    const keys = ["FORMAL_DATA_DIR", "PREVIEW_DATA_DIR", "QA_DATA_DIR", "TEAM_REVIEW_DATA_DIR"];
+    for (const key of keys) {
+      if (!process.env[key] || !path.isAbsolute(process.env[key])) throw new Error(`${key} must be an absolute path in production`);
+    }
+    const resolved = keys.map((key) => path.resolve(process.env[key]));
+    if (new Set(resolved).size !== 4) throw new Error("All four AI Norm Pilot data directories must be physically separate");
+    if (!process.env.ADMIN_TOKEN || process.env.ADMIN_TOKEN.length < 32) throw new Error("ADMIN_TOKEN must contain at least 32 characters");
+    if (!process.env.SERVER_RECORD_SECRET || process.env.SERVER_RECORD_SECRET.length < 32) throw new Error("SERVER_RECORD_SECRET must contain at least 32 characters");
+    if (FORMAL_RECRUITMENT_ENABLED && (process.env.PROLIFIC_EXPECTED_STUDY_ID === "__PENDING__" || process.env.PROLIFIC_COMPLETION_URL === "__PENDING__")) throw new Error("Formal recruitment cannot open with pending Prolific values");
     await store.ensureDataDir();
     return;
   }
@@ -1787,6 +1996,9 @@ app._internal = {
   postSurveyItemsForSession,
   comprehensionQuestionsForSession,
   filterSessions,
+  createNormPilotStimuli,
+  normPilot,
+  storeForScope,
 };
 
 module.exports = app;

@@ -7,8 +7,9 @@ const {
   PEER_IDENTITIES,
   activeCells,
 } = require("../config/human-ai-protocol");
+const normPilot = require("../config/ai-norm-pilot");
 
-const SCHEMA_VERSION = "prolific-export-v1";
+const SCHEMA_VERSION = "prolific-export-v2";
 
 function csvEscape(value) {
   if (value === null || value === undefined) return "";
@@ -34,7 +35,7 @@ function qualityFlags(session) {
   if ((session.dice_rounds || []).some((round) => !Number.isFinite(round.decision_time_ms) || round.decision_time_ms < 0)) flags.push("invalid_decision_time");
   if ((session.dice_rounds || []).some((round) => Number(round.page_hidden_duration_ms || 0) > 300000)) flags.push("excessive_page_hidden_time");
   if (session.status === "completed" && (!session.post_survey || !session.demographics)) flags.push("incomplete_survey_data");
-  if (prolificScope && !session.completion_redirect_initiated_at) flags.push("completion_not_confirmed");
+  if (prolificScope && session.assignment_mode === "prolific_taskflow" && !session.is_preview && !session.completion_redirect_initiated_at) flags.push("completion_not_confirmed");
   const abnormalTypes = new Set((session.abnormal_events || []).map((event) => event.type));
   if (abnormalTypes.has("variant_resume_conflict")) flags.push("recovery_conflict");
   if (abnormalTypes.has("identity_conflict")) flags.push("identity_conflict");
@@ -67,6 +68,8 @@ function participants(sessions, env) {
       is_preview: session.is_preview ? 1 : 0,
       taskflow_variant_id: session.taskflow_variant_id,
       condition: session.condition,
+      norm_type: session.norm_type || "",
+      norm_valence: session.norm_valence || "",
       peer_identity: session.peer_identity || (session.protocol_version === HUMAN_AI_PROTOCOL_VERSION ? "" : "human_legacy"),
       identity_manipulation_version: session.identity_manipulation_version || "",
       condition_map_version: session.condition_map_version || "",
@@ -89,12 +92,45 @@ function participants(sessions, env) {
       bonus_currency: env.BONUS_CURRENCY || "",
       study_version: session.study_version,
       protocol_version: session.protocol_version
+      ,study1_source_commit: session.study1_source_commit || ""
+      ,stimulus_version: session.stimulus_version || ""
+      ,posttest_schema_version: session.posttest_schema_version || ""
+      ,git_commit: session.git_commit || ""
+      ,scope: sessionScope(session)
     };
   });
 }
 
 function rounds(sessions) {
-  return sessions.flatMap((session) => (session.dice_rounds || []).map((round) => ({
+  return sessions.flatMap((session) => (session.dice_rounds || []).map((round) => session.protocol_version === normPilot.PROTOCOL_VERSION ? ({
+    session_id: session.id,
+    participant_id: session.participant_id || session.prolific_pid || "",
+    record_key: session.record_key,
+    prolific_pid: session.prolific_pid,
+    prolific_session_id: session.prolific_session_id,
+    condition: session.condition,
+    norm_type: session.norm_type,
+    norm_valence: session.norm_valence,
+    peer_identity: session.peer_identity,
+    protocol_version: session.protocol_version,
+    round_index: round.round_index,
+    true_die_value: round.true_die_value,
+    reported_die_value: round.reported_value,
+    is_misreport: round.is_misreport ? 1 : 0,
+    misreport_amount: round.misreport_amount,
+    reward: round.reward,
+    cumulative_reward: round.cumulative_reward,
+    decision_time_ms: round.decision_time_ms,
+    page_hidden_duration_ms: round.page_hidden_duration_ms,
+    decision_started_at_client: round.decision_started_at_client,
+    decision_submitted_at_client: round.decision_submitted_at_client,
+    server_received_at: round.server_received_at,
+    saved_at: round.saved_at || round.submitted_at,
+    norm_stimulus_id: round.norm_stimulus_id,
+    norm_stimulus_version: round.norm_stimulus_version,
+    norm_message_text: round.norm_message_text,
+    peer_messages_json: round.peer_messages,
+  }) : ({
     session_id: session.id,
     participant_id: session.participant_id || session.prolific_pid || "",
     record_key: session.record_key,
@@ -131,8 +167,15 @@ function rounds(sessions) {
   })));
 }
 
-function surveys(sessions) {
-  return sessions.map((session) => ({
+function surveys(sessions, normMode = false) {
+  return sessions.map((session) => normMode ? ({
+    session_id: session.id,
+    participant_id: session.participant_id || session.prolific_pid || "",
+    record_key: session.record_key,
+    prolific_pid: session.prolific_pid,
+    prolific_session_id: session.prolific_session_id,
+    ...Object.fromEntries(normPilot.POSTTEST_ITEMS.map((item) => [item.id, session.post_survey?.[item.id] ?? ""])),
+  }) : ({
     session_id: session.id,
     participant_id: session.participant_id || session.prolific_pid || "",
     record_key: session.record_key,
@@ -144,7 +187,11 @@ function surveys(sessions) {
   }));
 }
 
-function surveyColumns() {
+function surveyColumns(normMode = false) {
+  if (normMode) return [
+    "session_id", "participant_id", "record_key", "prolific_pid", "prolific_session_id",
+    ...normPilot.POSTTEST_ITEMS.map((item) => item.id),
+  ];
   return [
     "session_id", "participant_id", "record_key", "prolific_pid", "prolific_session_id",
     ...study1.baselineItems.map((item) => `pre_${item.id}`),
@@ -176,15 +223,17 @@ function gitCommit(env) {
 }
 
 function buildFiles(sessions, env = process.env, options = {}) {
+  const normMode = options.protocolVersion === normPilot.PROTOCOL_VERSION || sessions.some((session) => session.protocol_version === normPilot.PROTOCOL_VERSION);
   const participantRows = participants(sessions, env);
   const roundRows = rounds(sessions);
-  const surveyRows = surveys(sessions);
+  const surveyRows = surveys(sessions, normMode);
   const bonusRows = bonuses(sessions, env);
   const hasHumanAi = options.protocolVersion === HUMAN_AI_PROTOCOL_VERSION ||
     env.PROTOCOL_VERSION === HUMAN_AI_PROTOCOL_VERSION ||
     sessions.some((session) => session.protocol_version === HUMAN_AI_PROTOCOL_VERSION);
-  const cellRows = hasHumanAi ? activeCells().map((cell) => {
-    const matching = sessions.filter((session) => session.protocol_version === HUMAN_AI_PROTOCOL_VERSION && session.peer_identity === cell.peer_identity && session.condition === cell.condition);
+  const cellDefinitions = normMode ? normPilot.cells() : activeCells();
+  const cellRows = (hasHumanAi || normMode) ? cellDefinitions.map((cell) => {
+    const matching = sessions.filter((session) => session.protocol_version === (normMode ? normPilot.PROTOCOL_VERSION : HUMAN_AI_PROTOCOL_VERSION) && session.condition === cell.condition && (normMode || session.peer_identity === cell.peer_identity));
     return {
       ...cell,
       arrived: matching.length,
@@ -202,23 +251,29 @@ function buildFiles(sessions, env = process.env, options = {}) {
     study_version: sessions[0]?.study_version || env.STUDY_VERSION || "",
     protocol_version: sessions[0]?.protocol_version || options.protocolVersion || env.PROTOCOL_VERSION || "",
     schema_version: SCHEMA_VERSION,
+    study1_source_commit: normMode ? normPilot.STUDY1_SOURCE_COMMIT : "",
     identity_manipulation_version: hasHumanAi ? IDENTITY_MANIPULATION_VERSION : "",
-    condition_map_version: hasHumanAi ? CONDITION_MAP_VERSION : (env.CONDITION_MAP_VERSION || ""),
-    supported_cell_count: hasHumanAi ? 14 : undefined,
-    active_cell_count: hasHumanAi ? 12 : undefined,
-    peer_identity_levels: hasHumanAi ? PEER_IDENTITIES : undefined,
+    condition_map_version: normMode ? normPilot.CONDITION_MAP_VERSION : (hasHumanAi ? CONDITION_MAP_VERSION : (env.CONDITION_MAP_VERSION || "")),
+    stimulus_version: normMode ? normPilot.STIMULUS_VERSION : "",
+    posttest_schema_version: normMode ? normPilot.POSTTEST_SCHEMA_VERSION : "",
+    export_scope: options.exportScope || "",
+    condition_map: normMode ? normPilot.CONDITION_MAP : undefined,
+    stimuli: normMode ? normPilot.CONDITIONS.map((condition) => ({ condition, stimulus_id: normPilot.CONDITION_MAP[condition].stimulus_id, text: normPilot.STIMULI[condition] })) : undefined,
+    supported_cell_count: normMode ? 4 : (hasHumanAi ? 14 : undefined),
+    active_cell_count: normMode ? 4 : (hasHumanAi ? 12 : undefined),
+    peer_identity_levels: normMode ? ["ai"] : (hasHumanAi ? PEER_IDENTITIES : undefined),
     legacy_conditions_supported: hasHumanAi ? ["dishonest_escalating"] : undefined,
     locale: "en",
     record_count: sessions.length,
     round_count: roundRows.length
   };
   return {
-    "participants.csv": csv(participantRows, columns(participantRows, ["session_id", "participant_id", "record_key", "prolific_pid", "prolific_study_id", "prolific_session_id", "primary_prolific_session_id", "current_prolific_session_id", "prolific_session_aliases", "prolific_session_aliases_json", "resume_count", "last_resumed_at", "is_preview", "is_qa", "is_team_review", "taskflow_variant_id", "peer_identity", "condition", "assignment_mode", "locale", "status", "consented_at", "started_at", "completed_at", "total_duration_ms", "rounds_completed", "data_complete", "comprehension_pass", "quality_flags", "completion_ready_at", "completion_redirect_initiated_at", "bonus_amount", "bonus_currency", "study_version", "protocol_version", "identity_manipulation_version", "condition_map_version"])),
-    "study1_rounds.csv": csv(roundRows, ["session_id", "participant_id", "record_key", "prolific_pid", "prolific_session_id", "peer_identity", "protocol_version", "condition", "round_index", "true_die_value", "reported_die_value", "misreport_amount", "is_misreport", "peer_display_order_json", "peer_records_json", "n_peers_misreporting", "misreporting_peer_names_json", "misreporting_peer_ids_json", "decision_time_ms", "page_hidden_duration_ms", "decision_started_at_client", "decision_submitted_at_client", "server_received_at", "saved_at"]),
-    "surveys.csv": csv(surveyRows, surveyColumns()),
+    "participants.csv": csv(participantRows, columns(participantRows, ["session_id", "participant_id", "record_key", "prolific_pid", "prolific_study_id", "prolific_session_id", "primary_prolific_session_id", "current_prolific_session_id", "prolific_session_aliases", "prolific_session_aliases_json", "resume_count", "last_resumed_at", "is_preview", "is_qa", "is_team_review", "taskflow_variant_id", "peer_identity", "condition", "norm_type", "norm_valence", "assignment_mode", "scope", "locale", "status", "consented_at", "started_at", "completed_at", "total_duration_ms", "rounds_completed", "data_complete", "comprehension_pass", "quality_flags", "completion_ready_at", "completion_redirect_initiated_at", "bonus_amount", "bonus_currency", "study_version", "protocol_version", "study1_source_commit", "identity_manipulation_version", "condition_map_version", "stimulus_version", "posttest_schema_version", "git_commit"])),
+    "study1_rounds.csv": csv(roundRows, normMode ? ["session_id", "participant_id", "record_key", "prolific_pid", "prolific_session_id", "peer_identity", "protocol_version", "condition", "norm_type", "norm_valence", "round_index", "true_die_value", "reported_die_value", "is_misreport", "misreport_amount", "reward", "cumulative_reward", "decision_time_ms", "page_hidden_duration_ms", "decision_started_at_client", "decision_submitted_at_client", "server_received_at", "saved_at", "norm_stimulus_id", "norm_stimulus_version", "norm_message_text", "peer_messages_json"] : ["session_id", "participant_id", "record_key", "prolific_pid", "prolific_session_id", "peer_identity", "protocol_version", "condition", "round_index", "true_die_value", "reported_die_value", "misreport_amount", "is_misreport", "peer_display_order_json", "peer_records_json", "n_peers_misreporting", "misreporting_peer_names_json", "misreporting_peer_ids_json", "decision_time_ms", "page_hidden_duration_ms", "decision_started_at_client", "decision_submitted_at_client", "server_received_at", "saved_at"]),
+    "surveys.csv": csv(surveyRows, surveyColumns(normMode)),
     "bonus_payments.csv": csv(bonusRows, ["session_id", "participant_id", "prolific_pid", "prolific_session_id", "bonus_amount", "bonus_currency", "bonus_eligible", "bonus_reason"]),
     "raw_sessions.ndjson": `${sessions.map((session) => JSON.stringify(session)).join("\n")}\n`,
-    ...(hasHumanAi ? { "cell_summary.csv": csv(cellRows, ["peer_identity", "condition", "arrived", "started", "completed", "data_complete", "quality_flagged"]) } : {}),
+    ...((hasHumanAi || normMode) ? { "cell_summary.csv": csv(cellRows, normMode ? ["condition", "norm_type", "norm_valence", "stimulus_id", "arrived", "started", "completed", "data_complete", "quality_flagged"] : ["peer_identity", "condition", "arrived", "started", "completed", "data_complete", "quality_flagged"]) } : {}),
     "export_metadata.json": `${JSON.stringify(metadata, null, 2)}\n`
   };
 }
@@ -301,6 +356,7 @@ function adminRows(sessions) {
 }
 
 function sessionScope(session) {
+  if (["formal", "preview", "qa", "team_review"].includes(session.scope)) return session.scope;
   if (session.is_qa) return "qa";
   if (session.is_team_review) return "team_review";
   if (session.assignment_mode === "prolific_taskflow") return session.is_preview ? "preview" : "formal";

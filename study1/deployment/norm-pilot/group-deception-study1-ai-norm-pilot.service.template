@@ -1,0 +1,18 @@
+[Unit]
+Description=Group Deception Study 1 AI Norm Pilot v1 (port 5002)
+After=network.target
+
+[Service]
+Type=simple
+User=group-deception
+Group=group-deception
+WorkingDirectory=__RELEASE_DIR__/study1
+EnvironmentFile=/etc/group-deception/study1-ai-norm-pilot-v1.env
+ExecStart=/usr/bin/node server/index.js
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

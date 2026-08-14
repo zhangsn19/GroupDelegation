@@ -126,6 +126,14 @@
     }));
   }
 
+  function peerNormMessages(members, records) {
+    const byId = Object.fromEntries(members.map((member) => [member.id, member]));
+    return records.map((record) => ({
+      sender: byId[record.peer_id] || { name: record.peer_name, avatar: "AI" },
+      text: record.message,
+    }));
+  }
+
   function delay(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -135,6 +143,7 @@
     introMessages,
     identityIntroMessages,
     peerRecordMessages,
+    peerNormMessages,
     delay
   };
 })();

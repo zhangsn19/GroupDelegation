@@ -2,6 +2,7 @@
   const params = new URLSearchParams(window.location.search);
   const qaSessionId = (params.get("qa_session") || "").trim();
   const reviewSessionId = (params.get("review_session") || "").trim();
+  const previewSessionId = (params.get("preview_session") || "").trim();
   const screens = {
     landing: document.querySelector("#screen-landing"),
     consent: document.querySelector("#screen-consent"),
@@ -12,7 +13,7 @@
   const phaseIndicator = document.querySelector("#phase-indicator");
   const prolificQueryPresent = ["PROLIFIC_PID", "STUDY_ID", "SESSION_ID", "variant"]
     .some((key) => Boolean((params.get(key) || "").trim()));
-  const isEnglishFlow = prolificQueryPresent || Boolean(qaSessionId || reviewSessionId) ||
+  const isEnglishFlow = prolificQueryPresent || Boolean(qaSessionId || reviewSessionId || previewSessionId) ||
     document.documentElement.lang.toLowerCase().startsWith("en") || window.location.pathname.startsWith("/en/");
   const SAVE_ERROR_MESSAGE = isEnglishFlow
     ? "This action could not be saved. Refresh the page and try again. If the problem continues, contact the research team."
@@ -162,6 +163,10 @@
     return state.session?.protocol_version === "study1-human-ai-v1";
   }
 
+  function isNormPilotProtocol() {
+    return state.session?.protocol_version === "study1-ai-norm-pilot-v1";
+  }
+
   function setSession(session) {
     state.session = session;
     const participantConfig = (value) => isEnglishFlow && window.EnglishLocale
@@ -172,7 +177,7 @@
     if (Array.isArray(session.demographics_items)) state.config.demographicsItems = participantConfig(session.demographics_items);
     if (Array.isArray(session.rule_blocks)) state.config.ruleBlocks = participantConfig(session.rule_blocks);
     if (Array.isArray(session.comprehension_questions)) state.config.comprehensionQuestions = participantConfig(session.comprehension_questions);
-    if (isHumanAiProtocol()) {
+    if (isHumanAiProtocol() || isNormPilotProtocol()) {
       const consentIntro = screens.consent.querySelector(".consent-text p");
       if (consentIntro) consentIntro.textContent = session.peer_identity === "ai"
         ? "You will complete this task with four AI group members."
@@ -291,11 +296,11 @@
     setPhase("群体介绍");
     content.innerHTML = "";
     const chat = window.ChatView.createReadOnlyChat(content, state.members, {
-      sidebarTitle: isHumanAiProtocol() ? "Work group" : undefined,
-      sidebarNote: isHumanAiProtocol() ? "The Submission System records each member's report." : undefined,
-      footerText: isHumanAiProtocol() ? false : "群聊 AI 负责接收并提交成员报告。"
+      sidebarTitle: isHumanAiProtocol() ? "Work group" : (isNormPilotProtocol() ? "Work group" : undefined),
+      sidebarNote: isNormPilotProtocol() ? "You and four AI members are in this group." : (isHumanAiProtocol() ? "The Submission System records each member's report." : undefined),
+      footerText: isHumanAiProtocol() ? false : (isNormPilotProtocol() ? false : "群聊 AI 负责接收并提交成员报告。")
     });
-    const introMessages = isHumanAiProtocol()
+    const introMessages = (isHumanAiProtocol() || isNormPilotProtocol())
       ? window.ChatView.identityIntroMessages(state.members)
       : window.ChatView.introMessages(state.members);
     await chat.addMessagesSequentially(introMessages, 650);
@@ -320,7 +325,7 @@
             </article>
           `).join("")}
         </div>
-        <p class="next-note">接下来，你将完成 10 轮报告任务。每轮开始时，你会先看到其他成员的本轮报告信息。下一步将进行理解检查。</p>
+        <p class="next-note">${isNormPilotProtocol() ? "Next, you will complete 10 reporting rounds. In each round, you will see the die outcome and one message from each AI member before making your private report. The next step is a comprehension check." : "接下来，你将完成 10 轮报告任务。每轮开始时，你会先看到其他成员的本轮报告信息。下一步将进行理解检查。"}</p>
         <div class="step-nav">
           <button class="btn btn-primary" data-action="rules-viewed">继续 - 理解检查</button>
         </div>
@@ -385,12 +390,17 @@
     content.insertAdjacentHTML("beforeend", window.Study1Dice.renderCommonDie(state.diceCurrent));
     content.insertAdjacentHTML("beforeend", `<p class="status-hint">正在展示成员提交记录</p>`);
     const chat = window.ChatView.createReadOnlyChat(content, state.members, {
-      sidebarTitle: isHumanAiProtocol() ? "Work group" : undefined,
-      sidebarNote: isHumanAiProtocol() ? "The Submission System records each member's report." : undefined,
-      footerText: isHumanAiProtocol() ? false : "群聊 AI 负责接收并提交成员报告。"
+      sidebarTitle: isHumanAiProtocol() ? "Work group" : (isNormPilotProtocol() ? "Work group" : undefined),
+      sidebarNote: isNormPilotProtocol() ? "AI member messages" : (isHumanAiProtocol() ? "The Submission System records each member's report." : undefined),
+      footerText: isHumanAiProtocol() ? false : (isNormPilotProtocol() ? false : "群聊 AI 负责接收并提交成员报告。")
     });
     const systemSender = { name: "群聊 AI", avatar: "AI" };
-    const roundMessages = isHumanAiProtocol() ? [
+    const roundMessages = isNormPilotProtocol() ? [
+      { kind: "notice", text: `Round ${state.diceCurrent.round_index} of ${state.diceCurrent.total_rounds} begins.` },
+      { kind: "notice", text: "The die outcome is shown above. Read each AI member's message before making your private report." },
+      ...window.ChatView.peerNormMessages(state.members, state.diceCurrent.peer_messages || []),
+      { kind: "notice", text: "All four AI-member messages have been displayed. Complete your private report below." },
+    ] : isHumanAiProtocol() ? [
       { kind: "notice", text: `Round ${state.diceCurrent.round_index} of ${state.diceCurrent.total_rounds} begins.` },
       { kind: "notice", text: "The die outcome is available. Each group member can now complete this round's report." },
       ...window.ChatView.peerRecordMessages(state.members, state.diceCurrent.peer_records || []),
@@ -419,7 +429,7 @@
     state.diceCurrent = presented.current;
     const task = document.createElement("div");
     task.className = "embedded-task dice-private-zone";
-    task.innerHTML = window.Study1Dice.renderRound(state.diceCurrent, state.diceSelected, state.diceSubmitting, { humanAi: isHumanAiProtocol() });
+    task.innerHTML = window.Study1Dice.renderRound(state.diceCurrent, state.diceSelected, state.diceSubmitting, { humanAi: isHumanAiProtocol() || isNormPilotProtocol() });
     content.appendChild(task);
     beginDecisionTimer(resumedAfterReload, {
       activeMs: state.diceCurrent.decision_timing_accumulated_ms,
@@ -518,7 +528,14 @@
     setPhase("事后说明");
     const contact = state.config.contact_email || "123456@163.com";
     const pid = state.session.participant_id || "";
-    if (isHumanAiProtocol()) {
+    if (isNormPilotProtocol()) {
+      content.innerHTML = `
+        <div class="card"><h2>Debrief</h2><div class="consent-text">
+          <p>The AI-member messages shown during the task were experimentally scripted and were not generated autonomously in real time.</p>
+          <p>The messages were assigned as part of the study design to examine how different kinds of group information may affect reporting decisions.</p>
+        </div></div>${participantInfoCard(pid, contact)}
+        <div class="step-nav"><p class="status-hint" id="debrief-save-status">Saving debrief acknowledgement...</p><button class="btn btn-primary" data-action="complete">Complete</button></div>`;
+    } else if (isHumanAiProtocol()) {
       content.innerHTML = `
         <div class="card"><h2>Debrief</h2><div class="consent-text">
           <p>The identities and reporting patterns of the other group members were simulated and controlled by the research system for experimental purposes. No other human participants or live AI models were making these reporting decisions in real time.</p>
@@ -547,7 +564,7 @@
         const status = content.querySelector("#debrief-save-status");
         if (status) status.textContent = "";
         completeButton.disabled = false;
-        completeButton.textContent = isHumanAiProtocol() ? "Complete" : "完成";
+        completeButton.textContent = (isHumanAiProtocol() || isNormPilotProtocol()) ? "Complete" : "完成";
       }).catch(() => {
         const status = content.querySelector("#debrief-save-status");
         if (status) status.textContent = "当前页面信息尚未保存，请稍后重试。";
@@ -575,7 +592,7 @@
       ${completion.completion_code ? `<p class="completion-code">你的完成码：${completion.completion_code}</p>` : ""}
       ${completion.completion_redirect_url ? `<div class="step-nav"><a class="btn btn-primary" href="${completion.completion_redirect_url}" rel="noreferrer">返回招募平台</a></div>` : ""}
     `;
-    if (isHumanAiProtocol()) {
+    if (isHumanAiProtocol() || isNormPilotProtocol()) {
       screens.complete.innerHTML = `
         <div class="card">
           <p class="eyebrow">Complete</p>
@@ -713,7 +730,7 @@
 
   async function init() {
     state.config = await api("/api/config");
-    if ((isProlificEntry || qaSessionId || reviewSessionId) && window.EnglishLocale) {
+    if ((isProlificEntry || qaSessionId || reviewSessionId || previewSessionId) && window.EnglishLocale) {
       state.config = window.EnglishLocale.deepTranslate(state.config);
     }
     state.members = state.config.members;
@@ -723,6 +740,10 @@
       await routeFromStatus();
     } else if (reviewSessionId) {
       const data = await api(`/api/review/session/${encodeURIComponent(reviewSessionId)}`);
+      setSession(data.session);
+      await routeFromStatus();
+    } else if (previewSessionId) {
+      const data = await api(`/api/preview/session/${encodeURIComponent(previewSessionId)}`);
       setSession(data.session);
       await routeFromStatus();
     }
