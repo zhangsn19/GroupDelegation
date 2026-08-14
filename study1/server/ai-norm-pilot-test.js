@@ -152,6 +152,8 @@ async function completeReview(condition, reloadRound = null) {
       const result = await request(`/api/admin/scope/${urlScope}/summary?scope=all`, { headers: { "x-admin-token": adminToken } }); assert.strictEqual(result.response.status, 200); assert.strictEqual(result.data.scope, fileScope); assert.strictEqual(result.data.matrix.length, 4); assert(result.data.participants.every((row) => row.scope === fileScope));
       const bundle = await request(`/api/admin/scope/${urlScope}/export.zip?scope=all`, { headers: { "x-admin-token": adminToken } }); assert.strictEqual(bundle.response.status, 200);
     }
+    const detail = await request(`/api/admin/scope/team-review/session/${completed[0].id}`, { headers: { "x-admin-token": adminToken } });
+    assert.strictEqual(detail.response.status, 200); assert.strictEqual(detail.data.metadata.norm_type, completed[0].norm_type); assert.strictEqual(detail.data.metadata.norm_valence, completed[0].norm_valence); assert.strictEqual(detail.data.metadata.stimulus_version, norm.STIMULUS_VERSION); assert.strictEqual(detail.data.metadata.posttest_schema_version, norm.POSTTEST_SCHEMA_VERSION); assert.strictEqual(detail.data.metadata.git_commit, env.GIT_COMMIT); assert.strictEqual(detail.data.rounds.length, 10); assert.strictEqual(Object.keys(detail.data.survey.post_survey).length, 22);
     assert.strictEqual((await request("/api/admin/scope/formal/summary")).response.status, 401);
     const { buildFiles } = require("./prolific-export");
     const files = buildFiles(completed, env, { protocolVersion: norm.PROTOCOL_VERSION, exportScope: "team_review" });
