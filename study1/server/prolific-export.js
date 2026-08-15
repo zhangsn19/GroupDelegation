@@ -174,7 +174,9 @@ function surveys(sessions, normMode = false) {
     record_key: session.record_key,
     prolific_pid: session.prolific_pid,
     prolific_session_id: session.prolific_session_id,
+    ...Object.fromEntries(study1.baselineItems.map((item) => [`pre_${item.id}`, session.baseline?.[item.id] ?? ""])),
     ...Object.fromEntries(normPilot.POSTTEST_ITEMS.map((item) => [item.id, session.post_survey?.[item.id] ?? ""])),
+    ...Object.fromEntries(study1.demographicsItems.map((item) => [`demo_${item.id}`, session.demographics?.[item.id] ?? ""])),
   }) : ({
     session_id: session.id,
     participant_id: session.participant_id || session.prolific_pid || "",
@@ -190,7 +192,9 @@ function surveys(sessions, normMode = false) {
 function surveyColumns(normMode = false) {
   if (normMode) return [
     "session_id", "participant_id", "record_key", "prolific_pid", "prolific_session_id",
+    ...study1.baselineItems.map((item) => `pre_${item.id}`),
     ...normPilot.POSTTEST_ITEMS.map((item) => item.id),
+    ...study1.demographicsItems.map((item) => `demo_${item.id}`),
   ];
   return [
     "session_id", "participant_id", "record_key", "prolific_pid", "prolific_session_id",

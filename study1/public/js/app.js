@@ -179,7 +179,9 @@
     if (Array.isArray(session.comprehension_questions)) state.config.comprehensionQuestions = participantConfig(session.comprehension_questions);
     if (isHumanAiProtocol() || isNormPilotProtocol()) {
       const consentIntro = screens.consent.querySelector(".consent-text p");
-      if (consentIntro) consentIntro.textContent = session.peer_identity === "ai"
+      if (consentIntro) consentIntro.textContent = isNormPilotProtocol()
+        ? "You will join a simulated work group with four AI members and complete an individual reporting task."
+        : session.peer_identity === "ai"
         ? "You will complete this task with four AI group members."
         : "You will complete this task with four other human group members.";
     }
@@ -395,6 +397,10 @@
       footerText: isHumanAiProtocol() ? false : (isNormPilotProtocol() ? false : "群聊 AI 负责接收并提交成员报告。")
     });
     const systemSender = { name: "群聊 AI", avatar: "AI" };
+    if (isNormPilotProtocol()) {
+      content.querySelectorAll(".status-hint").forEach((node) => node.remove());
+      content.insertAdjacentHTML("beforeend", `<p class="status-hint">Read the AI members' messages before completing your private report.</p>`);
+    }
     const roundMessages = isNormPilotProtocol() ? [
       { kind: "notice", text: `Round ${state.diceCurrent.round_index} of ${state.diceCurrent.total_rounds} begins.` },
       { kind: "notice", text: "The die outcome is shown above. Read each AI member's message before making your private report." },
