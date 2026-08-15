@@ -5,7 +5,7 @@ Formal recruitment remains closed until every item is confirmed.
 - [x] Protocol, condition map, stimuli, and 22-field posttest are frozen.
 - [x] Participant, Review, Admin, and Taskflow URLs use `https://normpilot.8-216-54-76.sslip.io`.
 - [x] Node binds only to `127.0.0.1:5002`; HTTP redirects to HTTPS.
-- [x] Admin uses password login and an HttpOnly, Secure, SameSite=Strict cookie.
+- [x] Admin is a direct researcher dashboard with no credential or token workflow.
 - [x] Formal, Preview, QA, and Team Review use four distinct stores and exports.
 - [x] Four opaque variants are frozen in the Git-external private artifact.
 - [x] Taskflow allocation is 10 per cell, N=40.
