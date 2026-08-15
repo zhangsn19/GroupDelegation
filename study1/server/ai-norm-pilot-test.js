@@ -11,9 +11,6 @@ const dirs = Object.fromEntries(["formal", "preview", "qa", "team_review"].map((
   const dir = path.join(root, scope, "sessions"); fs.mkdirSync(dir, { recursive: true }); return [scope, dir];
 }));
 const port = 43000 + crypto.randomInt(1000);
-const adminToken = "test-admin-token-0123456789-abcdef";
-const adminPassword = "norm-test-password";
-const adminPasswordHash = `scrypt$norm-test-salt$${crypto.scryptSync(adminPassword, "norm-test-salt", 32).toString("hex")}`;
 const tokenFor = (condition) => crypto.createHash("sha256").update(`ai-norm-${condition}`).digest("base64url");
 const variants = Object.fromEntries(norm.CONDITIONS.map((condition) => [tokenFor(condition), {
   variant_id: `norm_${condition}`,
@@ -43,9 +40,6 @@ const env = {
   DATA_DIR: dirs.qa,
   RECRUITMENT_DATA_DIR: dirs.formal,
   SERVER_RECORD_SECRET: "test-record-secret-0123456789-abcdef",
-  ADMIN_TOKEN: adminToken,
-  ADMIN_PASSWORD_HASH: adminPasswordHash,
-  ADMIN_SESSION_SECRET: "test-admin-session-secret-0123456789-abcdef",
   STUDY_CONTACT_EMAIL: "research@example.org",
   PROLIFIC_VARIANT_MAP_JSON: JSON.stringify(variants),
   GIT_COMMIT: "norm-test-commit",
@@ -152,36 +146,26 @@ async function completeReview(condition, reloadRound = null) {
     assert.strictEqual(norm.POSTTEST_ITEMS.find((item) => item.id === "identity_confidence").minLabel, "Not at all confident");
     const adminPageSource = fs.readFileSync(path.join(__dirname, "..", "public", "admin-scope.html"), "utf8");
     for (const forbidden of ["Admin token", "sessionStorage", "localStorage", "x-admin-token"]) assert(!adminPageSource.includes(forbidden));
-    assert.strictEqual((await request("/admin/formal", { redirect: "manual" })).response.status, 302);
-    assert.strictEqual((await request("/preview", { redirect: "manual" })).response.status, 302);
-    assert.strictEqual((await request("/qa-preview", { redirect: "manual" })).response.status, 302);
-    assert.strictEqual((await post("/api/admin/login", { password: "bad" })).response.status, 401);
-    const login = await post("/api/admin/login", { password: adminPassword, next: "/admin/team-review" });
-    assert.strictEqual(login.response.status, 200); assert.strictEqual(login.data.next, "/admin/team-review");
-    const cookieHeader = login.response.headers.get("set-cookie");
-    for (const attribute of ["HttpOnly", "Secure", "SameSite=Strict", "Path=/"]) assert(cookieHeader.includes(attribute));
-    const adminCookie = cookieHeader.split(";", 1)[0];
-    assert.strictEqual((await request("/admin/formal", { headers: { cookie: adminCookie }, redirect: "manual" })).response.status, 200);
+    assert.strictEqual((await request("/admin/formal")).response.status, 200);
+    assert.strictEqual((await request("/preview")).response.status, 200);
+    assert.strictEqual((await request("/qa-preview")).response.status, 200);
     assert.strictEqual((await post("/api/prolific/session", { variant: tokenFor(norm.CONDITIONS[0]) })).response.status, 403);
     const completed = [];
     for (let i = 0; i < norm.CONDITIONS.length; i += 1) completed.push(await completeReview(norm.CONDITIONS[i], i === 0 ? 5 : null));
-    assert.strictEqual((await post("/api/admin/qa/session", { peer_identity: "ai", condition: norm.CONDITIONS[0] })).response.status, 401);
-    assert.strictEqual((await post("/api/preview/session", { condition: norm.CONDITIONS[1] })).response.status, 401);
-    const adminHeaders = { "content-type": "application/json", "x-admin-token": adminToken };
-    const qa = await request("/api/admin/qa/session", { method: "POST", headers: adminHeaders, body: JSON.stringify({ peer_identity: "ai", condition: norm.CONDITIONS[0] }) }); assert.strictEqual(qa.response.status, 200); assert(fs.existsSync(path.join(dirs.qa, `${qa.data.session.id}.json`)));
-    const preview = await request("/api/preview/session", { method: "POST", headers: adminHeaders, body: JSON.stringify({ condition: norm.CONDITIONS[1] }) }); assert.strictEqual(preview.response.status, 200); assert(fs.existsSync(path.join(dirs.preview, `${preview.data.session.id}.json`)));
+    const qa = await post("/api/admin/qa/session", { peer_identity: "ai", condition: norm.CONDITIONS[0] }); assert.strictEqual(qa.response.status, 200); assert(fs.existsSync(path.join(dirs.qa, `${qa.data.session.id}.json`)));
+    const preview = await post("/api/preview/session", { condition: norm.CONDITIONS[1] }); assert.strictEqual(preview.response.status, 200); assert(fs.existsSync(path.join(dirs.preview, `${preview.data.session.id}.json`)));
     const formalFixture = { ...completed[0], id: "formal_fixture", participant_id: "formal_fixture", scope: "formal", assignment_mode: "prolific_taskflow", is_team_review: false, is_qa: false, is_preview: false };
     fs.writeFileSync(path.join(dirs.formal, "formal_fixture.json"), `${JSON.stringify(formalFixture, null, 2)}\n`);
     for (const [urlScope, fileScope] of [["formal","formal"],["preview","preview"],["qa","qa"],["team-review","team_review"]]) {
-      const result = await request(`/api/admin/scope/${urlScope}/summary?scope=all`, { headers: { "x-admin-token": adminToken } }); assert.strictEqual(result.response.status, 200); assert.strictEqual(result.data.scope, fileScope); assert.strictEqual(result.data.matrix.length, 4); assert(result.data.participants.every((row) => row.scope === fileScope));
-      const bundle = await request(`/api/admin/scope/${urlScope}/export.zip?scope=all`, { headers: { "x-admin-token": adminToken } }); assert.strictEqual(bundle.response.status, 200);
+      const result = await request(`/api/admin/scope/${urlScope}/summary?scope=all`); assert.strictEqual(result.response.status, 200); assert.strictEqual(result.data.scope, fileScope); assert.strictEqual(result.data.matrix.length, 4); assert(result.data.participants.every((row) => row.scope === fileScope));
+      const bundle = await request(`/api/admin/scope/${urlScope}/export.zip?scope=all`); assert.strictEqual(bundle.response.status, 200);
       for (const name of ["participants.csv","study1_rounds.csv","surveys.csv","bonus_payments.csv","raw_sessions.ndjson","export_metadata.json","cell_summary.csv"]) {
-        const individual = await request(`/api/admin/scope/${urlScope}/export/${name}`, { headers: { cookie: adminCookie } }); assert.strictEqual(individual.response.status, 200, `${urlScope}/${name}`);
+        const individual = await request(`/api/admin/scope/${urlScope}/export/${name}`); assert.strictEqual(individual.response.status, 200, `${urlScope}/${name}`);
       }
     }
-    const detail = await request(`/api/admin/scope/team-review/session/${completed[0].id}`, { headers: { "x-admin-token": adminToken } });
+    const detail = await request(`/api/admin/scope/team-review/session/${completed[0].id}`);
     assert.strictEqual(detail.response.status, 200); assert.strictEqual(detail.data.metadata.norm_type, completed[0].norm_type); assert.strictEqual(detail.data.metadata.norm_valence, completed[0].norm_valence); assert.strictEqual(detail.data.metadata.stimulus_version, norm.STIMULUS_VERSION); assert.strictEqual(detail.data.metadata.posttest_schema_version, norm.POSTTEST_SCHEMA_VERSION); assert.strictEqual(detail.data.metadata.git_commit, env.GIT_COMMIT); assert.strictEqual(detail.data.rounds.length, 10); assert.strictEqual(Object.keys(detail.data.survey.post_survey).length, 22);
-    assert.strictEqual((await request("/api/admin/scope/formal/summary")).response.status, 401);
+    assert.strictEqual((await request("/api/admin/scope/formal/summary")).response.status, 200);
     const { buildFiles } = require("./prolific-export");
     const files = buildFiles(completed, env, { protocolVersion: norm.PROTOCOL_VERSION, exportScope: "team_review" });
     for (const name of ["participants.csv","study1_rounds.csv","surveys.csv","bonus_payments.csv","raw_sessions.ndjson","export_metadata.json","cell_summary.csv"]) assert(files[name], name);
@@ -191,8 +175,6 @@ async function completeReview(condition, reloadRound = null) {
     assert.deepStrictEqual(surveyHeader.slice(31), ["demo_age","demo_gender","demo_education"]);
     assert(files["surveys.csv"].includes("norm_misreport_support_count")); assert(files["surveys.csv"].includes("\n0," ) || files["surveys.csv"].includes(",0,")); assert(files["surveys.csv"].includes('"Line one\nLine two"'));
     for (const forbidden of ["n_peers_misreporting","misreporting_peer_names_json","misreporting_peer_ids_json","underlying_reported_value"]) assert(!files["study1_rounds.csv"].includes(forbidden));
-    const logout = await request("/api/admin/logout", { method: "POST", headers: { cookie: adminCookie } }); assert.strictEqual(logout.response.status, 200);
-    assert.strictEqual((await request("/api/admin/scope/formal/summary", { headers: { cookie: adminCookie } })).response.status, 401);
     for (const line of files["raw_sessions.ndjson"].trim().split("\n")) JSON.parse(line);
     const metadata = JSON.parse(files["export_metadata.json"]); assert.strictEqual(metadata.export_scope, "team_review"); assert.deepStrictEqual(Object.keys(metadata.condition_map), norm.CONDITIONS); assert.strictEqual(metadata.stimuli.length, 4);
     console.log("AI Norm Pilot acceptance passed: protocol, stimuli, flow, reload, posttest, four stores, matrices, exports, and closed Formal gate.");

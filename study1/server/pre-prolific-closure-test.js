@@ -8,7 +8,6 @@ const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const survey = read("public/js/survey.js");
 const app = read("public/js/app.js");
 const admin = read("public/admin-scope.html");
-const login = read("public/admin-login.html");
 const server = read("server/index.js");
 
 for (const heading of [
@@ -28,6 +27,6 @@ assert(app.includes("Read the AI members' messages before completing your privat
 for (const stimulus of Object.values(norm.STIMULI)) assert.strictEqual((read("config/ai-norm-pilot.js").match(new RegExp(stimulus.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")) || []).length, 1);
 for (const forbidden of ["prompt(\"Admin token\")", "sessionStorage", "localStorage", "x-admin-token"]) assert(!admin.includes(forbidden), forbidden);
 for (const required of ["Complete scope ZIP", "participants.csv", "study1_rounds.csv", "surveys.csv", "bonus_payments.csv", "raw_sessions.ndjson", "export_metadata.json", "cell_summary.csv", "Data Integrity", "Participant detail"]) assert(admin.includes(required), required);
-for (const required of ["type=\"password\"", "/api/admin/login"]) assert(login.includes(required), required);
-for (const required of ["HttpOnly", "SameSite=Strict", "ADMIN_PASSWORD_HASH", "ADMIN_SESSION_SECRET", "HOST || undefined", "NORM_EXPORT_FILES"]) assert(server.includes(required), required);
-console.log("Pre-Prolific closure assertions passed: headings, frozen stimuli, participant wording, no-token Admin, complete exports, auth cookie, and bind host.");
+for (const forbidden of ["ADMIN_TOKEN", "ADMIN_PASSWORD", "ADMIN_SESSION", "x-admin-token", "/api/admin/login", "sessionStorage", "localStorage"]) assert(!server.includes(forbidden), forbidden);
+for (const required of ["HOST || undefined", "NORM_EXPORT_FILES", "app.get(\"/admin\""]) assert(server.includes(required), required);
+console.log("Pre-Prolific closure assertions passed: headings, frozen stimuli, participant wording, direct Admin, complete exports, and bind host.");

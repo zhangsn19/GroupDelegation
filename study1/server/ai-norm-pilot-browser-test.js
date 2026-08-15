@@ -14,8 +14,6 @@ const CONDITIONS = {
 };
 
 const externalOrigin = process.env.NORM_TEST_ORIGIN || "";
-const adminToken = process.env.NORM_TEST_ADMIN_TOKEN || "browser-test-admin-token";
-const adminPassword = "browser-test-password";
 const tempRoot = externalOrigin ? null : fs.mkdtempSync(path.join(os.tmpdir(), "norm-browser-"));
 const port = 44000 + crypto.randomInt(1000);
 let server;
@@ -153,9 +151,6 @@ async function runCondition(browser, origin, condition, stimulus, index) {
 async function verifyAdmin(browser, origin) {
   const context = await browser.newContext();
   const page = await context.newPage();
-  await page.goto(`${origin}/admin`, { waitUntil: "networkidle" });
-  await page.locator("#password").fill(adminPassword);
-  await Promise.all([page.waitForURL("**/admin/formal"), page.locator("#login button[type=submit]").click()]);
   for (const scope of ["formal", "preview", "qa", "team-review"]) {
     await page.goto(`${origin}/admin/${scope}`, { waitUntil: "networkidle" });
     assert.strictEqual(await page.locator("#matrix tr").count(), 2, `${scope}: 2 norm-type rows`);
@@ -196,9 +191,6 @@ async function main() {
         ALLOW_PREVIEW: "true",
         ALLOW_QA_PREVIEW: "true",
         ALLOW_TEAM_REVIEW: "true",
-         ADMIN_TOKEN: adminToken,
-          ADMIN_PASSWORD_HASH: `scrypt$browser-test-salt$${crypto.scryptSync(adminPassword, "browser-test-salt", 32).toString("hex")}`,
-          ADMIN_SESSION_SECRET: "browser-test-admin-session-secret-with-sufficient-entropy",
         SERVER_RECORD_SECRET: "browser-test-record-secret-with-sufficient-entropy",
         STUDY_CONTACT_EMAIL: "browser-test@example.invalid",
         PROLIFIC_VARIANT_MAP_JSON: JSON.stringify(variantMap),

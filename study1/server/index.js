@@ -143,8 +143,8 @@ app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false, limit: "16kb" }));
 if (IS_NORM_PILOT) app.set("trust proxy", 1);
 app.get("/admin.html", (req, res, next) => IS_NORM_PILOT ? res.redirect(302, "/admin") : next());
-app.get("/qa-login", (req, res, next) => IS_NORM_PILOT ? res.redirect(302, "/admin?next=%2Fqa-preview") : next());
-app.get("/qa-login.html", (req, res, next) => IS_NORM_PILOT ? res.redirect(302, "/admin?next=%2Fqa-preview") : next());
+app.get("/qa-login", (req, res, next) => IS_NORM_PILOT ? res.redirect(302, "/qa-preview") : next());
+app.get("/qa-login.html", (req, res, next) => IS_NORM_PILOT ? res.redirect(302, "/qa-preview") : next());
 app.get(["/", "/index.html"], (req, res, next) => {
   if (ASSIGNMENT_MODE === "review_only") {
     try {
@@ -1185,63 +1185,11 @@ function filterSessions(sessions, query = {}) {
   });
 }
 
-const ADMIN_COOKIE = "norm_pilot_admin";
-const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
-const activeAdminSessions = new Set();
-function cookies(req) {
-  return Object.fromEntries(String(req.headers.cookie || "").split(";").map((part) => part.trim()).filter(Boolean).map((part) => {
-    const index = part.indexOf("=");
-    return [decodeURIComponent(index < 0 ? part : part.slice(0, index)), decodeURIComponent(index < 0 ? "" : part.slice(index + 1))];
-  }));
-}
-function safeEqual(left, right) {
-  const a = Buffer.from(String(left || "")); const b = Buffer.from(String(right || ""));
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-function validAdminPassword(password) {
-  const encoded = String(process.env.ADMIN_PASSWORD_HASH || "");
-  const [scheme, salt, expected] = encoded.split("$");
-  if (scheme !== "scrypt" || !salt || !expected) return false;
-  return safeEqual(crypto.scryptSync(String(password || ""), salt, 32).toString("hex"), expected);
-}
-function issueAdminSession() {
-  const payload = Buffer.from(JSON.stringify({ exp: Date.now() + ADMIN_SESSION_TTL_MS, nonce: crypto.randomBytes(12).toString("hex") })).toString("base64url");
-  const signature = crypto.createHmac("sha256", process.env.ADMIN_SESSION_SECRET || "").update(payload).digest("base64url");
-  const session = `${payload}.${signature}`;
-  activeAdminSessions.add(session);
-  return session;
-}
-function hasAdminSession(req) {
-  const value = cookies(req)[ADMIN_COOKIE] || ""; const split = value.lastIndexOf(".");
-  if (split < 1 || !process.env.ADMIN_SESSION_SECRET || !activeAdminSessions.has(value)) return false;
-  const payload = value.slice(0, split); const supplied = value.slice(split + 1);
-  const expected = crypto.createHmac("sha256", process.env.ADMIN_SESSION_SECRET).update(payload).digest("base64url");
-  if (!safeEqual(supplied, expected)) return false;
-  try { return Number(JSON.parse(Buffer.from(payload, "base64url").toString("utf8")).exp) > Date.now(); } catch { return false; }
-}
-function adminPageAuth(req, res, next) {
-  if (!IS_NORM_PILOT || hasAdminSession(req)) return next();
-  res.redirect(302, `/admin?next=${encodeURIComponent(req.originalUrl)}`);
-}
-
 app.get("/admin", (req, res) => {
   if (!IS_NORM_PILOT) return res.redirect(302, "/admin/formal");
-  if (hasAdminSession(req)) return res.redirect(302, "/admin/formal");
-  res.sendFile(path.join(__dirname, "..", "public", "admin-login.html"));
+  return res.redirect(302, "/admin/formal");
 });
-app.post("/api/admin/login", (req, res) => {
-  if (!IS_NORM_PILOT || !validAdminPassword(req.body?.password)) return res.status(401).json({ error: "Invalid administrator password." });
-  res.set("Set-Cookie", `${ADMIN_COOKIE}=${encodeURIComponent(issueAdminSession())}; Max-Age=${ADMIN_SESSION_TTL_MS / 1000}; Path=/; HttpOnly${IS_PRODUCTION ? "; Secure" : ""}; SameSite=Strict`);
-  const requested = String(req.body?.next || "");
-  const next = /^\/(admin\/(formal|preview|qa|team-review)|preview|qa-preview)$/.test(requested) ? requested : "/admin/formal";
-  res.json({ ok: true, next });
-});
-app.post("/api/admin/logout", (req, res) => {
-  activeAdminSessions.delete(cookies(req)[ADMIN_COOKIE] || "");
-  res.set("Set-Cookie", `${ADMIN_COOKIE}=; Max-Age=0; Path=/; HttpOnly${IS_PRODUCTION ? "; Secure" : ""}; SameSite=Strict`);
-  res.json({ ok: true });
-});
-app.get("/qa-preview", adminPageAuth, (req, res) => {
+app.get("/qa-preview", (req, res) => {
   if (!ALLOW_QA_PREVIEW) return res.status(404).send("QA Preview is not enabled.");
   return res.sendFile(path.join(__dirname, "..", "public", "qa-preview.html"));
 });
@@ -1251,13 +1199,13 @@ app.get("/review", (req, res) => {
   return res.sendFile(path.join(__dirname, "..", "public", "review.html"));
 });
 
-app.get("/preview", adminPageAuth, (req, res) => {
+app.get("/preview", (req, res) => {
   if (!ALLOW_PREVIEW) return res.status(404).send("Preview is not enabled.");
   return res.sendFile(path.join(__dirname, "..", "public", "preview.html"));
 });
 
 for (const scope of ["formal", "preview", "qa", "team-review"]) {
-  app.get(`/admin/${scope}`, adminPageAuth, (req, res) => res.sendFile(path.join(__dirname, "..", "public", "admin-scope.html")));
+  app.get(`/admin/${scope}`, (req, res) => res.sendFile(path.join(__dirname, "..", "public", "admin-scope.html")));
 }
 
 function prolificAdminSummary(sessions) {
@@ -1301,7 +1249,7 @@ app.use("/api/admin", (req, res, next) => {
   next();
 });
 
-app.post("/api/admin/qa/session", normAdminAuth, asyncHandler(async (req, res) => {
+app.post("/api/admin/qa/session", asyncHandler(async (req, res) => {
   if (!ALLOW_QA_PREVIEW) return res.status(404).json({ error: "QA Preview is not enabled." });
   const peerIdentity = String(req.body.peer_identity || "").trim();
   const condition = String(req.body.condition || "").trim();
@@ -1329,7 +1277,7 @@ app.post("/api/review/session", asyncHandler(async (req, res) => {
   res.json({ session: publicSession(session) });
 }));
 
-app.post("/api/preview/session", normAdminAuth, asyncHandler(async (req, res) => {
+app.post("/api/preview/session", asyncHandler(async (req, res) => {
   if (!IS_NORM_PILOT || !ALLOW_PREVIEW) return res.status(404).json({ error: "Preview is not enabled." });
   const condition = String(req.body.condition || "").trim();
   if (!normPilot.isCondition(condition)) return res.status(400).json({ error: "Invalid Preview cell." });
@@ -1936,22 +1884,9 @@ app.get("/api/admin/export/study1_dice_rounds.csv", asyncHandler(async (req, res
   res.type("text/csv").send(exporters.study1DiceRoundsCsv(filterSessions(await store.listSessions(), req.query)));
 }));
 
-function normAdminAuth(req, res, next) {
-  if (!IS_NORM_PILOT) return next();
-  if (hasAdminSession(req)) return next();
-  const expected = String(process.env.ADMIN_TOKEN || "");
-  const supplied = String(req.get("x-admin-token") || "");
-  if (!expected || supplied.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected))) {
-    return res.status(401).json({ error: "Admin authentication required." });
-  }
-  next();
-}
-
 function normalizedScope(value) {
   return value === "team-review" ? "team_review" : value;
 }
-
-app.use("/api/admin/scope", normAdminAuth);
 
 app.get("/api/admin/scope/:scope/summary", asyncHandler(async (req, res) => {
   const scope = normalizedScope(req.params.scope);
@@ -2047,9 +1982,6 @@ async function validateRuntime() {
     }
     const resolved = keys.map((key) => path.resolve(process.env[key]));
     if (new Set(resolved).size !== 4) throw new Error("All four AI Norm Pilot data directories must be physically separate");
-    if (!process.env.ADMIN_TOKEN || process.env.ADMIN_TOKEN.length < 32) throw new Error("ADMIN_TOKEN must contain at least 32 characters");
-    if (!/^scrypt\$[^$]+\$[0-9a-f]{64}$/i.test(process.env.ADMIN_PASSWORD_HASH || "")) throw new Error("ADMIN_PASSWORD_HASH must be a valid scrypt hash");
-    if (!process.env.ADMIN_SESSION_SECRET || process.env.ADMIN_SESSION_SECRET.length < 32) throw new Error("ADMIN_SESSION_SECRET must contain at least 32 characters");
     if (!process.env.SERVER_RECORD_SECRET || process.env.SERVER_RECORD_SECRET.length < 32) throw new Error("SERVER_RECORD_SECRET must contain at least 32 characters");
     if (FORMAL_RECRUITMENT_ENABLED && [process.env.PROLIFIC_EXPECTED_STUDY_ID, process.env.PROLIFIC_COMPLETION_URL].some((value) => !value || /^(?:__PENDING__|FILL_ME)$/i.test(value))) throw new Error("Formal recruitment cannot open without final Prolific values");
     await store.ensureDataDir();
