@@ -60,7 +60,7 @@ function rawSession(id) {
 
     const reviewPage = await request("/review");
     assert.strictEqual(reviewPage.response.status, 200);
-    assert(reviewPage.text.includes("Norm Supplement Review") && reviewPage.text.includes("Start Fresh Review Session"));
+    assert(reviewPage.text.includes("Norm Supplement Review") && reviewPage.text.includes("Start Fresh Review Session") && reviewPage.text.includes("Open the frozen AI-arm participant flow"));
     assert(!reviewPage.text.includes("实验一：骰子结果申报任务") && !reviewPage.text.includes("共享群聊 AI"));
 
     const qaPage = await request("/qa-preview");

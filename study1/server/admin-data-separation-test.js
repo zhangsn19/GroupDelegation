@@ -125,7 +125,7 @@ async function assertBundle(endpoint, expectedId, excludedIds, filenamePrefix) {
     await waitForHealth();
     const admin = await request("/admin.html");
     assert.strictEqual(admin.response.status, 200);
-    for (const marker of ["tab-recruitment", "tab-internal", "tab-historical", "FORMAL RECRUITMENT 2×6 MATRIX", "INTERNAL TEST 2×6 MATRIX", "Production recruitment data only", "READ-ONLY LEGACY DATA"]) assert(admin.text.includes(marker));
+    for (const marker of ["tab-recruitment", "tab-internal", "tab-historical", "FORMAL RECRUITMENT · 3-CELL MATRIX", "INTERNAL TEST · 3-CELL MATRIX", "Production recruitment data only", "READ-ONLY LEGACY DATA"]) assert(admin.text.includes(marker));
     assert(admin.text.includes('id="tab-recruitment" class="tab-panel"'));
     assert(admin.text.includes('id="tab-internal" class="tab-panel" hidden'));
     assert(admin.text.includes('id="tab-historical" class="tab-panel" hidden'));

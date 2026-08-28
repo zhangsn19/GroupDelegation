@@ -229,7 +229,7 @@ function createProlificSupport({
         (sameSubmission.peer_identity || null) !== (identity.peer_identity || null) ||
         (identity.protocol_version
           ? sameSubmission.protocol_version !== identity.protocol_version
-          : [HUMAN_AI_PROTOCOL_VERSION, normSupplement.PROTOCOL_VERSION].includes(sameSubmission.protocol_version))
+        : normSupplement.usesHumanAiTaskPresentation(sameSubmission.protocol_version))
       ) {
         const error = requestError(
           409,
@@ -256,7 +256,7 @@ function createProlificSupport({
         (sameParticipant.peer_identity || null) !== (identity.peer_identity || null) ||
         (identity.protocol_version
           ? sameParticipant.protocol_version !== identity.protocol_version
-          : [HUMAN_AI_PROTOCOL_VERSION, normSupplement.PROTOCOL_VERSION].includes(sameParticipant.protocol_version))
+        : normSupplement.usesHumanAiTaskPresentation(sameParticipant.protocol_version))
       ) {
         const error = requestError(409, "variant_conflict", "Your saved study record belongs to a different Taskflow assignment. Please return to Prolific or contact the research team.");
         error.session_id = sameParticipant.id;

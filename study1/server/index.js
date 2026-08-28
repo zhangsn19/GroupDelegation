@@ -337,7 +337,7 @@ function publicSession(session) {
   if (session.status === "completed" || session.completion_status === "completed") {
     payload.completion = publicCompletion(session);
   }
-  if ([HUMAN_AI_PROTOCOL_VERSION, normSupplement.PROTOCOL_VERSION].includes(session.protocol_version)) {
+  if (normSupplement.usesHumanAiTaskPresentation(session.protocol_version)) {
     payload.peer_identity = session.peer_identity;
     payload.identity_manipulation_version = session.identity_manipulation_version;
     payload.condition_map_version = session.condition_map_version;
@@ -392,7 +392,7 @@ function demographicsItemsForSession(session) {
 }
 
 function comprehensionQuestionsForSession(session) {
-  return [HUMAN_AI_PROTOCOL_VERSION, normSupplement.PROTOCOL_VERSION].includes(session?.protocol_version)
+  return normSupplement.usesHumanAiTaskPresentation(session?.protocol_version)
     ? study1.humanAiComprehensionQuestions
     : study1.comprehensionQuestions;
 }
@@ -716,7 +716,7 @@ function publicStudy1PeerRecords(session, peerRecords = []) {
       visibility: "hidden",
       text: record.text
     }));
-  if (session.protocol_version === HUMAN_AI_PROTOCOL_VERSION) {
+  if (normSupplement.usesHumanAiTaskPresentation(session.protocol_version)) {
     const prefix = session.peer_identity === "ai" ? "AI Member" : "Human Member";
     return publicRecords.map((record) => {
       const memberNumber = Math.max(1, STABLE_MEMBER_IDS.indexOf(record.member_id) + 1);
@@ -940,7 +940,7 @@ async function createSession({ study, participantId, requestedCondition, entry, 
   };
   const diceSequence = study1Stimuli.diceSequence;
   const sessionProtocolVersion = prolificIdentity?.protocol_version || qaIdentity?.protocol_version || PROTOCOL_VERSION;
-  const isHumanAiSession = [HUMAN_AI_PROTOCOL_VERSION, normSupplement.PROTOCOL_VERSION].includes(sessionProtocolVersion);
+  const isHumanAiSession = normSupplement.usesHumanAiTaskPresentation(sessionProtocolVersion);
   const isNormSupplementSession = normSupplement.isNormSupplementProtocol(sessionProtocolVersion);
   const persistedPeerRecordsByRound = isHumanAiSession
     ? study1Stimuli.peerRecordsByRound.map((round) => ({

@@ -86,10 +86,10 @@ for (const item of translatedItems) {
   }
 }
 const appSource = fs.readFileSync(path.join(__dirname, "..", "public", "js", "app.js"), "utf8");
-assert(appSource.includes('sidebarTitle: isHumanAiProtocol() ? "Work group"'));
+assert(appSource.includes('sidebarTitle: usesHumanAiTaskPresentation() ? "Work group"'));
 assert(!appSource.includes('{ name: "Submission System", avatar: "S" }'));
 assert(appSource.includes('{ kind: "notice"'));
-assert(appSource.includes('footerText: isHumanAiProtocol() ? false'));
+assert(appSource.includes('footerText: usesHumanAiTaskPresentation() ? false'));
 const chatSource = fs.readFileSync(path.join(__dirname, "..", "public", "js", "chat.js"), "utf8");
 assert(chatSource.includes("addSystemNotice(text)"));
 assert(!chatSource.includes('options.footerText ||'));

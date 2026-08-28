@@ -158,7 +158,7 @@
     phaseIndicator.textContent = label;
   }
 
-  function isHumanAiProtocol() {
+  function usesHumanAiTaskPresentation() {
     return ["study1-human-ai-v1", "group-deception-norm-supplement-v1"].includes(state.session?.protocol_version);
   }
 
@@ -172,7 +172,7 @@
     if (Array.isArray(session.demographics_items)) state.config.demographicsItems = participantConfig(session.demographics_items);
     if (Array.isArray(session.rule_blocks)) state.config.ruleBlocks = participantConfig(session.rule_blocks);
     if (Array.isArray(session.comprehension_questions)) state.config.comprehensionQuestions = participantConfig(session.comprehension_questions);
-    if (isHumanAiProtocol()) {
+    if (usesHumanAiTaskPresentation()) {
       const consentIntro = screens.consent.querySelector(".consent-text p");
       if (consentIntro) consentIntro.textContent = session.peer_identity === "ai"
         ? "You will complete this task with four AI group members."
@@ -291,11 +291,11 @@
     setPhase("群体介绍");
     content.innerHTML = "";
     const chat = window.ChatView.createReadOnlyChat(content, state.members, {
-      sidebarTitle: isHumanAiProtocol() ? "Work group" : undefined,
-      sidebarNote: isHumanAiProtocol() ? "The Submission System records each member's report." : undefined,
-      footerText: isHumanAiProtocol() ? false : "群聊 AI 负责接收并提交成员报告。"
+      sidebarTitle: usesHumanAiTaskPresentation() ? "Work group" : undefined,
+      sidebarNote: usesHumanAiTaskPresentation() ? "The Submission System records each member's report." : undefined,
+      footerText: usesHumanAiTaskPresentation() ? false : "群聊 AI 负责接收并提交成员报告。"
     });
-    const introMessages = isHumanAiProtocol()
+    const introMessages = usesHumanAiTaskPresentation()
       ? window.ChatView.identityIntroMessages(state.members)
       : window.ChatView.introMessages(state.members);
     await chat.addMessagesSequentially(introMessages, 650);
@@ -385,12 +385,12 @@
     content.insertAdjacentHTML("beforeend", window.Study1Dice.renderCommonDie(state.diceCurrent));
     content.insertAdjacentHTML("beforeend", `<p class="status-hint">正在展示成员提交记录</p>`);
     const chat = window.ChatView.createReadOnlyChat(content, state.members, {
-      sidebarTitle: isHumanAiProtocol() ? "Work group" : undefined,
-      sidebarNote: isHumanAiProtocol() ? "The Submission System records each member's report." : undefined,
-      footerText: isHumanAiProtocol() ? false : "群聊 AI 负责接收并提交成员报告。"
+      sidebarTitle: usesHumanAiTaskPresentation() ? "Work group" : undefined,
+      sidebarNote: usesHumanAiTaskPresentation() ? "The Submission System records each member's report." : undefined,
+      footerText: usesHumanAiTaskPresentation() ? false : "群聊 AI 负责接收并提交成员报告。"
     });
     const systemSender = { name: "群聊 AI", avatar: "AI" };
-    const roundMessages = isHumanAiProtocol() ? [
+    const roundMessages = usesHumanAiTaskPresentation() ? [
       { kind: "notice", text: `Round ${state.diceCurrent.round_index} of ${state.diceCurrent.total_rounds} begins.` },
       { kind: "notice", text: "The die outcome is available. Each group member can now complete this round's report." },
       ...window.ChatView.peerRecordMessages(state.members, state.diceCurrent.peer_records || []),
@@ -419,7 +419,7 @@
     state.diceCurrent = presented.current;
     const task = document.createElement("div");
     task.className = "embedded-task dice-private-zone";
-    task.innerHTML = window.Study1Dice.renderRound(state.diceCurrent, state.diceSelected, state.diceSubmitting, { humanAi: isHumanAiProtocol() });
+    task.innerHTML = window.Study1Dice.renderRound(state.diceCurrent, state.diceSelected, state.diceSubmitting, { humanAi: usesHumanAiTaskPresentation() });
     content.appendChild(task);
     beginDecisionTimer(resumedAfterReload, {
       activeMs: state.diceCurrent.decision_timing_accumulated_ms,
@@ -518,7 +518,7 @@
     setPhase("事后说明");
     const contact = state.config.contact_email || "123456@163.com";
     const pid = state.session.participant_id || "";
-    if (isHumanAiProtocol()) {
+    if (usesHumanAiTaskPresentation()) {
       content.innerHTML = `
         <div class="card"><h2>Debrief</h2><div class="consent-text">
           <p>The identities and reporting patterns of the other group members were simulated and controlled by the research system for experimental purposes. No other human participants or live AI models were making these reporting decisions in real time.</p>
@@ -548,7 +548,7 @@
         const status = content.querySelector("#debrief-save-status");
         if (status) status.textContent = "";
         completeButton.disabled = false;
-        completeButton.textContent = isHumanAiProtocol() ? "Complete" : "完成";
+        completeButton.textContent = usesHumanAiTaskPresentation() ? "Complete" : "完成";
       }).catch(() => {
         const status = content.querySelector("#debrief-save-status");
         if (status) status.textContent = "当前页面信息尚未保存，请稍后重试。";
@@ -576,7 +576,7 @@
       ${completion.completion_code ? `<p class="completion-code">你的完成码：${completion.completion_code}</p>` : ""}
       ${completion.completion_redirect_url ? `<div class="step-nav"><a class="btn btn-primary" href="${completion.completion_redirect_url}" rel="noreferrer">返回招募平台</a></div>` : ""}
     `;
-    if (isHumanAiProtocol()) {
+    if (usesHumanAiTaskPresentation()) {
       screens.complete.innerHTML = `
         <div class="card">
           <p class="eyebrow">Complete</p>

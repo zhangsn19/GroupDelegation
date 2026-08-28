@@ -71,7 +71,7 @@ const write = (name, value) => fs.writeFileSync(path.join(prolificDir, name), va
 
 write("NormSupplement_Taskflow_READY.csv", [
   "name,url,total_available_places",
-  ...cells.map((cell, index) => `${cell.analysis_condition},https://${hostname}/?variant=${tokens[index]},30`),
+  ...cells.map((cell, index) => `${cell.analysis_condition},https://${hostname}/en/?variant=${tokens[index]},30`),
 ].join("\n") + "\n");
 write("NormSupplement_variant_mapping_PRIVATE.json", `${JSON.stringify(mapping, null, 2)}\n`);
 write("norm-supplement.pid-denylist.sha256", `${hashes.join("\n")}\n`);

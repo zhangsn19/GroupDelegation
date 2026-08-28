@@ -25,6 +25,7 @@ const tokenEntries = protocol.activeCells().map((cell, index) => [
   { variant_id: `norm_${index + 1}`, condition: cell.source_condition, peer_identity: "ai", analysis_condition: cell.analysis_condition },
 ]);
 const variantMap = Object.fromEntries(tokenEntries);
+const legacyRuntimeStrings = ["Alex", "Taylor", "Jordan", "Morgan", "张明", "李华", "王芳", "陈思", "group-chat AI", "Group-chat AI", "群聊 AI", "coworker", "coworkers"];
 
 function envFor(port, formalEnabled) {
   return {
@@ -103,11 +104,28 @@ function responsesFor(items, condition) {
   }));
 }
 
+function assertAiArmPresentation(session, current, condition) {
+  const peers = session.peer_members.filter((member) => member.id !== "participant");
+  assert.deepStrictEqual(peers.map((member) => member.name), ["AI Member 1", "AI Member 2", "AI Member 3", "AI Member 4"]);
+  assert(peers.every((member) => member.role === "AI group member"));
+  const records = current.peer_records || [];
+  assert.deepStrictEqual(records.map((record) => record.name).sort(), ["AI Member 1", "AI Member 2", "AI Member 3", "AI Member 4"]);
+  const serialized = JSON.stringify({ peers, records });
+  for (const forbidden of legacyRuntimeStrings) assert(!serialized.includes(forbidden), `Supplement runtime leaked ${forbidden}`);
+  assert(records.every((record) => record.text.includes("Submission System")));
+  if (condition === "hidden") {
+    assert(records.every((record) => record.text.includes("completed a report in the Submission System") && record.text.includes("report value is not visible")));
+  } else {
+    assert(records.every((record) => /^AI Member [1-4] submitted [1-6] in the Submission System\.$/.test(record.text)));
+  }
+}
+
 async function completeInternal(server, endpoint, condition) {
   const created = await request(server.origin, endpoint, jsonPost({ peer_identity: "ai", condition }));
   assert.strictEqual(created.response.status, 200, created.text);
   assert.strictEqual(created.data.session.protocol_version, protocol.PROTOCOL_VERSION);
   assert.strictEqual(created.data.session.peer_identity, "ai");
+  assert.deepStrictEqual(created.data.session.peer_members.filter((member) => member.id !== "participant").map((member) => member.name), ["AI Member 1", "AI Member 2", "AI Member 3", "AI Member 4"]);
   assert.strictEqual(created.data.session.source_condition, undefined, "participant payload leaked source condition");
   assert.strictEqual(created.data.session.analysis_condition, undefined, "participant payload leaked analysis condition");
   assert.strictEqual(created.data.session.post_survey_items.length, 22);
@@ -119,6 +137,7 @@ async function completeInternal(server, endpoint, condition) {
   const comprehension = await request(server.origin, `/api/session/${id}/comprehension`, jsonPost({ answers: { reported_object: "common_die", private_submission: "no", reward_direction: "higher_reward" } }));
   assert.strictEqual(comprehension.data.passed, true);
   let current = (await request(server.origin, `/api/session/${id}/dice/start`, jsonPost())).data.current;
+  assertAiArmPresentation(created.data.session, current, condition);
   const firstSnapshot = JSON.stringify(current);
   const refreshed = (await request(server.origin, `/api/session/${id}/dice/current`)).data.current;
   assert.strictEqual(JSON.stringify(refreshed), firstSnapshot, "refresh changed current stimulus");
@@ -133,7 +152,10 @@ async function completeInternal(server, endpoint, condition) {
       decision_segment_id: `segment_${round}`, decision_segment_active_ms: 10, decision_segment_hidden_ms: 0,
     }));
     assert.strictEqual(submitted.response.status, 200, submitted.text);
-    if (round < 10) current = submitted.data.current;
+    if (round < 10) {
+      current = submitted.data.current;
+      assertAiArmPresentation(created.data.session, current, condition);
+    }
   }
   const restored = await request(server.origin, `${endpoint.startsWith("/api/review") ? "/api/review/session" : "/api/qa/session"}/${id}`);
   const items = restored.data.session.post_survey_items;
@@ -175,6 +197,7 @@ function verifyRaw(session, condition) {
   assert.deepStrictEqual(protocol.activeCells().map((cell) => cell.analysis_condition), ["descriptive_honest", "descriptive_pro_misreport", "invisible"]);
   assert(protocol.activeCells().every((cell) => cell.peer_identity === "ai"));
   assert.strictEqual(posttest.posttestItems.length, 22);
+  assert.strictEqual(crypto.createHash("sha256").update(JSON.stringify(posttest.posttestItems)).digest("hex"), "af4c9da94e6d07954fd4cfc798e5c0ecd88f9b7e46ea7e7a1b0bf115d1fdf201");
   assert(posttest.posttestItems.slice(0, 15).every((item) => item.minLabel === "Strongly disagree" && item.maxLabel === "Strongly agree" && item.required));
   assert(posttest.posttestItems.slice(15, 17).every((item) => item.minLabel === "Not at all" && item.maxLabel === "Very strongly" && item.required));
   assert.deepStrictEqual(posttest.demographicsItems.map((item) => item.id), ["age", "gender", "education"]);
@@ -184,6 +207,8 @@ function verifyRaw(session, condition) {
   try {
     const health = await waitForHealth(server);
     assert.strictEqual(health.formal_recruitment_enabled, false);
+    const baselineItems = (await request(server.origin, "/api/config")).data.baselineItems;
+    assert.deepStrictEqual(baselineItems.map((item) => item.id), ["ai_use_frequency", "ai_execution_experience", "ai_execution_trust", "ai_execution_willingness"]);
     const formalBlocked = await request(server.origin, "/api/prolific/session", jsonPost({ variant: tokenEntries[0][0], PROLIFIC_PID: "new_pid", STUDY_ID: "x", SESSION_ID: "x" }));
     assert.strictEqual(formalBlocked.response.status, 403);
     const previewIds = [];
@@ -219,6 +244,13 @@ function verifyRaw(session, condition) {
     for (const html of [adminHtml, qaHtml, reviewHtml]) {
       assert(!html.includes("dishonest_fixed_1") && !html.includes("dishonest_escalating"));
     }
+    assert(adminHtml.includes("FORMAL RECRUITMENT · 3-CELL MATRIX"));
+    assert(adminHtml.includes("INTERNAL TEST · 3-CELL MATRIX"));
+    assert(!adminHtml.includes("2×6 MATRIX") && !adminHtml.includes("study1-human-ai-${tab"));
+    assert(adminHtml.includes("norm-supplement-${tab"));
+    assert(reviewHtml.includes("Open the frozen AI-arm participant flow"));
+    const handoffGenerator = fs.readFileSync(path.join(__dirname, "..", "scripts", "create-norm-supplement-private-handoff.js"), "utf8");
+    assert(handoffGenerator.includes("/en/?variant="));
     assert.strictEqual((qaHtml.match(/<option value="(?:honest|dishonest|hidden)">/g) || []).length, 3);
     assert.strictEqual((reviewHtml.match(/<option value="(?:honest|dishonest|hidden)">/g) || []).length, 3);
   } finally {

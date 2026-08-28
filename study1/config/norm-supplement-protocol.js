@@ -27,6 +27,10 @@ function isNormSupplementProtocol(value) {
   return value === PROTOCOL_VERSION;
 }
 
+function usesHumanAiTaskPresentation(value) {
+  return value === SOURCE_TASK_PROTOCOL || value === PROTOCOL_VERSION;
+}
+
 function isSourceCondition(value) {
   return Object.prototype.hasOwnProperty.call(SOURCE_TO_ANALYSIS, value);
 }
@@ -54,6 +58,7 @@ module.exports = {
   SOURCE_TO_ANALYSIS,
   ACTIVE_CELLS,
   isNormSupplementProtocol,
+  usesHumanAiTaskPresentation,
   isSourceCondition,
   analysisConditionFor,
   isActiveCell,
