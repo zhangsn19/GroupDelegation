@@ -8,7 +8,10 @@
     "start": "node server/index.js",
     "dev": "node server/index.js",
     "test:h2": "node server/h2-targeted-test.js",
-    "smoke": "node server/smoke-test.js && node server/prolific-smoke-test.js && node server/human-ai-targeted-test.js"
+    "smoke": "node server/smoke-test.js && node server/prolific-smoke-test.js && node server/human-ai-targeted-test.js",
+    "test:norm-supplement": "node server/norm-supplement-targeted-test.js",
+    "test:acceptance": "node server/admin-data-separation-test.js && node server/final-acceptance-test.js && node server/final-closure-test.js && node server/phase2-release-test.js && node server/review-routing-regression-test.js",
+    "test:all": "npm run smoke && npm run test:h2 && npm run test:norm-supplement && npm run test:acceptance"
   },
   "engines": {
     "node": ">=20"

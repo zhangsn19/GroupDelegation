@@ -56,20 +56,20 @@ function rawSession(id) {
     await waitForHealth();
     const health = await request("/health");
     assert.strictEqual(health.data.protocol_version, "study1-human-ai-v1");
-    assert.strictEqual((await request("/")).response.status, 403);
+    assert.strictEqual((await request("/")).response.status, 404);
 
     const reviewPage = await request("/review");
     assert.strictEqual(reviewPage.response.status, 200);
-    assert(reviewPage.text.includes("Study 1 Human–AI Review") && reviewPage.text.includes("Start Fresh Review Session"));
+    assert(reviewPage.text.includes("Norm Supplement Review") && reviewPage.text.includes("Start Fresh Review Session"));
     assert(!reviewPage.text.includes("实验一：骰子结果申报任务") && !reviewPage.text.includes("共享群聊 AI"));
 
     const qaPage = await request("/qa-preview");
     assert.strictEqual(qaPage.response.status, 200);
-    assert(qaPage.text.includes("Study 1 Human–AI QA") && qaPage.text.includes("Start QA Preview"));
+    assert(qaPage.text.includes("Norm Supplement QA") && qaPage.text.includes("Start QA Preview"));
     assert(!qaPage.text.includes("参与编号缺失") && !qaPage.text.includes("实验一：骰子结果申报任务"));
 
     const adminPage = await request("/admin.html");
-    assert(adminPage.text.includes("Study1 Human–AI Admin") && adminPage.text.includes("tab-recruitment") && adminPage.text.includes("tab-internal") && adminPage.text.includes("tab-historical"));
+    assert(adminPage.text.includes("Norm Supplement Admin") && adminPage.text.includes("tab-recruitment") && adminPage.text.includes("tab-internal") && adminPage.text.includes("tab-historical"));
 
     const review = await request("/api/review/session", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ peer_identity: "ai", condition: "hidden" }) });
     assert.strictEqual(review.response.status, 200);

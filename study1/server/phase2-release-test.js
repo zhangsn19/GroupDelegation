@@ -103,8 +103,8 @@ async function exercise(peerIdentity, condition) {
   try {
     await waitForHealth();
     const root = await request("/");
-    assert.strictEqual(root.response.status, 403);
-    assert.strictEqual(root.text, "Study access requires a valid study link.");
+    assert.strictEqual(root.response.status, 404);
+    assert.strictEqual(root.text, "Study access requires a valid preview link.");
     const bareEnglish = await request("/en/");
     assert.strictEqual(bareEnglish.response.status, 403);
     const formalEntry = await request("/api/session", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
@@ -113,11 +113,11 @@ async function exercise(peerIdentity, condition) {
     assert.strictEqual((await request("/api/admin/records")).response.status, 200);
     assert.strictEqual((await request("/api/admin/integrity")).response.status, 200);
     const adminPage = await request("/admin.html");
-    for (const marker of ["Study1 Human–AI Admin", "count-formal", "export-groups", "matrix-output", "filter-scope", "all-records-output", "integrity-output", "technical-details"]) assert(adminPage.text.includes(marker));
+    for (const marker of ["Norm Supplement Admin", "count-formal", "export-groups", "matrix-output", "filter-scope", "all-records-output", "integrity-output", "technical-details"]) assert(adminPage.text.includes(marker));
     assert(!adminPage.text.includes('id="admin-token"'));
     const selector = await request("/qa-preview");
     assert.strictEqual(selector.response.status, 200);
-    assert(selector.text.includes("LEGACY / NOT RECRUITED") && selector.text.includes('value="human"') && selector.text.includes('value="ai"'));
+    assert(selector.text.includes("Norm Supplement QA") && !selector.text.includes('value="human"') && selector.text.includes('value="ai"'));
     const initialReviewRecords = await request("/api/admin/records?scope=team_review");
     const initialQaRecords = await request("/api/admin/records?scope=qa");
     const initialReviewCount = initialReviewRecords.data.participants.length;

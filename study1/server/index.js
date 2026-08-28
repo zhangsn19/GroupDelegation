@@ -19,6 +19,8 @@ const {
 const exporters = require("./export");
 const prolificExport = require("./prolific-export");
 const { createProlificSupport } = require("./prolific");
+const normSupplement = require("../config/norm-supplement-protocol");
+const normSupplementPosttest = require("../config/norm-supplement-posttest");
 const {
   PEER_IDENTITIES,
   PROTOCOL_VERSION: HUMAN_AI_PROTOCOL_VERSION,
@@ -45,32 +47,47 @@ function loadDotEnv() {
 loadDotEnv();
 
 const internalStore = require("./store");
+const BOOT_PROTOCOL_VERSION = String(process.env.PROTOCOL_VERSION || "").trim();
+const IS_NORM_SUPPLEMENT = normSupplement.isNormSupplementProtocol(BOOT_PROTOCOL_VERSION);
 const recruitmentStore = process.env.RECRUITMENT_DATA_DIR
   ? internalStore.createStore(process.env.RECRUITMENT_DATA_DIR)
   : internalStore;
-function isRecruitmentSession(session = {}) {
-  return session.assignment_mode === "prolific_taskflow" || session.is_preview === true || session.scope === "formal" || session.scope === "preview";
+const formalStore = IS_NORM_SUPPLEMENT && process.env.FORMAL_DATA_DIR
+  ? internalStore.createStore(process.env.FORMAL_DATA_DIR) : recruitmentStore;
+const previewStore = IS_NORM_SUPPLEMENT && process.env.PREVIEW_DATA_DIR
+  ? internalStore.createStore(process.env.PREVIEW_DATA_DIR) : recruitmentStore;
+const qaStore = IS_NORM_SUPPLEMENT && process.env.QA_DATA_DIR
+  ? internalStore.createStore(process.env.QA_DATA_DIR) : internalStore;
+const teamReviewStore = IS_NORM_SUPPLEMENT && process.env.TEAM_REVIEW_DATA_DIR
+  ? internalStore.createStore(process.env.TEAM_REVIEW_DATA_DIR) : internalStore;
+const writableStores = [...new Set([formalStore, previewStore, qaStore, teamReviewStore])];
+
+function storeForScope(scope) {
+  if (scope === "formal") return formalStore;
+  if (scope === "preview") return previewStore;
+  if (scope === "team_review") return teamReviewStore;
+  return qaStore;
 }
 async function locateCurrentStore(id) {
-  try {
-    await recruitmentStore.readSession(id);
-    return recruitmentStore;
-  } catch (error) {
-    if (error.statusCode !== 410) throw error;
+  let missingError;
+  for (const candidate of writableStores) {
+    try {
+      await candidate.readSession(id);
+      return candidate;
+    } catch (error) {
+      if (error.statusCode !== 410) throw error;
+      missingError = error;
+    }
   }
-  await internalStore.readSession(id);
-  return internalStore;
+  throw missingError;
 }
 const store = {
-  DATA_DIR: internalStore.DATA_DIR,
+  DATA_DIR: qaStore.DATA_DIR,
   async ensureDataDir() {
-    if (recruitmentStore === internalStore) return internalStore.ensureDataDir();
-    await Promise.all([internalStore.ensureDataDir(), recruitmentStore.ensureDataDir()]);
+    await Promise.all(writableStores.map((item) => item.ensureDataDir()));
   },
   async listSessions() {
-    if (recruitmentStore === internalStore) return internalStore.listSessions();
-    const [recruitment, internal] = await Promise.all([recruitmentStore.listSessions(), internalStore.listSessions()]);
-    return [...recruitment, ...internal];
+    return (await Promise.all(writableStores.map((item) => item.listSessions()))).flat();
   },
   async readSession(id) {
     const selected = await locateCurrentStore(id);
@@ -81,10 +98,10 @@ const store = {
     return selected.updateSession(id, updater);
   },
   async writeSession(session) {
-    return (isRecruitmentSession(session) ? recruitmentStore : internalStore).writeSession(session);
+    return storeForScope(session.scope).writeSession(session);
   },
   async appendAuditEvent(event) {
-    return recruitmentStore.appendAuditEvent(event);
+    return formalStore.appendAuditEvent(event);
   },
 };
 const { createReadOnlyLegacyStore } = require("./legacy-store");
@@ -99,6 +116,8 @@ const REQUIRE_PARTICIPANT_ID = IS_PRODUCTION || String(process.env.REQUIRE_PARTI
 const STUDY_VERSION = process.env.STUDY_VERSION || "study1-v1.1.0";
 const ASSIGNMENT_MODE = String(process.env.ASSIGNMENT_MODE || "block").trim() || "block";
 const PROTOCOL_VERSION = process.env.PROTOCOL_VERSION || (ASSIGNMENT_MODE === "review_only" ? HUMAN_AI_PROTOCOL_VERSION : "peer-reporting-v2");
+const FORMAL_RECRUITMENT_ENABLED = String(process.env.FORMAL_RECRUITMENT_ENABLED || "").toLowerCase() === "true";
+const PID_DENYLIST_FILE = String(process.env.PID_DENYLIST_FILE || "").trim();
 const TEST_CONDITION = String(process.env.TEST_CONDITION || "").trim();
 const ENTRY_CODES = {
   A: { condition: "hidden", value: String(process.env.ENTRY_CODE_HIDDEN || "").trim() },
@@ -120,6 +139,14 @@ const STUDY1_DICE_MULTISET = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5];
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false, limit: "16kb" }));
 app.get(["/", "/index.html"], (req, res, next) => {
+  if (IS_NORM_SUPPLEMENT && !FORMAL_RECRUITMENT_ENABLED) {
+    try {
+      prolificSupport.validateRequest(req.query);
+      return res.sendFile(path.join(__dirname, "..", "public", "en", "index.html"));
+    } catch (error) {
+      return res.status(error.statusCode || 403).type("text/plain").send("Formal recruitment is not enabled. Use a valid preview link.");
+    }
+  }
   if (ASSIGNMENT_MODE === "review_only") {
     try {
       prolificSupport.validateRequest(req.query);
@@ -161,6 +188,30 @@ function fail(statusCode, message) {
 }
 
 let participantAllowlist = null;
+let pidDenylist = new Set();
+
+function normalizePidForDenylist(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function loadPidDenylist(filePath) {
+  if (!filePath) return new Set();
+  let lines;
+  try {
+    lines = fs.readFileSync(path.resolve(filePath), "utf8").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+  } catch {
+    throw new Error("PID_DENYLIST_FILE must point to a readable SHA-256 denylist file");
+  }
+  if (lines.some((item) => !/^[a-f0-9]{64}$/i.test(item))) {
+    throw new Error("PID_DENYLIST_FILE may contain only SHA-256 hashes");
+  }
+  return new Set(lines.map((item) => item.toLowerCase()));
+}
+
+function isPidDenied(value) {
+  const normalized = normalizePidForDenylist(value);
+  return normalized && pidDenylist.has(crypto.createHash("sha256").update(normalized).digest("hex"));
+}
 
 function loadParticipantAllowlist(filePath) {
   let parsed;
@@ -203,6 +254,10 @@ function validateAssignmentConfig() {
     }
     participantAllowlist = loadParticipantAllowlist(PARTICIPANT_ID_ALLOWLIST_FILE);
   }
+  if (IS_NORM_SUPPLEMENT) {
+    if (!PID_DENYLIST_FILE) throw new Error("PID_DENYLIST_FILE is required for the Norm Supplement");
+    pidDenylist = loadPidDenylist(PID_DENYLIST_FILE);
+  }
   if (ASSIGNMENT_MODE !== "controlled_link") return;
   const values = Object.values(ENTRY_CODES).map((item) => item.value);
   if (values.some((value) => !value)) {
@@ -236,8 +291,11 @@ validateAssignmentConfig();
 const prolificSupport = createProlificSupport({
   assignmentMode: ASSIGNMENT_MODE,
   isProduction: IS_PRODUCTION,
-  allowedConditions: CONDITIONS,
-  expectedVariantCount: 7
+  allowedConditions: IS_NORM_SUPPLEMENT ? Object.keys(normSupplement.SOURCE_TO_ANALYSIS) : CONDITIONS,
+  expectedVariantCount: IS_NORM_SUPPLEMENT ? 3 : 7,
+  protocolVersion: IS_NORM_SUPPLEMENT ? normSupplement.PROTOCOL_VERSION : HUMAN_AI_PROTOCOL_VERSION,
+  expectedCells: IS_NORM_SUPPLEMENT ? normSupplement.activeCells() : activeCells(),
+  formalRecruitmentEnabled: IS_NORM_SUPPLEMENT ? FORMAL_RECRUITMENT_ENABLED : undefined,
 });
 
 function publicContactEmail() {
@@ -279,7 +337,7 @@ function publicSession(session) {
   if (session.status === "completed" || session.completion_status === "completed") {
     payload.completion = publicCompletion(session);
   }
-  if (session.protocol_version === HUMAN_AI_PROTOCOL_VERSION) {
+  if ([HUMAN_AI_PROTOCOL_VERSION, normSupplement.PROTOCOL_VERSION].includes(session.protocol_version)) {
     payload.peer_identity = session.peer_identity;
     payload.identity_manipulation_version = session.identity_manipulation_version;
     payload.condition_map_version = session.condition_map_version;
@@ -288,6 +346,11 @@ function publicSession(session) {
     payload.demographics_items = demographicsItemsForSession(session);
     payload.rule_blocks = study1.humanAiRuleBlocksFor(session.peer_identity, session.condition);
     payload.comprehension_questions = publicComprehensionQuestions(study1.humanAiComprehensionQuestions);
+  }
+  if (normSupplement.isNormSupplementProtocol(session.protocol_version)) {
+    payload.source_task_protocol = session.source_task_protocol;
+    payload.source_task_commit = session.source_task_commit;
+    payload.posttest_schema_version = session.posttest_schema_version;
   }
   return payload;
 }
@@ -315,19 +378,21 @@ function addEvent(session, type, data = {}) {
 }
 
 function postSurveyItemsForSession(session) {
+  if (normSupplement.isNormSupplementProtocol(session?.protocol_version)) return normSupplementPosttest.posttestItems;
   if (session?.protocol_version !== HUMAN_AI_PROTOCOL_VERSION) return study1.postSurveyItems;
   if (session.condition !== "hidden") return study1.humanAiPostSurveyItems;
   return study1.humanAiPostSurveyItems.filter((item) => item.id !== "peer_reports_considered");
 }
 
 function demographicsItemsForSession(session) {
+  if (normSupplement.isNormSupplementProtocol(session?.protocol_version)) return normSupplementPosttest.demographicsItems;
   return session?.protocol_version === HUMAN_AI_PROTOCOL_VERSION
     ? study1.humanAiDemographicsItems
     : study1.demographicsItems;
 }
 
 function comprehensionQuestionsForSession(session) {
-  return session?.protocol_version === HUMAN_AI_PROTOCOL_VERSION
+  return [HUMAN_AI_PROTOCOL_VERSION, normSupplement.PROTOCOL_VERSION].includes(session?.protocol_version)
     ? study1.humanAiComprehensionQuestions
     : study1.comprehensionQuestions;
 }
@@ -769,6 +834,9 @@ async function createSession({ study, participantId, requestedCondition, entry, 
       });
     });
   }
+  if (IS_NORM_SUPPLEMENT && prolificIdentity && !prolificIdentity.is_preview && isPidDenied(prolificIdentity.prolific_pid)) {
+    fail(403, "You are not eligible to participate in this study. Please return the task on Prolific.");
+  }
   if (prolificIdentity) {
     const existingProlific = prolificSupport.findExisting(await store.listSessions(), prolificIdentity);
     if (existingProlific) return resumeProlificSession(existingProlific, prolificIdentity);
@@ -871,7 +939,9 @@ async function createSession({ study, participantId, requestedCondition, entry, 
     compositionVersion: null
   };
   const diceSequence = study1Stimuli.diceSequence;
-  const isHumanAiSession = (prolificIdentity?.protocol_version || qaIdentity?.protocol_version) === HUMAN_AI_PROTOCOL_VERSION;
+  const sessionProtocolVersion = prolificIdentity?.protocol_version || qaIdentity?.protocol_version || PROTOCOL_VERSION;
+  const isHumanAiSession = [HUMAN_AI_PROTOCOL_VERSION, normSupplement.PROTOCOL_VERSION].includes(sessionProtocolVersion);
+  const isNormSupplementSession = normSupplement.isNormSupplementProtocol(sessionProtocolVersion);
   const persistedPeerRecordsByRound = isHumanAiSession
     ? study1Stimuli.peerRecordsByRound.map((round) => ({
       ...round,
@@ -884,11 +954,18 @@ async function createSession({ study, participantId, requestedCondition, entry, 
   const session = {
     id,
     version: VERSION,
-    study_version: STUDY_VERSION,
-    protocol_version: prolificIdentity?.protocol_version || qaIdentity?.protocol_version || PROTOCOL_VERSION,
+    study_version: isNormSupplementSession ? normSupplement.STUDY_VERSION : STUDY_VERSION,
+    protocol_version: sessionProtocolVersion,
     peer_identity: prolificIdentity?.peer_identity || qaIdentity?.peer_identity || null,
-    identity_manipulation_version: (prolificIdentity?.protocol_version || qaIdentity?.protocol_version) === HUMAN_AI_PROTOCOL_VERSION ? IDENTITY_MANIPULATION_VERSION : null,
-    condition_map_version: (prolificIdentity?.protocol_version || qaIdentity?.protocol_version) === HUMAN_AI_PROTOCOL_VERSION ? CONDITION_MAP_VERSION : null,
+    identity_manipulation_version: isHumanAiSession ? IDENTITY_MANIPULATION_VERSION : null,
+    condition_map_version: isNormSupplementSession ? normSupplement.CONDITION_MAP_VERSION : (isHumanAiSession ? CONDITION_MAP_VERSION : null),
+    posttest_schema_version: isNormSupplementSession ? normSupplement.POSTTEST_SCHEMA_VERSION : null,
+    source_task_protocol: isNormSupplementSession ? normSupplement.SOURCE_TASK_PROTOCOL : null,
+    source_task_commit: isNormSupplementSession ? normSupplement.SOURCE_TASK_COMMIT : null,
+    source_condition: isNormSupplementSession ? condition : null,
+    analysis_condition: isNormSupplementSession ? normSupplement.analysisConditionFor(condition) : null,
+    git_commit: String(process.env.GIT_COMMIT || "").trim() || null,
+    release_id: String(process.env.RELEASE_ID || "").trim() || null,
     is_qa: Boolean(qaIdentity && !qaIdentity.team_review),
     is_team_review: Boolean(qaIdentity?.team_review),
     stimulus_version: STIMULUS_VERSION,
@@ -1102,7 +1179,9 @@ app.get("/review", (req, res) => {
 });
 
 function prolificAdminSummary(sessions) {
-  const conditions = Object.fromEntries(CONDITIONS.map((condition) => {
+  const configuredConditions = IS_NORM_SUPPLEMENT ? Object.keys(normSupplement.SOURCE_TO_ANALYSIS) : CONDITIONS;
+  const configuredCells = IS_NORM_SUPPLEMENT ? normSupplement.activeCells() : activeCells();
+  const conditions = Object.fromEntries(configuredConditions.map((condition) => {
     const matching = sessions.filter((session) => session.condition === condition);
     return [condition, {
       arrived: matching.length,
@@ -1121,8 +1200,8 @@ function prolificAdminSummary(sessions) {
     data_complete: sessions.filter(prolificExport.isDataComplete).length,
     quality_flags: sessions.filter((session) => prolificExport.qualityFlags(session).length > 0).length,
     conditions,
-    active_matrix: activeCells().map((cell) => {
-      const matching = sessions.filter((session) => session.protocol_version === HUMAN_AI_PROTOCOL_VERSION && session.peer_identity === cell.peer_identity && session.condition === cell.condition);
+    active_matrix: configuredCells.map((cell) => {
+      const matching = sessions.filter((session) => session.protocol_version === PROTOCOL_VERSION && session.peer_identity === cell.peer_identity && session.condition === cell.condition);
       return {
         ...cell,
         arrived: matching.length,
@@ -1139,7 +1218,10 @@ app.post("/api/admin/qa/session", asyncHandler(async (req, res) => {
   if (!ALLOW_QA_PREVIEW) return res.status(404).json({ error: "QA Preview is not enabled." });
   const peerIdentity = String(req.body.peer_identity || "").trim();
   const condition = String(req.body.condition || "").trim();
-  if (!isPeerIdentity(peerIdentity) || !isSupportedCondition(condition)) {
+  const validCell = IS_NORM_SUPPLEMENT
+    ? normSupplement.isActiveCell(peerIdentity, condition)
+    : (isPeerIdentity(peerIdentity) && isSupportedCondition(condition));
+  if (!validCell) {
     return res.status(400).json({ error: "Invalid QA cell." });
   }
   const participantId = `qa_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
@@ -1148,7 +1230,7 @@ app.post("/api/admin/qa/session", asyncHandler(async (req, res) => {
     participantId,
     requestedCondition: condition,
     entry: null,
-    qaIdentity: { participant_id: participantId, peer_identity: peerIdentity, condition, protocol_version: HUMAN_AI_PROTOCOL_VERSION },
+    qaIdentity: { participant_id: participantId, peer_identity: peerIdentity, condition, protocol_version: PROTOCOL_VERSION },
   });
   res.json({ session: publicSession(session) });
 }));
@@ -1157,9 +1239,12 @@ app.post("/api/review/session", asyncHandler(async (req, res) => {
   if (!ALLOW_TEAM_REVIEW) return res.status(404).json({ error: "Team Review is not enabled." });
   const peerIdentity = String(req.body.peer_identity || "").trim();
   const condition = String(req.body.condition || "").trim();
-  if (!isPeerIdentity(peerIdentity) || !ACTIVE_HUMAN_AI_CONDITIONS.includes(condition)) return res.status(400).json({ error: "Invalid active review cell." });
+  const validCell = IS_NORM_SUPPLEMENT
+    ? normSupplement.isActiveCell(peerIdentity, condition)
+    : (isPeerIdentity(peerIdentity) && ACTIVE_HUMAN_AI_CONDITIONS.includes(condition));
+  if (!validCell) return res.status(400).json({ error: "Invalid active review cell." });
   const participantId = `review_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
-  const session = await createSession({ study: "study1", participantId, requestedCondition: condition, entry: null, qaIdentity: { participant_id: participantId, peer_identity: peerIdentity, condition, protocol_version: HUMAN_AI_PROTOCOL_VERSION, team_review: true } });
+  const session = await createSession({ study: "study1", participantId, requestedCondition: condition, entry: null, qaIdentity: { participant_id: participantId, peer_identity: peerIdentity, condition, protocol_version: PROTOCOL_VERSION, team_review: true } });
   res.json({ session: publicSession(session) });
 }));
 
@@ -1180,7 +1265,10 @@ app.get("/health", (req, res) => {
     ok: true,
     study: "study1",
     study_version: STUDY_VERSION,
-    protocol_version: PROTOCOL_VERSION
+    protocol_version: PROTOCOL_VERSION,
+    formal_recruitment_enabled: IS_NORM_SUPPLEMENT ? FORMAL_RECRUITMENT_ENABLED : undefined,
+    condition_map_version: IS_NORM_SUPPLEMENT ? normSupplement.CONDITION_MAP_VERSION : CONDITION_MAP_VERSION,
+    posttest_schema_version: IS_NORM_SUPPLEMENT ? normSupplement.POSTTEST_SCHEMA_VERSION : undefined,
   });
 });
 
@@ -1542,8 +1630,12 @@ app.get("/api/admin/session/:id", asyncHandler(async (req, res) => {
 async function adminSessionsForQuery(query = {}) {
   const scope = String(query.scope || "").trim();
   const dataset = String(query.dataset || "").trim();
-  if (dataset === "recruitment" || ["formal", "preview"].includes(scope)) return recruitmentStore.listSessions();
-  if (dataset === "internal" || ["qa", "team_review"].includes(scope)) return internalStore.listSessions();
+  if (scope === "formal") return formalStore.listSessions();
+  if (scope === "preview") return previewStore.listSessions();
+  if (scope === "qa") return qaStore.listSessions();
+  if (scope === "team_review") return teamReviewStore.listSessions();
+  if (dataset === "recruitment") return [...await formalStore.listSessions(), ...await previewStore.listSessions()];
+  if (dataset === "internal") return [...await qaStore.listSessions(), ...await teamReviewStore.listSessions()];
   return store.listSessions();
 }
 
@@ -1553,14 +1645,16 @@ app.get("/api/admin/records", asyncHandler(async (req, res) => {
 }));
 
 app.get("/api/admin/datasets", asyncHandler(async (req, res) => {
-  const recruitmentSessions = await recruitmentStore.listSessions();
-  const internalSessions = await internalStore.listSessions();
+  const formalSessions = await formalStore.listSessions();
+  const previewSessions = await previewStore.listSessions();
+  const qaSessions = await qaStore.listSessions();
+  const teamReviewSessions = await teamReviewStore.listSessions();
   const historical = await legacyStore.listSessions();
   const byScope = (sessions, scope) => sessions.filter((session) => prolificExport.sessionScope(session) === scope);
-  const formal = byScope(recruitmentSessions, "formal");
-  const preview = byScope(recruitmentSessions, "preview");
-  const qa = byScope(internalSessions, "qa");
-  const teamReview = byScope(internalSessions, "team_review");
+  const formal = byScope(formalSessions, "formal");
+  const preview = byScope(previewSessions, "preview");
+  const qa = byScope(qaSessions, "qa");
+  const teamReview = byScope(teamReviewSessions, "team_review");
   const internal = [...qa, ...teamReview];
   res.json({
     recruitment: {
@@ -1581,19 +1675,29 @@ app.get("/api/admin/datasets", asyncHandler(async (req, res) => {
     },
     historical: { count: historical.length, read_only: true, data_dir: legacyStore.DATA_DIR },
     storage: {
-      recruitment_data_dir: recruitmentStore.DATA_DIR,
-      internal_data_dir: internalStore.DATA_DIR,
+      ...(IS_NORM_SUPPLEMENT ? {
+        formal_data_dir: formalStore.DATA_DIR,
+        preview_data_dir: previewStore.DATA_DIR,
+        qa_data_dir: qaStore.DATA_DIR,
+        team_review_data_dir: teamReviewStore.DATA_DIR,
+      } : {}),
+      recruitment_data_dir: formalStore.DATA_DIR,
+      internal_data_dir: qaStore.DATA_DIR,
       historical_data_dir: legacyStore.DATA_DIR,
     },
   });
 }));
 
 app.get("/api/admin/integrity", asyncHandler(async (req, res) => {
-  const recruitmentSessions = await recruitmentStore.listSessions();
-  const internalSessions = await internalStore.listSessions();
+  const formalSessions = (await formalStore.listSessions()).filter((session) => prolificExport.sessionScope(session) === "formal");
+  const previewSessions = (await previewStore.listSessions()).filter((session) => prolificExport.sessionScope(session) === "preview");
+  const qaSessions = (await qaStore.listSessions()).filter((session) => prolificExport.sessionScope(session) === "qa");
+  const teamReviewSessions = (await teamReviewStore.listSessions()).filter((session) => prolificExport.sessionScope(session) === "team_review");
+  const recruitmentSessions = [...formalSessions, ...previewSessions];
+  const internalSessions = [...qaSessions, ...teamReviewSessions];
   const sessions = [...recruitmentSessions, ...internalSessions];
   const sessionsFor = (scope) => {
-    const source = ["formal", "preview"].includes(scope) ? recruitmentSessions : internalSessions;
+    const source = { formal: formalSessions, preview: previewSessions, qa: qaSessions, team_review: teamReviewSessions }[scope] || [];
     return source.filter((session) => prolificExport.sessionScope(session) === scope);
   };
   const idsFor = (scope) => new Set(sessionsFor(scope).map((session) => session.record_key || session.id));
@@ -1604,7 +1708,7 @@ app.get("/api/admin/integrity", asyncHandler(async (req, res) => {
   const check = (id, label, overlap) => ({ id, label, status: overlap === 0 ? "PASS" : "WARNING", detail: overlap === 0 ? "No overlapping records." : `${overlap} overlapping record(s).` });
   const predicateCheck = (id, label, matching, total) => ({ id, label, status: matching === total ? "PASS" : "WARNING", detail: `${matching} of ${total} record(s) satisfy the requirement.` });
   const countCheck = (id, label, bundleCount, scopeCount) => ({ id, label, status: bundleCount === scopeCount ? "PASS" : "WARNING", detail: `Bundle selector: ${bundleCount}; scope: ${scopeCount}.` });
-  const resolvedDirectories = [recruitmentStore.DATA_DIR, internalStore.DATA_DIR, legacyStore.DATA_DIR].map((item) => path.resolve(item));
+  const resolvedDirectories = [...writableStores.map((item) => item.DATA_DIR), legacyStore.DATA_DIR].map((item) => path.resolve(item));
   const directoriesSeparate = new Set(resolvedDirectories).size === resolvedDirectories.length;
   const recruitmentContamination = recruitmentSessions.filter((session) => !["formal", "preview"].includes(prolificExport.sessionScope(session))).length;
   const internalContamination = internalSessions.filter((session) => !["qa", "team_review"].includes(prolificExport.sessionScope(session))).length;
@@ -1631,7 +1735,7 @@ app.get("/api/admin/integrity", asyncHandler(async (req, res) => {
       predicateCheck("preview_identity", "Preview records satisfy is_preview=true", scopeSessions.preview.filter((session) => session.is_preview === true).length, scopeSessions.preview.length),
       { id: "cross_scope_duplicates", label: "No duplicate record key across scopes", status: crossScopeDuplicates === 0 ? "PASS" : "WARNING", detail: `${crossScopeDuplicates} record key(s) occur in multiple scopes.` },
       { id: "historical_read_only", label: "Historical source read-only", status: "PASS", detail: "Historical access uses the read-only legacy store." },
-      { id: "data_directories_separate", label: "Recruitment / Internal / Historical directories separate", status: directoriesSeparate ? "PASS" : "WARNING", detail: directoriesSeparate ? "All three physical data directories are distinct." : "Two or more physical data directories resolve to the same path." },
+      { id: "data_directories_separate", label: "Formal / Preview / QA / Team Review / Historical directories separate", status: directoriesSeparate ? "PASS" : "WARNING", detail: directoriesSeparate ? "All physical data directories are distinct." : "Two or more physical data directories resolve to the same path." },
       { id: "recruitment_store_scope", label: "Recruitment store contains only Formal / Preview", status: recruitmentContamination === 0 ? "PASS" : "WARNING", detail: `${recruitmentContamination} out-of-scope record(s).` },
       { id: "internal_store_scope", label: "Internal store contains only QA / Team Review", status: internalContamination === 0 ? "PASS" : "WARNING", detail: `${internalContamination} out-of-scope record(s).` },
       countCheck("formal_bundle_count", "Formal bundle count equals Formal scope", sessions.filter((session) => prolificExport.sessionScope(session) === "formal").length, scopeSessions.formal.length),
@@ -1639,8 +1743,14 @@ app.get("/api/admin/integrity", asyncHandler(async (req, res) => {
       countCheck("qa_bundle_count", "QA bundle count equals QA scope", sessions.filter((session) => prolificExport.sessionScope(session) === "qa" && session.is_qa === true).length, scopeSessions.qa.length),
       countCheck("team_review_bundle_count", "Team Review bundle count equals Team Review scope", sessions.filter((session) => prolificExport.sessionScope(session) === "team_review" && session.is_team_review === true).length, scopeSessions.team_review.length),
     ],
-    recruitment_data_dir: recruitmentStore.DATA_DIR,
-    internal_data_dir: internalStore.DATA_DIR,
+    ...(IS_NORM_SUPPLEMENT ? {
+      formal_data_dir: formalStore.DATA_DIR,
+      preview_data_dir: previewStore.DATA_DIR,
+      qa_data_dir: qaStore.DATA_DIR,
+      team_review_data_dir: teamReviewStore.DATA_DIR,
+    } : {}),
+    recruitment_data_dir: formalStore.DATA_DIR,
+    internal_data_dir: qaStore.DATA_DIR,
     historical_data_dir: legacyStore.DATA_DIR,
   });
 }));
@@ -1680,33 +1790,33 @@ app.get("/api/admin/prolific-summary", asyncHandler(async (req, res) => {
 
 app.get("/api/admin/export/prolific-bundle.zip", asyncHandler(async (req, res) => {
   const sessions = (await store.listSessions()).filter((session) => prolificExport.sessionScope(session) === "formal");
-  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
+  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
-  res.set("content-disposition", `attachment; filename="study1-human-ai-formal-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.set("content-disposition", `attachment; filename="${IS_NORM_SUPPLEMENT ? STUDY_VERSION : "study1-human-ai"}-formal-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
 app.get("/api/admin/export/prolific-preview-bundle.zip", asyncHandler(async (req, res) => {
   const sessions = (await store.listSessions()).filter((session) => prolificExport.sessionScope(session) === "preview");
-  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
+  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
-  res.set("content-disposition", `attachment; filename="study1-human-ai-preview-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.set("content-disposition", `attachment; filename="${IS_NORM_SUPPLEMENT ? STUDY_VERSION : "study1-human-ai"}-preview-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
 app.get("/api/admin/export/qa-bundle.zip", asyncHandler(async (req, res) => {
   const sessions = (await store.listSessions()).filter((session) => prolificExport.sessionScope(session) === "qa" && session.is_qa === true);
-  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
+  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
-  res.set("content-disposition", `attachment; filename="study1-human-ai-qa-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.set("content-disposition", `attachment; filename="${IS_NORM_SUPPLEMENT ? STUDY_VERSION : "study1-human-ai"}-qa-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
 app.get("/api/admin/export/team-review-bundle.zip", asyncHandler(async (req, res) => {
   const sessions = (await store.listSessions()).filter((session) => prolificExport.sessionScope(session) === "team_review" && session.is_team_review === true);
-  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: HUMAN_AI_PROTOCOL_VERSION }));
+  const archive = prolificExport.zip(prolificExport.buildFiles(sessions, process.env, { protocolVersion: PROTOCOL_VERSION }));
   res.set("content-type", "application/zip");
-  res.set("content-disposition", `attachment; filename="study1-human-ai-team-review-${new Date().toISOString().slice(0, 10)}.zip"`);
+  res.set("content-disposition", `attachment; filename="${IS_NORM_SUPPLEMENT ? STUDY_VERSION : "study1-human-ai"}-team-review-${new Date().toISOString().slice(0, 10)}.zip"`);
   res.send(archive);
 }));
 
@@ -1750,17 +1860,24 @@ async function validateRuntime() {
     return;
   }
   if (!process.env.DATA_DIR) throw new Error("DATA_DIR must be set in production");
-  if (!process.env.RECRUITMENT_DATA_DIR) throw new Error("RECRUITMENT_DATA_DIR must be set in production");
+  if (IS_NORM_SUPPLEMENT) {
+    for (const key of ["FORMAL_DATA_DIR", "PREVIEW_DATA_DIR", "QA_DATA_DIR", "TEAM_REVIEW_DATA_DIR"]) {
+      if (!process.env[key]) throw new Error(`${key} must be set in production`);
+      if (!path.isAbsolute(process.env[key])) throw new Error(`${key} must be an absolute path in production`);
+    }
+  } else if (!process.env.RECRUITMENT_DATA_DIR) throw new Error("RECRUITMENT_DATA_DIR must be set in production");
   if (!process.env.LEGACY_STUDY1_DATA_DIR) throw new Error("LEGACY_STUDY1_DATA_DIR must be set in production");
   if (!STUDY_CONTACT_EMAIL) throw new Error("STUDY_CONTACT_EMAIL must be set in production");
   if (!path.isAbsolute(process.env.DATA_DIR)) throw new Error("DATA_DIR must be an absolute path in production");
-  if (!path.isAbsolute(process.env.RECRUITMENT_DATA_DIR)) throw new Error("RECRUITMENT_DATA_DIR must be an absolute path in production");
+  if (!IS_NORM_SUPPLEMENT && !path.isAbsolute(process.env.RECRUITMENT_DATA_DIR)) throw new Error("RECRUITMENT_DATA_DIR must be an absolute path in production");
   if (!path.isAbsolute(process.env.LEGACY_STUDY1_DATA_DIR)) throw new Error("LEGACY_STUDY1_DATA_DIR must be an absolute path in production");
-  const runtimeDirectories = [process.env.DATA_DIR, process.env.RECRUITMENT_DATA_DIR, process.env.LEGACY_STUDY1_DATA_DIR].map((item) => path.resolve(item));
+  const runtimeDirectories = IS_NORM_SUPPLEMENT
+    ? [process.env.FORMAL_DATA_DIR, process.env.PREVIEW_DATA_DIR, process.env.QA_DATA_DIR, process.env.TEAM_REVIEW_DATA_DIR, process.env.LEGACY_STUDY1_DATA_DIR].map((item) => path.resolve(item))
+    : [process.env.DATA_DIR, process.env.RECRUITMENT_DATA_DIR, process.env.LEGACY_STUDY1_DATA_DIR].map((item) => path.resolve(item));
   if (new Set(runtimeDirectories).size !== runtimeDirectories.length) throw new Error("Recruitment, Internal, and Historical Study1 data directories must remain separate");
   await fs.promises.access(process.env.LEGACY_STUDY1_DATA_DIR, fs.constants.R_OK);
   await store.ensureDataDir();
-  for (const writableStore of [internalStore, recruitmentStore]) {
+  for (const writableStore of writableStores) {
     const parent = path.dirname(writableStore.DATA_DIR);
     await fs.promises.mkdir(parent, { recursive: true });
     const probe = path.join(parent, `.write-test-${process.pid}-${Date.now()}`);

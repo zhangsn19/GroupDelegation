@@ -7,6 +7,8 @@ const {
   PEER_IDENTITIES,
   activeCells,
 } = require("../config/human-ai-protocol");
+const normSupplement = require("../config/norm-supplement-protocol");
+const normSupplementPosttest = require("../config/norm-supplement-posttest");
 
 const SCHEMA_VERSION = "prolific-export-v1";
 
@@ -67,9 +69,17 @@ function participants(sessions, env) {
       is_preview: session.is_preview ? 1 : 0,
       taskflow_variant_id: session.taskflow_variant_id,
       condition: session.condition,
+      source_condition: session.source_condition || session.condition || "",
+      analysis_condition: session.analysis_condition || "",
       peer_identity: session.peer_identity || (session.protocol_version === HUMAN_AI_PROTOCOL_VERSION ? "" : "human_legacy"),
       identity_manipulation_version: session.identity_manipulation_version || "",
       condition_map_version: session.condition_map_version || "",
+      posttest_schema_version: session.posttest_schema_version || "",
+      source_task_protocol: session.source_task_protocol || "",
+      source_task_commit: session.source_task_commit || "",
+      scope: sessionScope(session),
+      git_commit: session.git_commit || env.GIT_COMMIT || "",
+      release_id: session.release_id || env.RELEASE_ID || "",
       is_qa: session.is_qa ? 1 : 0,
       is_team_review: session.is_team_review ? 1 : 0,
       assignment_mode: session.assignment_mode,
@@ -107,8 +117,18 @@ function rounds(sessions) {
     last_resumed_at: session.last_resumed_at || "",
     is_preview: session.is_preview ? 1 : 0,
     condition: session.condition,
+    source_condition: session.source_condition || session.condition || "",
+    analysis_condition: session.analysis_condition || "",
     peer_identity: session.peer_identity || "",
+    study_version: session.study_version || "",
     protocol_version: session.protocol_version || "",
+    condition_map_version: session.condition_map_version || "",
+    posttest_schema_version: session.posttest_schema_version || "",
+    source_task_protocol: session.source_task_protocol || "",
+    source_task_commit: session.source_task_commit || "",
+    scope: sessionScope(session),
+    git_commit: session.git_commit || "",
+    release_id: session.release_id || "",
     round_index: round.round_index,
     true_die_value: round.true_die_value,
     reported_die_value: round.reported_value,
@@ -138,18 +158,35 @@ function surveys(sessions) {
     record_key: session.record_key,
     prolific_pid: session.prolific_pid,
     prolific_session_id: session.prolific_session_id,
+    study_version: session.study_version || "",
+    protocol_version: session.protocol_version || "",
+    condition_map_version: session.condition_map_version || "",
+    posttest_schema_version: session.posttest_schema_version || "",
+    source_task_protocol: session.source_task_protocol || "",
+    source_task_commit: session.source_task_commit || "",
+    source_condition: session.source_condition || session.condition || "",
+    analysis_condition: session.analysis_condition || "",
+    peer_identity: session.peer_identity || "",
+    scope: sessionScope(session),
+    git_commit: session.git_commit || "",
+    release_id: session.release_id || "",
     ...flatten("pre", session.baseline),
     ...flatten("post", session.post_survey),
     ...flatten("demo", session.demographics)
   }));
 }
 
-function surveyColumns() {
+function surveyColumns(includeNormSupplement = false) {
+  const postItems = includeNormSupplement
+    ? normSupplementPosttest.posttestItems
+    : [...study1.postSurveyItems, ...(study1.humanAiPostSurveyItems || []), { id: "open_decision_factors" }];
+  const demographics = includeNormSupplement ? normSupplementPosttest.demographicsItems : study1.demographicsItems;
   return [
     "session_id", "participant_id", "record_key", "prolific_pid", "prolific_session_id",
+    "study_version", "protocol_version", "condition_map_version", "posttest_schema_version", "source_task_protocol", "source_task_commit", "source_condition", "analysis_condition", "peer_identity", "scope", "git_commit", "release_id",
     ...study1.baselineItems.map((item) => `pre_${item.id}`),
-    ...new Set([...study1.postSurveyItems, ...(study1.humanAiPostSurveyItems || []), { id: "open_decision_factors" }].map((item) => `post_${item.id}`)),
-    ...study1.demographicsItems.map((item) => `demo_${item.id}`)
+    ...new Set(postItems.map((item) => `post_${item.id}`)),
+    ...demographics.map((item) => `demo_${item.id}`)
   ];
 }
 
@@ -159,6 +196,18 @@ function bonuses(sessions, env) {
     participant_id: session.participant_id || session.prolific_pid || "",
     prolific_pid: session.prolific_pid,
     prolific_session_id: session.prolific_session_id,
+    study_version: session.study_version || "",
+    protocol_version: session.protocol_version || "",
+    condition_map_version: session.condition_map_version || "",
+    posttest_schema_version: session.posttest_schema_version || "",
+    source_task_protocol: session.source_task_protocol || "",
+    source_task_commit: session.source_task_commit || "",
+    source_condition: session.source_condition || session.condition || "",
+    analysis_condition: session.analysis_condition || "",
+    peer_identity: session.peer_identity || "",
+    scope: sessionScope(session),
+    git_commit: session.git_commit || env.GIT_COMMIT || "",
+    release_id: session.release_id || env.RELEASE_ID || "",
     bonus_amount: session.dice_rounds?.at(-1)?.cumulative_reward ?? "",
     bonus_currency: env.BONUS_CURRENCY || "",
     bonus_eligible: isDataComplete(session) ? 1 : 0,
@@ -183,8 +232,13 @@ function buildFiles(sessions, env = process.env, options = {}) {
   const hasHumanAi = options.protocolVersion === HUMAN_AI_PROTOCOL_VERSION ||
     env.PROTOCOL_VERSION === HUMAN_AI_PROTOCOL_VERSION ||
     sessions.some((session) => session.protocol_version === HUMAN_AI_PROTOCOL_VERSION);
-  const cellRows = hasHumanAi ? activeCells().map((cell) => {
-    const matching = sessions.filter((session) => session.protocol_version === HUMAN_AI_PROTOCOL_VERSION && session.peer_identity === cell.peer_identity && session.condition === cell.condition);
+  const hasNormSupplement = options.protocolVersion === normSupplement.PROTOCOL_VERSION ||
+    env.PROTOCOL_VERSION === normSupplement.PROTOCOL_VERSION ||
+    sessions.some((session) => session.protocol_version === normSupplement.PROTOCOL_VERSION);
+  const exportProtocol = hasNormSupplement ? normSupplement.PROTOCOL_VERSION : HUMAN_AI_PROTOCOL_VERSION;
+  const exportCells = hasNormSupplement ? normSupplement.activeCells() : activeCells();
+  const cellRows = (hasHumanAi || hasNormSupplement) ? exportCells.map((cell) => {
+    const matching = sessions.filter((session) => session.protocol_version === exportProtocol && session.peer_identity === cell.peer_identity && session.condition === cell.condition);
     return {
       ...cell,
       arrived: matching.length,
@@ -199,26 +253,30 @@ function buildFiles(sessions, env = process.env, options = {}) {
     exported_at_utc: new Date().toISOString(),
     git_commit: gitCommit(env),
     release_id: env.RELEASE_ID || "",
+    scope: new Set(sessions.map(sessionScope)).size === 1 ? sessionScope(sessions[0] || {}) : "mixed",
     study_version: sessions[0]?.study_version || env.STUDY_VERSION || "",
     protocol_version: sessions[0]?.protocol_version || options.protocolVersion || env.PROTOCOL_VERSION || "",
     schema_version: SCHEMA_VERSION,
     identity_manipulation_version: hasHumanAi ? IDENTITY_MANIPULATION_VERSION : "",
-    condition_map_version: hasHumanAi ? CONDITION_MAP_VERSION : (env.CONDITION_MAP_VERSION || ""),
-    supported_cell_count: hasHumanAi ? 14 : undefined,
-    active_cell_count: hasHumanAi ? 12 : undefined,
-    peer_identity_levels: hasHumanAi ? PEER_IDENTITIES : undefined,
+    condition_map_version: hasNormSupplement ? normSupplement.CONDITION_MAP_VERSION : (hasHumanAi ? CONDITION_MAP_VERSION : (env.CONDITION_MAP_VERSION || "")),
+    posttest_schema_version: hasNormSupplement ? normSupplement.POSTTEST_SCHEMA_VERSION : "",
+    source_task_protocol: hasNormSupplement ? normSupplement.SOURCE_TASK_PROTOCOL : "",
+    source_task_commit: hasNormSupplement ? normSupplement.SOURCE_TASK_COMMIT : "",
+    supported_cell_count: hasNormSupplement ? 3 : (hasHumanAi ? 14 : undefined),
+    active_cell_count: hasNormSupplement ? 3 : (hasHumanAi ? 12 : undefined),
+    peer_identity_levels: hasNormSupplement ? [normSupplement.PEER_IDENTITY] : (hasHumanAi ? PEER_IDENTITIES : undefined),
     legacy_conditions_supported: hasHumanAi ? ["dishonest_escalating"] : undefined,
     locale: "en",
     record_count: sessions.length,
     round_count: roundRows.length
   };
   return {
-    "participants.csv": csv(participantRows, columns(participantRows, ["session_id", "participant_id", "record_key", "prolific_pid", "prolific_study_id", "prolific_session_id", "primary_prolific_session_id", "current_prolific_session_id", "prolific_session_aliases", "prolific_session_aliases_json", "resume_count", "last_resumed_at", "is_preview", "is_qa", "is_team_review", "taskflow_variant_id", "peer_identity", "condition", "assignment_mode", "locale", "status", "consented_at", "started_at", "completed_at", "total_duration_ms", "rounds_completed", "data_complete", "comprehension_pass", "quality_flags", "completion_ready_at", "completion_redirect_initiated_at", "bonus_amount", "bonus_currency", "study_version", "protocol_version", "identity_manipulation_version", "condition_map_version"])),
-    "study1_rounds.csv": csv(roundRows, ["session_id", "participant_id", "record_key", "prolific_pid", "prolific_session_id", "peer_identity", "protocol_version", "condition", "round_index", "true_die_value", "reported_die_value", "misreport_amount", "is_misreport", "peer_display_order_json", "peer_records_json", "n_peers_misreporting", "misreporting_peer_names_json", "misreporting_peer_ids_json", "decision_time_ms", "page_hidden_duration_ms", "decision_started_at_client", "decision_submitted_at_client", "server_received_at", "saved_at"]),
-    "surveys.csv": csv(surveyRows, surveyColumns()),
-    "bonus_payments.csv": csv(bonusRows, ["session_id", "participant_id", "prolific_pid", "prolific_session_id", "bonus_amount", "bonus_currency", "bonus_eligible", "bonus_reason"]),
+    "participants.csv": csv(participantRows, columns(participantRows, ["session_id", "participant_id", "record_key", "prolific_pid", "prolific_study_id", "prolific_session_id", "primary_prolific_session_id", "current_prolific_session_id", "prolific_session_aliases", "prolific_session_aliases_json", "resume_count", "last_resumed_at", "is_preview", "is_qa", "is_team_review", "taskflow_variant_id", "peer_identity", "condition", "source_condition", "analysis_condition", "scope", "assignment_mode", "locale", "status", "consented_at", "started_at", "completed_at", "total_duration_ms", "rounds_completed", "data_complete", "comprehension_pass", "quality_flags", "completion_ready_at", "completion_redirect_initiated_at", "bonus_amount", "bonus_currency", "study_version", "protocol_version", "identity_manipulation_version", "condition_map_version", "posttest_schema_version", "source_task_protocol", "source_task_commit", "git_commit", "release_id"])),
+    "study1_rounds.csv": csv(roundRows, ["session_id", "participant_id", "record_key", "prolific_pid", "prolific_session_id", "peer_identity", "study_version", "protocol_version", "condition_map_version", "posttest_schema_version", "source_task_protocol", "source_task_commit", "condition", "source_condition", "analysis_condition", "scope", "git_commit", "release_id", "round_index", "true_die_value", "reported_die_value", "misreport_amount", "is_misreport", "peer_display_order_json", "peer_records_json", "n_peers_misreporting", "misreporting_peer_names_json", "misreporting_peer_ids_json", "decision_time_ms", "page_hidden_duration_ms", "decision_started_at_client", "decision_submitted_at_client", "server_received_at", "saved_at"]),
+    "surveys.csv": csv(surveyRows, surveyColumns(hasNormSupplement)),
+    "bonus_payments.csv": csv(bonusRows, ["session_id", "participant_id", "prolific_pid", "prolific_session_id", "study_version", "protocol_version", "condition_map_version", "posttest_schema_version", "source_task_protocol", "source_task_commit", "source_condition", "analysis_condition", "peer_identity", "scope", "git_commit", "release_id", "bonus_amount", "bonus_currency", "bonus_eligible", "bonus_reason"]),
     "raw_sessions.ndjson": `${sessions.map((session) => JSON.stringify(session)).join("\n")}\n`,
-    ...(hasHumanAi ? { "cell_summary.csv": csv(cellRows, ["peer_identity", "condition", "arrived", "started", "completed", "data_complete", "quality_flagged"]) } : {}),
+    ...((hasHumanAi || hasNormSupplement) ? { "cell_summary.csv": csv(cellRows, ["peer_identity", "condition", "source_condition", "analysis_condition", "arrived", "started", "completed", "data_complete", "quality_flagged"]) } : {}),
     "export_metadata.json": `${JSON.stringify(metadata, null, 2)}\n`
   };
 }
@@ -284,6 +342,8 @@ function adminRows(sessions) {
     last_resumed_at: session.last_resumed_at || null,
     is_preview: Boolean(session.is_preview),
     condition: session.condition,
+    source_condition: session.source_condition || session.condition || "",
+    analysis_condition: session.analysis_condition || "",
     peer_identity: session.peer_identity || (session.protocol_version === HUMAN_AI_PROTOCOL_VERSION ? "" : "human_legacy"),
     protocol_version: session.protocol_version || "",
     scope: sessionScope(session),

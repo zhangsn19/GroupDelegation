@@ -159,7 +159,7 @@
   }
 
   function isHumanAiProtocol() {
-    return state.session?.protocol_version === "study1-human-ai-v1";
+    return ["study1-human-ai-v1", "group-deception-norm-supplement-v1"].includes(state.session?.protocol_version);
   }
 
   function setSession(session) {
@@ -522,6 +522,7 @@
       content.innerHTML = `
         <div class="card"><h2>Debrief</h2><div class="consent-text">
           <p>The identities and reporting patterns of the other group members were simulated and controlled by the research system for experimental purposes. No other human participants or live AI models were making these reporting decisions in real time.</p>
+          <p>The reporting patterns were experimentally generated. Your own report was private and was not shown to the other group members.</p>
           <p>The study examines how the stated identity and reporting behavior of peers may affect decisions. Your records are used only for research. Contact the research team with your participant ID if you have questions about the study or your participation.</p>
         </div></div>${participantInfoCard(pid, contact)}
         <div class="step-nav"><p class="status-hint" id="debrief-save-status">Saving debrief acknowledgement...</p><button class="btn btn-primary" data-action="complete">Complete</button></div>`;

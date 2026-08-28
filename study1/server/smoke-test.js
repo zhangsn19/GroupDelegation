@@ -1079,15 +1079,11 @@ function staticChecks() {
   assert(!serverJs.includes("debug_links_enabled"), "server source should not expose debug_links_enabled");
   assert(serverJs.includes('ASSIGNMENT_MODE') && serverJs.includes('controlled_link') && serverJs.includes('ENTRY_CODE_HIDDEN') && serverJs.includes('ENTRY_CODE_DISHONEST_ESCALATING') && serverJs.includes('ENTRY_CODE_DISHONEST_FIXED_1') && serverJs.includes('ENTRY_CODE_DISHONEST_FIXED_2') && serverJs.includes('ENTRY_CODE_DISHONEST_FIXED_3'), "seven-condition controlled_link assignment source missing");
   for (const option of [
-    '<option value="hidden">Hidden</option>',
-    '<option value="honest">0 Dishonest</option>',
-    '<option value="dishonest_fixed_1">1 Dishonest</option>',
-    '<option value="dishonest_fixed_2">2 Dishonest</option>',
-    '<option value="dishonest_fixed_3">3 Dishonest</option>',
-    '<option value="dishonest">4 Dishonest</option>',
-    '<option value="dishonest_escalating">Legacy Escalating</option>'
+    'honest:"Descriptive Honest"',
+    'dishonest:"Descriptive Pro-misreport"',
+    'hidden:"Invisible"'
   ]) {
-    assert(adminHtml.includes(option), `admin condition option missing: ${option}`);
+    assert(adminHtml.includes(option), `admin supplement condition option missing: ${option}`);
   }
   assert(measureConfig.includes("a_truthful_peer_count") && measureConfig.includes("a_peer_behavior_change"), "H2 manipulation checks missing");
   assert(surveyJs.includes("item.midLabel"), "H2 midpoint scale label support missing");

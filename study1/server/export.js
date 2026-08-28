@@ -69,6 +69,16 @@ function participantsCsv(sessions) {
     is_test_session: session.is_test_session ? 1 : 0,
     study_version: session.study_version || "",
     protocol_version: session.protocol_version || "",
+    condition_map_version: session.condition_map_version || "",
+    posttest_schema_version: session.posttest_schema_version || "",
+    source_task_protocol: session.source_task_protocol || "",
+    source_task_commit: session.source_task_commit || "",
+    source_condition: session.source_condition || session.condition || "",
+    analysis_condition: session.analysis_condition || "",
+    peer_identity: session.peer_identity || "",
+    scope: session.scope || "",
+    git_commit: session.git_commit || "",
+    release_id: session.release_id || "",
     debug_mode: session.debug_mode ? 1 : 0,
     status: session.status,
     completed: session.status === "completed" ? 1 : 0,
@@ -84,7 +94,7 @@ function participantsCsv(sessions) {
   }));
 
   const dynamicKeys = Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
-  const preferred = ["session_id", "participant_id", "study", "condition", "condition_analysis_label", "condition_family", "fixed_dishonest_count", "fixed_dishonest_peer_names_json", "composition_version", "schedule_version", "peer_onset_rounds_json", "assignment_source", "entry_link_id", "condition_assigned_at", "randomization_block", "randomization_position", "is_test_session", "study_version", "protocol_version", "created_at", "completed_at", "debrief_viewed_at", "completion_status"];
+  const preferred = ["session_id", "participant_id", "study", "study_version", "protocol_version", "condition_map_version", "posttest_schema_version", "source_task_protocol", "source_task_commit", "condition", "source_condition", "analysis_condition", "peer_identity", "scope", "git_commit", "release_id", "condition_analysis_label", "condition_family", "fixed_dishonest_count", "fixed_dishonest_peer_names_json", "composition_version", "schedule_version", "peer_onset_rounds_json", "assignment_source", "entry_link_id", "condition_assigned_at", "randomization_block", "randomization_position", "is_test_session", "created_at", "completed_at", "debrief_viewed_at", "completion_status"];
   const keys = [...preferred, ...dynamicKeys.filter((key) => !preferred.includes(key))];
   return toCsv(rows, keys.map((key) => ({ key })));
 }

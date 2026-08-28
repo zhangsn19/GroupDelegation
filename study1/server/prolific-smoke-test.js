@@ -121,7 +121,7 @@ async function main() {
         ...identity(`map_${index}`, token),
         SESSION_ID: `submission_map_${index}_resumed`
       });
-      assert.strictEqual(conditionResume.response.status, 200);
+      assert.strictEqual(conditionResume.response.status, 200, JSON.stringify(conditionResume.payload));
       assert.strictEqual(conditionResume.payload.session.id, result.payload.session.id);
       const resumedRaw = JSON.parse(await fs.readFile(path.join(dataDir, `${result.payload.session.id}.json`), "utf8"));
       assert.strictEqual(resumedRaw.condition, descriptor.condition);
